@@ -29,7 +29,7 @@ to mode changes instead. Key decisions, all in the design doc:
 
 ## Plan (from the design doc)
 
-1. ✅ Skeleton: table + validation, mode select, zone sensors, problem sensor + Repairs, fallback. (0.1.0, not yet deployed)
+1. ✅ Skeleton: table + validation, mode select, zone sensors, problem sensor + Repairs, fallback. (0.1.0, deployed 2026-10-17 by tar + full restart; entry added via the config flow API)
 2. `nightlight_then_dark` + `static` with a light driver; move the 3 overnight zones; retire SB Background instances.
 3. Bookkeeping: own-context tracking, manual overrides with expiry (kitchen first).
 4. `presence_lux`; evening for one zone, then the rest. Replaces the 8 `Lights - Occupancy` automations.
