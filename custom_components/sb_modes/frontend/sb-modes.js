@@ -11,7 +11,7 @@
  *
  * Rows use the shared SB row style (window.SBKit, from the SB UI Kit integration).
  */
-const VERSION = "0.3.2";
+const VERSION = "0.3.3";
 const CARD = "sb-modes-card";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -91,6 +91,12 @@ const STYLE = `
 .ask p { margin: 0; flex: 1 1 260px; }
 .ask .go { background: var(--primary-color); border-color: var(--primary-color); color: var(--text-primary-color, #fff); }
 .sbk-head h2.sub { font-size: 16px; }
+.curtag { margin-left: 8px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; opacity: .75; }
+.mode.on .curtag { opacity: .9; }
+.ask .make { border-color: var(--primary-color); color: var(--primary-color); }
+.ask.sure { background: color-mix(in srgb, var(--warning-color, #ffa600) 14%, transparent); }
+.sbk-row.pv .sbk-ico { opacity: .8; }
+.detail .src { opacity: .75; }
 .problems { margin: 0 12px 12px; padding: 10px 12px; border-radius: 8px; font-size: 13px; line-height: 1.45;
             background: color-mix(in srgb, var(--error-color, #db4437) 10%, transparent); color: var(--error-color, #db4437); }
 .problems.warn { background: color-mix(in srgb, var(--warning-color, #ffa600) 12%, transparent); color: var(--primary-text-color); }
@@ -168,19 +174,26 @@ class SbModesCard extends HTMLElement {
     }
     const names = sel.attributes.mode_names || {};
     const nm = (id) => names[id] || id;
+    const options = sel.attributes.options || [];
     const since = sel.attributes.since || sel.last_changed;
-    if (this._ask && (this._ask === sel.state || !(sel.attributes.options || []).includes(this._ask))) this._ask = null;
-    const modes = (sel.attributes.options || []).filter((id) => id !== sel.state).map((id) => `<button class="mode ${id === this._ask ? "on" : ""}" data-m="${esc(id)}"
-        ${this._busy ? "disabled" : ""} title="Switch to ${esc(nm(id))}"><ha-icon icon="${esc(modeIcon(id))}"></ha-icon>${esc(nm(id))}</button>`).join("");
-    let ask = "";
-    if (this._ask) {
-      const took = (sel.attributes.takes_over || {})[this._ask] || [];
+    // Looking at a mode and switching to it are separate: a tap on a mode only VIEWS it.
+    if (this._view && (this._view === sel.state || !options.includes(this._view))) { this._view = null; this._ask = false; }
+    const viewed = this._view || sel.state;
+    const previewing = viewed !== sel.state;
+    const chips = options.map((id) => `<button class="mode ${id === viewed ? "on" : ""}" data-m="${esc(id)}" ${this._busy ? "disabled" : ""}
+        title="${id === sel.state ? "The current mode" : `See what ${esc(nm(id))} does (does not switch)`}"><ha-icon icon="${esc(modeIcon(id))}"></ha-icon>${esc(nm(id))}${id === sel.state ? `<span class="curtag">current</span>` : ""}</button>`).join("");
+    let banner = "";
+    if (previewing && !this._ask) {
+      banner = `<div class="ask"><p>Showing <b>${esc(nm(viewed))}</b>. Nothing has changed: the house is still in <b>${esc(nm(sel.state))}</b>.</p>
+        <button class="sbk-btn back">Back to ${esc(nm(sel.state))}</button><button class="sbk-btn make">Make ${esc(nm(viewed))} the current mode…</button></div>`;
+    } else if (previewing) {
+      const took = (sel.attributes.takes_over || {})[viewed] || [];
       const zl = took.map((t) => t.zone);
       const list = zl.length > 1 ? `${zl.slice(0, -1).join(", ")} and ${zl.at(-1)}` : zl[0];
       const dark = took.some((t) => t.behaviour === "nightlight_then_dark") ? " Zones that are already empty go dark straight away." : "";
-      ask = `<div class="ask"><p>Switch to <b>${esc(nm(this._ask))}</b> now? ${zl.length
+      banner = `<div class="ask sure"><p>Switch the house to <b>${esc(nm(viewed))}</b> now? ${zl.length
           ? `It takes over ${esc(list)} at once.${dark}` : "It controls no zones, so nothing changes in the house."}</p>
-        <button class="sbk-btn no">Cancel</button><button class="sbk-btn go">Switch</button></div>`;
+        <button class="sbk-btn no">Cancel</button><button class="sbk-btn go">Switch to ${esc(nm(viewed))}</button></div>`;
     }
     const prob = this._problem();
     const errs = prob?.attributes.errors || [], warns = prob?.attributes.warnings || [];
@@ -188,28 +201,48 @@ class SbModesCard extends HTMLElement {
       ? `<div class="problems"><b>The mode table needs attention</b><ul>${errs.map((e) => `<li>${esc(e)}</li>`).join("")}</ul></div>`
       : warns.length ? `<div class="problems warn"><b>Warnings</b><ul>${warns.map((e) => `<li>${esc(e)}</li>`).join("")}</ul></div>` : "";
     const zones = this._zones();
-    const rows = zones.map((z) => this._row(z, names[sel.state] || sel.state)).join("");
+    const rows = zones.map((z) => this._row(z, viewed, nm(viewed), previewing)).join("");
     body.innerHTML = `
       <div class="now"><span class="sbk-ico armed big"><ha-icon icon="${esc(modeIcon(sel.state))}"></ha-icon></span>
         <div><div class="cur-l">Current mode</div><div class="cur">${esc(nm(sel.state))}</div>
           <div class="since">since ${esc(hhmm(since, this._hass.config?.time_zone))} (${esc(ago(since))} ago) · fallback ${esc(nm(sel.attributes.fallback_mode))}</div></div></div>
-      <div class="switch-l">Switch to</div>
-      <div class="modes" role="group" aria-label="Switch to another mode">${modes}</div>
-      ${ask}
+      <div class="switch-l">Modes · tap one to see what it does</div>
+      <div class="modes" role="group" aria-label="See a mode">${chips}</div>
+      ${banner}
       ${problems}
-      <div class="sbk-head"><h2 class="sub">Zones</h2>
-        <span class="sbk-count">${zones.length} zone${zones.length === 1 ? "" : "s"}</span></div>
+      <div class="sbk-head"><h2 class="sub">Zones${previewing ? ` in ${esc(nm(viewed))}` : ""}</h2>
+        <span class="sbk-count">${previewing ? "preview" : "live"} · ${zones.length} zone${zones.length === 1 ? "" : "s"}</span></div>
       ${rows || `<div class="sbk-empty">No zones yet. Add them to the table with the <code>sb_modes.save_config</code> action.</div>`}
       ${this._msg ? `<div class="sbk-note">${esc(this._msg)}</div>` : ""}`;
     this._wire();
   }
 
-  _row(z, modeName) {
-    const a = z.attr, beh = z.state;
-    const doing = beh === "hands_off" ? `Not controlled in ${modeName}` : a.status || "";
-    const l = look(beh, a.status);
+  _targets(targets) {
+    return Object.entries(targets || {}).map(([e, t]) => `${this._hass.states[e]?.attributes.friendly_name || e} ${
+      t.state === "off" ? "off" : t.brightness_pct != null ? `${t.brightness_pct}%` : "on"}`).join(", ");
+  }
+
+  /** What a behaviour does with these parameters, in words. */
+  _describe(beh, p = {}) {
+    if (beh === "hands_off") return "Not controlled";
+    if (beh === "static") return `Sets ${this._targets(p.targets)}`;
+    if (beh === "nightlight_then_dark") {
+      const nl = this._targets(p.nightlight);
+      return `${nl ? `Nightlight (${nl}) when someone comes in · ` : ""}dark after ${p.delay ?? 10} min empty`;
+    }
+    if (beh === "presence_lux") return `Lights to ${p.target_lux} lx when occupied (not built yet)`;
+    return beh;
+  }
+
+  _row(z, viewed, modeName, previewing) {
+    const a = z.attr;
+    const pick = (a.by_mode || {})[viewed] || { behaviour: z.state, params: a.params, source: a.source };
+    const beh = pick.behaviour;
+    const what = this._describe(beh, pick.params);
+    const doing = previewing ? what : beh === "hands_off" ? `Not controlled in ${modeName}` : a.status || "";
+    const l = previewing ? { icon: look(beh, "").icon, tint: "idle" } : look(beh, a.status);
     const open = this._open.has(z.id);
-    const src = a.source === "override" ? "zone's own" : "mode default";
+    const src = pick.source === "override" ? "this zone's own setting" : "the mode's default";
     const ent = (eid, kind) => {
       const st = this._hass.states[eid];
       const name = st?.attributes.friendly_name || eid;
@@ -218,15 +251,13 @@ class SbModesCard extends HTMLElement {
       const cls = s === "on" ? (kind === "occ" ? "occ" : "on") : ["unavailable", "unknown", "missing"].includes(s) ? "na" : "";
       return `<span class="ent ${cls}" title="${esc(eid)}"><i></i>${esc(name)}${esc(pct)}${cls === "na" ? ` (${esc(s)})` : ""}</span>`;
     };
-    const nightlight = a.params?.nightlight ? Object.entries(a.params.nightlight).map(([e, t]) =>
-      `${esc(this._hass.states[e]?.attributes.friendly_name || e)} ${t.state === "off" ? "off" : t.brightness_pct != null ? `${t.brightness_pct}%` : "on"}`).join(", ") : "";
     const detail = open ? `<div class="detail">
+        <div><b>In ${esc(modeName)}</b> ${esc(what)} <span class="src">(${esc(src)})</span></div>
         <div><b>Areas</b> ${esc((a.areas || []).join(", "))}</div>
-        ${nightlight ? `<div><b>Nightlight</b> ${nightlight}${a.params.delay ? ` · dark after ${esc(a.params.delay)} min vacant` : ""}</div>` : ""}
         ${(a.occupancy || []).length ? `<div><b>Occupancy</b> ${a.occupancy.map((e) => ent(e, "occ")).join("")}</div>` : ""}
         ${(a.lights || []).length ? `<div><b>Lights</b> ${a.lights.map((e) => ent(e, "light")).join("")}</div>` : ""}
       </div>` : "";
-    return `<div class="sbk-row" data-z="${esc(z.id)}">
+    return `<div class="sbk-row ${previewing ? "pv" : ""}" data-z="${esc(z.id)}">
         <button class="sbk-open" aria-expanded="${open}" title="${open ? "Hide" : "Show"} what ${esc(z.name)} holds">
           <span class="sbk-ico ${l.tint}"><ha-icon icon="${esc(l.icon)}"></ha-icon></span>
           <span class="sbk-txt"><span class="sbk-t">${esc(z.name)}</span>
@@ -238,15 +269,19 @@ class SbModesCard extends HTMLElement {
 
   _wire() {
     const root = this.shadowRoot.querySelector(".body");
-    // A mode acts on the house the moment it starts, so a tap only asks; Switch confirms.
+    // A tap on a mode only shows it. Switching takes two deliberate steps: "Make … the
+    // current mode…", then "Switch to …" in the confirmation that names what it takes over.
     root.querySelectorAll("button.mode").forEach((b) => b.addEventListener("click", () => {
-      this._ask = this._ask === b.dataset.m ? null : b.dataset.m; this._render();
+      const sel = this._select();
+      this._view = b.dataset.m === sel?.state ? null : b.dataset.m; this._ask = false; this._render();
     }));
-    root.querySelector(".ask .no")?.addEventListener("click", () => { this._ask = null; this._render(); });
+    root.querySelector(".ask .back")?.addEventListener("click", () => { this._view = null; this._ask = false; this._render(); });
+    root.querySelector(".ask .make")?.addEventListener("click", () => { this._ask = true; this._render(); });
+    root.querySelector(".ask .no")?.addEventListener("click", () => { this._ask = false; this._render(); });
     root.querySelector(".ask .go")?.addEventListener("click", async () => {
-      const sel = this._select(), target = this._ask;
-      this._ask = null; this._busy = true; this._render();
-      try { await this._hass.callService("select", "select_option", { entity_id: sel.entity_id, option: target }); this._msg = ""; }
+      const sel = this._select(), target = this._view;
+      this._ask = false; this._busy = true; this._render();
+      try { await this._hass.callService("select", "select_option", { entity_id: sel.entity_id, option: target }); this._msg = ""; this._view = null; }
       catch (e) { this._msg = `Could not change the mode: ${e?.message || e}`; }
       finally { this._busy = false; this._sig = ""; this._render(); }
     });
@@ -260,7 +295,7 @@ class SbModesCard extends HTMLElement {
 if (!customElements.get(CARD)) customElements.define(CARD, SbModesCard);
 window.customCards = window.customCards || [];
 if (!window.customCards.some((c) => c.type === CARD)) {
-  window.customCards.push({ type: CARD, name: "SB Modes", description: "The active mode, a picker, and what each zone is doing." });
+  window.customCards.push({ type: CARD, name: "SB Modes", description: "The current mode, what each mode does per zone, and a confirmed switch." });
 }
 
 class SbModesPanel extends HTMLElement {
@@ -285,7 +320,7 @@ class SbModesPanel extends HTMLElement {
     </style>
     <div class="bar"><ha-menu-button></ha-menu-button><div class="title">SB Modes</div><a href="/config/integrations/integration/sb_modes">Integration page</a></div>
     <div class="page"><div class="col">
-      <div class="intro">The house is in one mode at a time; each zone runs one behaviour for it. Switching asks first, because a mode acts at once. Tap a zone to see its lights and sensors.</div>
+      <div class="intro">The house is in one mode at a time; each zone runs one behaviour for it. Tap a mode to see what it does; switching is a separate, confirmed step because a mode acts at once. Tap a zone for its lights and sensors.</div>
       <div class="slot"></div>
       <div class="ver">SB Modes ${VERSION}</div>
     </div></div>`;

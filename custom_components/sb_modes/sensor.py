@@ -2,7 +2,8 @@
 
 State: the behaviour. Attributes: the zone, the mode, whether the behaviour is the
 mode's default or the zone's own override, and its parameters. Also its live status
-("vacant; dark at 23:14") and the lights and sensors it found in its areas.
+("vacant; dark at 23:14"), the lights and sensors it found in its areas, and what it
+does in EVERY mode (by_mode), so the panel can preview a mode without switching to it.
 """
 
 from __future__ import annotations
@@ -46,5 +47,6 @@ class ZoneSensor(ModesEntity, SensorEntity):
             "source": st.get("source"),
             "params": st.get("params", {}),
             "status": st.get("status"),
+            "by_mode": self._rt.zone_by_mode(self._zone_id),
             **{k: v for k, v in (st.get("entities") or {}).items()},
         }

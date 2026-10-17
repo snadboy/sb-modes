@@ -169,6 +169,10 @@ class Runtime:
                       if (picked := resolve(self.config, m, z["id"])) and picked["behaviour"] != "hands_off"]
         return out
 
+    def zone_by_mode(self, zone_id: str) -> dict[str, dict]:
+        """{mode id: {behaviour, params, source}} for one zone, every mode."""
+        return {m: picked for m in self.mode_ids if (picked := resolve(self.config, m, zone_id))}
+
     def zone_state(self, zone_id: str) -> dict | None:
         """What the zone runs now, for its sensor: the resolved choice plus live status."""
         picked = resolve(self.config, self.mode, zone_id) if self.mode else None

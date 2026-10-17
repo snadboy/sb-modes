@@ -132,6 +132,8 @@ async def test_save_makes_zone_sensors_and_keeps_the_mode(hass: HomeAssistant, k
     assert zone.attributes["params"] == {"nightlight": {SINK: {"brightness_pct": 10}}, "delay": 10}
     assert zone.attributes["lights"] == [CEILING, SINK]
     assert zone.attributes["occupancy"] == [OCC]
+    assert zone.attributes["by_mode"]["day"] == {"behaviour": "hands_off", "params": {}, "source": "default"}
+    assert zone.attributes["by_mode"]["overnight"]["source"] == "override"
 
     await _mode(hass, "evening")
     zone = hass.states.get(ZONE)
