@@ -11,3 +11,6 @@ STARTUP_SETTLE_SECONDS = 20       # after EVENT_HOMEASSISTANT_STARTED, before be
 CHECK_SECONDS = 60                # how often a saved table is re-validated (entities, areas)
 ALERT_GRACE_SECONDS = 120         # an error must last this long before a Repairs issue (boot races)
 ISSUE_ID = "config_problem"
+
+PANEL_URL = "sb-modes"
+STATIC_URL = "/sb_modes_static"

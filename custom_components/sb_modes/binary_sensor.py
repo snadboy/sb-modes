@@ -30,4 +30,4 @@ class ProblemSensor(ModesEntity, BinarySensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict:
-        return {"errors": self._rt.errors, "warnings": self._rt.warnings}
+        return {"sb_modes_problem": True, "errors": self._rt.errors, "warnings": self._rt.warnings}

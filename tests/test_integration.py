@@ -119,9 +119,11 @@ async def test_zone_without_a_sensor_is_refused(hass: HomeAssistant, kitchen) ->
 async def test_save_makes_zone_sensors_and_keeps_the_mode(hass: HomeAssistant, kitchen, lights) -> None:
     await _setup(hass)
     await _mode(hass, "overnight")
+    since = hass.states.get(SELECT).attributes["since"]
     assert await _save(hass, _table()) == {"warnings": []}
     assert hass.states.get(SELECT).attributes["options"] == ["day", "evening", "overnight"]
     assert hass.states.get(SELECT).state == "overnight"  # restored across the reload
+    assert hass.states.get(SELECT).attributes["since"] == since                   # …and when it began
     zone = hass.states.get(ZONE)
     assert zone.state == "nightlight_then_dark"
     assert zone.attributes["source"] == "override"

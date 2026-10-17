@@ -39,6 +39,8 @@ class ZoneSensor(ModesEntity, SensorEntity):
         st = self._rt.zone_state(self._zone_id) or {}
         return {
             "sb_modes_zone": self._zone_id,
+            "zone_name": zone.get("name") or self._zone_id,
+            "order": next((i for i, z in enumerate(self._rt.zones()) if z["id"] == self._zone_id), None),
             "areas": zone.get("areas", []),
             "mode": self._rt.mode,
             "source": st.get("source"),

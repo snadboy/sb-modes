@@ -5,12 +5,17 @@
     "@snadboy"
   ],
   "config_flow": true,
-  "dependencies": [],
+  "dependencies": [
+    "http",
+    "frontend",
+    "panel_custom",
+    "sb_ui_kit"
+  ],
   "documentation": "https://github.com/snadboy/sb-modes",
   "integration_type": "service",
   "iot_class": "calculated",
   "issue_tracker": "https://github.com/snadboy/sb-modes/issues",
   "requirements": [],
   "single_config_entry": true,
-  "version": "0.2.0"
+  "version": "0.3.1"
 }

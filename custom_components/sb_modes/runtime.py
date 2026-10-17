@@ -26,6 +26,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.event import async_call_later, async_track_time_interval
 from homeassistant.helpers.storage import Store
+from homeassistant.util import dt as dt_util
 
 from . import driver
 from .behaviours import KINDS, Behaviour, HandsOff
@@ -67,6 +68,7 @@ class Runtime:
         self.store: Store = Store(hass, STORE_VERSION, STORE_KEY)
         self.config: dict[str, Any] = default_config()
         self.mode: str | None = None
+        self.mode_since: str | None = None                 # ISO time the mode last changed
         self.errors: list[str] = []
         self.warnings: list[str] = []
         self.ready = False                                # behaviours may run
@@ -169,9 +171,12 @@ class Runtime:
 
     # ── the active mode ──────────────────────────────────────────────────────
     @callback
-    def restore_mode(self, last: str | None) -> None:
-        """At startup: the last mode if it still exists, else the fallback."""
-        self.mode = last if last in self.mode_ids else self.fallback
+    def restore_mode(self, last: str | None, since: str | None = None) -> None:
+        """At startup: the last mode (and when it began) if it still exists, else the fallback."""
+        if last in self.mode_ids:
+            self.mode, self.mode_since = last, since or dt_util.utcnow().isoformat()
+        else:
+            self.mode, self.mode_since = self.fallback, dt_util.utcnow().isoformat()
         self._restart_behaviours()
 
     @callback
@@ -181,6 +186,7 @@ class Runtime:
         if mode_id == self.mode:
             return
         old, self.mode = self.mode, mode_id
+        self.mode_since = dt_util.utcnow().isoformat()
         self.hass.bus.async_fire(EVENT_MODE_CHANGED, {"from": old, "to": mode_id})
         self._restart_behaviours()
 
