@@ -1,0 +1,13 @@
+get_config:
+check_config:
+  fields:
+    config:
+      required: true
+      selector:
+        object:
+save_config:
+  fields:
+    config:
+      required: true
+      selector:
+        object:

@@ -1,0 +1,57 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "SB Modes",
+        "description": "Adds the mode select, a status sensor per zone and a problem sensor. It starts with four modes (morning, day, evening, overnight) that do nothing until you give them behaviours."
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "SB Modes is already set up."
+    }
+  },
+  "issues": {
+    "config_problem": {
+      "title": "SB Modes: the mode table needs attention",
+      "description": "The saved mode table no longer validates:\n\n{errors}\n\nFix the entities or areas it names, or save a corrected table with the sb_modes.save_config action."
+    }
+  },
+  "entity": {
+    "select": {
+      "mode": {
+        "name": "Mode"
+      }
+    },
+    "binary_sensor": {
+      "problem": {
+        "name": "Problem"
+      }
+    }
+  },
+  "services": {
+    "get_config": {
+      "name": "Get mode table",
+      "description": "Returns the saved mode table with its current errors and warnings."
+    },
+    "check_config": {
+      "name": "Check mode table",
+      "description": "Validates a mode table without saving it.",
+      "fields": {
+        "config": {
+          "name": "Table",
+          "description": "The whole mode table: fallback_mode, modes, zones."
+        }
+      }
+    },
+    "save_config": {
+      "name": "Save mode table",
+      "description": "Saves a mode table that has no errors, then reloads SB Modes so zones become entities.",
+      "fields": {
+        "config": {
+          "name": "Table",
+          "description": "The whole mode table: fallback_mode, modes, zones."
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "domain": "sb_modes",
+  "name": "SB Modes",
+  "codeowners": [
+    "@snadboy"
+  ],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/snadboy/sb-modes",
+  "integration_type": "service",
+  "iot_class": "calculated",
+  "issue_tracker": "https://github.com/snadboy/sb-modes/issues",
+  "requirements": [],
+  "single_config_entry": true,
+  "version": "0.1.0"
+}
