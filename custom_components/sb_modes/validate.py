@@ -5,6 +5,9 @@ Repairs issue: a missing or duplicate id, no fallback mode, an override naming a
 mode that does not exist, an unknown behaviour, a parameter that does not fit its
 schema, an entity that does not exist or that no driver can control, an unknown area.
 
+A zone whose behaviour, in any mode, needs lights, occupancy or illuminance sensors
+that its areas do not have is an error too.
+
 WARNINGS never block: an entity that is unavailable right now.
 
 Every message starts with where the problem is ("Zone Kitchen, Overnight: …"), so a
@@ -17,9 +20,10 @@ import re
 from collections.abc import Callable
 from typing import Any
 
-from .model import BEHAVIOURS, DRIVER_DOMAINS, TARGET_KEYS, mode_ids
+from .model import BEHAVIOURS, DRIVER_DOMAINS, NEEDS, TARGET_KEYS, mode_ids, resolve
 
 UNAVAILABLE = ("unavailable", "unknown")
+NEED_LABELS = {"lights": "a light", "occupancy": "an occupancy sensor", "illuminance": "an illuminance sensor"}
 ID_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 
 
@@ -27,11 +31,14 @@ def check_config(
     config: Any,
     state_of: Callable[[str], str | None],
     area_exists: Callable[[str], bool],
+    zone_entities: Callable[[list[str]], dict[str, list[str]]] | None = None,
 ) -> tuple[list[str], list[str]]:
     """(errors, warnings) for a whole table.
 
     state_of(entity_id) → its state, or None when the entity does not exist.
     area_exists(area_id) → whether the area registry has it.
+    zone_entities(area_ids) → {"lights": [...], "occupancy": [...], "illuminance": [...]}
+    found in those areas; None skips the needs check.
     """
     errors: list[str] = []
     warnings: list[str] = []
@@ -74,12 +81,14 @@ def check_config(
         where = f"Zone {zone.get('name') or zone.get('id') or i + 1}"
         _check_id(zone.get("id"), where, errors)
         areas = zone.get("areas")
-        if not isinstance(areas, list) or not areas:
+        areas_ok = isinstance(areas, list) and bool(areas)
+        if not areas_ok:
             errors.append(f"{where}: list at least one area.")
         else:
             for area in areas:
                 if not area_exists(area):
                     errors.append(f"{where}: area “{area}” does not exist.")
+                    areas_ok = False
         overrides = zone.get("overrides") or {}
         if not isinstance(overrides, dict):
             errors.append(f"{where}: overrides must map a mode id to a behaviour.")
@@ -89,8 +98,23 @@ def check_config(
                 errors.append(f"{where}: overrides mode “{mode_id}”, which is not defined.")
                 continue
             _check_choice(choice, f"{where}, {names.get(mode_id, mode_id)}", state_of, errors, warnings)
+        if areas_ok and zone_entities is not None and isinstance(zone.get("id"), str):
+            _check_needs(config, zone, ids, names, zone_entities(areas), where, errors)
     _check_unique([z.get("id") for z in zones if isinstance(z, dict)], "Zone", errors)
     return errors, warnings
+
+
+def _check_needs(config: dict, zone: dict, ids: list[str], names: dict, found: dict, where: str,
+                 errors: list[str]) -> None:
+    """Each behaviour the zone runs in some mode must find what it needs in the zone's areas."""
+    missing: dict[tuple[str, str], list[str]] = {}
+    for mode_id in ids:
+        picked = resolve(config, mode_id, zone["id"]) or {}
+        for need in NEEDS.get(picked.get("behaviour") or "", ()):
+            if not found.get(need):
+                missing.setdefault((picked["behaviour"], need), []).append(str(names.get(mode_id, mode_id)))
+    for (behaviour, need), modes in missing.items():
+        errors.append(f"{where}: {behaviour} ({', '.join(modes)}) needs {NEED_LABELS[need]} in the zone's areas; there is none.")
 
 
 def _check_id(value: Any, where: str, errors: list[str]) -> None:

@@ -1,28 +1,41 @@
-"""The running state of SB Modes: the saved table, the active mode, and its problems.
+"""The running state of SB Modes: the saved table, the active mode, the behaviour each
+zone runs, and the table's problems.
 
 One Runtime per (single) config entry. The table lives in a Store, not in the entry's
 options, because it is a structured document edited as a whole and saved only when it
 validates. Entities subscribe with add_listener() and re-render on any change.
+
+Behaviours start once Home Assistant has started plus a settle period (sensor states
+are still loading before that), and are restarted, for every zone, on each mode change.
+A table change reloads the entry, which stops and starts them too.
 """
 
 from __future__ import annotations
 
 import logging
+from collections import deque
 from collections.abc import Callable
 from datetime import timedelta
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import CALLBACK_TYPE, HassJob, HomeAssistant, callback
+from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
+from homeassistant.core import CALLBACK_TYPE, Context, CoreState, HassJob, HomeAssistant, callback
 from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.event import async_call_later, async_track_time_interval
 from homeassistant.helpers.storage import Store
 
-from .const import ALERT_GRACE_SECONDS, CHECK_SECONDS, DOMAIN, EVENT_MODE_CHANGED, ISSUE_ID, STORE_KEY, STORE_VERSION
+from . import driver
+from .behaviours import KINDS, Behaviour, HandsOff
+from .const import (
+    ALERT_GRACE_SECONDS, CHECK_SECONDS, DOMAIN, EVENT_MODE_CHANGED, ISSUE_ID, STARTUP_SETTLE_SECONDS, STORE_KEY,
+    STORE_VERSION,
+)
 from .model import default_config, find, mode_ids, resolve
 from .validate import check_config
+from .zones import zone_entities
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -56,6 +69,9 @@ class Runtime:
         self.mode: str | None = None
         self.errors: list[str] = []
         self.warnings: list[str] = []
+        self.ready = False                                # behaviours may run
+        self.own_contexts: deque[str] = deque(maxlen=500)  # ids of the contexts of our own calls
+        self._behaviours: dict[str, Behaviour] = {}
         self._listeners: list[Callable[[], None]] = []
         self._unsubs: list[CALLBACK_TYPE] = []
         self._grace: CALLBACK_TYPE | None = None
@@ -74,6 +90,24 @@ class Runtime:
         self.check()
         self._unsubs.append(async_track_time_interval(
             self.hass, self._tick, timedelta(seconds=CHECK_SECONDS), cancel_on_shutdown=True))
+        if self.hass.state is CoreState.running:
+            self._set_ready()
+        else:
+            self._unsubs.append(self.hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, self._started))
+
+    @callback
+    def _started(self, _event) -> None:
+        self._unsubs.append(async_call_later(
+            self.hass, STARTUP_SETTLE_SECONDS, HassJob(self._settled, cancel_on_shutdown=True)))
+
+    @callback
+    def _settled(self, _now) -> None:
+        self._set_ready()
+
+    @callback
+    def _set_ready(self) -> None:
+        self.ready = True
+        self._restart_behaviours()
 
     @callback
     def _tick(self, _now) -> None:
@@ -82,13 +116,18 @@ class Runtime:
     @callback
     def stop(self) -> None:
         for unsub in self._unsubs:
-            unsub()
+            try:
+                unsub()
+            except ValueError:                           # a listen_once that already fired
+                pass
         self._unsubs.clear()
         self._cancel_grace()
+        self._stop_behaviours()
 
     # ── the table ────────────────────────────────────────────────────────────
     def validate(self, config: Any) -> tuple[list[str], list[str]]:
-        return check_config(config, state_lookup(self.hass), area_lookup(self.hass))
+        return check_config(config, state_lookup(self.hass), area_lookup(self.hass),
+                            lambda areas: zone_entities(self.hass, areas))
 
     async def async_save(self, config: dict[str, Any]) -> list[str]:
         """Save a table that has no errors (the caller checked); returns its warnings.
@@ -119,14 +158,21 @@ class Runtime:
         return [z for z in self.config.get("zones") or [] if isinstance(z, dict) and z.get("id")]
 
     def zone_state(self, zone_id: str) -> dict | None:
-        return resolve(self.config, self.mode, zone_id) if self.mode else None
+        """What the zone runs now, for its sensor: the resolved choice plus live status."""
+        picked = resolve(self.config, self.mode, zone_id) if self.mode else None
+        if picked is None:
+            return None
+        b = self._behaviours.get(zone_id)
+        picked["status"] = b.status if b else "waiting for start-up"
+        picked["entities"] = b.entities if b else {}
+        return picked
 
     # ── the active mode ──────────────────────────────────────────────────────
     @callback
     def restore_mode(self, last: str | None) -> None:
         """At startup: the last mode if it still exists, else the fallback."""
         self.mode = last if last in self.mode_ids else self.fallback
-        self._notify()
+        self._restart_behaviours()
 
     @callback
     def set_mode(self, mode_id: str) -> None:
@@ -136,7 +182,34 @@ class Runtime:
             return
         old, self.mode = self.mode, mode_id
         self.hass.bus.async_fire(EVENT_MODE_CHANGED, {"from": old, "to": mode_id})
-        self._notify()
+        self._restart_behaviours()
+
+    # ── behaviours ───────────────────────────────────────────────────────────
+    @callback
+    def _restart_behaviours(self) -> None:
+        self._stop_behaviours()
+        if self.ready and self.mode:
+            for zone in self.zones():
+                picked = resolve(self.config, self.mode, zone["id"]) or {}
+                kind = KINDS.get(picked.get("behaviour") or "", HandsOff)
+                b = kind(self, zone, picked.get("params") or {}, zone_entities(self.hass, zone.get("areas") or []))
+                self._behaviours[zone["id"]] = b
+                b.start()
+        self.notify()
+
+    @callback
+    def _stop_behaviours(self) -> None:
+        for b in self._behaviours.values():
+            b.stop()
+        self._behaviours.clear()
+
+    @callback
+    def apply(self, targets: dict[str, dict], why: str) -> None:
+        """Send targets through the driver, under a context remembered as our own."""
+        ctx = Context()
+        self.own_contexts.append(ctx.id)
+        _LOGGER.debug("SB Modes: %s → %s", why, targets)
+        self.hass.async_create_task(driver.apply(self.hass, targets, ctx), f"sb_modes apply {why}")
 
     # ── problems ─────────────────────────────────────────────────────────────
     @callback
@@ -156,7 +229,7 @@ class Runtime:
                 ir.async_delete_issue(self.hass, DOMAIN, ISSUE_ID)
                 self._issue_raised = False
         if changed:
-            self._notify()
+            self.notify()
 
     @callback
     def _grace_over(self, _now=None) -> None:
@@ -186,7 +259,6 @@ class Runtime:
         return lambda: self._listeners.remove(fn)
 
     @callback
-    def _notify(self) -> None:
+    def notify(self) -> None:
         for fn in list(self._listeners):
             fn()
-

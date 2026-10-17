@@ -47,7 +47,9 @@ GOOD = {
     "zones": [
         {"id": "kitchen", "name": "Kitchen", "areas": ["kitchen", "kitchen_aux"],
          "overrides": {"overnight": {"behaviour": "nightlight_then_dark",
-                                     "params": {"nightlight": "light.kitchen_aux_sink", "level": 10, "delay": 10}}}},
+                                     "params": {"nightlight": {"light.kitchen_aux_sink": {"brightness_pct": 10},
+                                                                "light.kitchen_aux_cabinet": {"state": "on"}},
+                                                 "delay": 10}}}},
         {"id": "dining", "name": "Dining Room", "areas": ["dining_room", "dining_room_aux"]},
     ],
 }
@@ -74,7 +76,8 @@ def test_default_config_is_valid():
 def test_resolve_override_and_default():
     assert M.resolve(GOOD, "overnight", "kitchen") == {
         "behaviour": "nightlight_then_dark", "source": "override",
-        "params": {"nightlight": "light.kitchen_aux_sink", "level": 10, "delay": 10}}
+        "params": {"nightlight": {"light.kitchen_aux_sink": {"brightness_pct": 10},
+                                  "light.kitchen_aux_cabinet": {"state": "on"}}, "delay": 10}}
     assert M.resolve(GOOD, "overnight", "dining") == {"behaviour": "nightlight_then_dark", "params": {"delay": 10}, "source": "default"}
     assert M.resolve(GOOD, "evening", "dining") is None
     assert M.resolve(GOOD, "day", "nowhere") is None
@@ -138,13 +141,45 @@ def test_number_range_and_type():
 
 def test_entity_checks():
     def nl(eid):
-        return lambda c: c["zones"][0]["overrides"]["overnight"]["params"].update(nightlight=eid)
+        return lambda c: c["zones"][0]["overrides"]["overnight"]["params"].update(nightlight={eid: {"state": "on"}})
     e, _ = edit(nl("light.gone"))
     assert e == ["Zone Kitchen, Overnight, nightlight: light.gone does not exist."], e
     e, _ = edit(nl("climate.bedroom_ac"))
-    assert e == ["Zone Kitchen, Overnight, nightlight: climate.bedroom_ac is not a light / switch entity."], e
+    assert e == ["Zone Kitchen, Overnight, nightlight: no driver controls climate entities (climate.bedroom_ac)."], e
     e, w = edit(nl("light.dining_room_aux_sideboard"))
     assert e == [] and w == ["Zone Kitchen, Overnight, nightlight: light.dining_room_aux_sideboard is unavailable."], (e, w)
+
+
+FOUND = {
+    "kitchen": {"lights": ["light.kitchen_aux_sink"], "occupancy": ["binary_sensor.kitchen_occ"], "illuminance": []},
+    "dining_room": {"lights": ["light.chandelier"], "occupancy": [], "illuminance": []},
+}
+
+
+def zone_entities(areas):
+    out = {"lights": [], "occupancy": [], "illuminance": []}
+    for a in areas:
+        for k, v in FOUND.get(a, {}).items():
+            out[k] += v
+    return out
+
+
+def test_needs_from_areas():
+    e, _ = V.check_config(GOOD, state_of, area_exists, zone_entities)
+    assert e == ["Zone Dining Room: nightlight_then_dark (Overnight) needs an occupancy sensor in the zone's areas; there is none."], e
+    cfg = copy.deepcopy(GOOD)
+    cfg["zones"][1]["overrides"] = {"overnight": {"behaviour": "hands_off"}}
+    assert V.check_config(cfg, state_of, area_exists, zone_entities) == ([], [])
+    cfg["modes"][0]["default"] = {"behaviour": "presence_lux", "params": {"target_lux": 50}}
+    e, _ = V.check_config(cfg, state_of, area_exists, zone_entities)
+    assert e == ["Zone Kitchen: presence_lux (Day) needs an illuminance sensor in the zone's areas; there is none.",
+                 "Zone Dining Room: presence_lux (Day) needs an occupancy sensor in the zone's areas; there is none.",
+                 "Zone Dining Room: presence_lux (Day) needs an illuminance sensor in the zone's areas; there is none."], e
+
+
+def test_defaults_filled_in():
+    assert M.with_defaults("nightlight_then_dark", {}) == {"delay": 10}
+    assert M.with_defaults("nightlight_then_dark", {"delay": 3}) == {"delay": 3}
 
 
 def test_targets_need_a_driver():

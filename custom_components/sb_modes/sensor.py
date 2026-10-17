@@ -1,8 +1,8 @@
 """sensor.sb_modes_<zone> — what a zone runs in the active mode, and why.
 
 State: the behaviour. Attributes: the zone, the mode, whether the behaviour is the
-mode's default or the zone's own override, and its parameters. Step 1 only reports;
-the behaviours start doing things in later steps.
+mode's default or the zone's own override, and its parameters. Also its live status
+("vacant; dark at 23:14") and the lights and sensors it found in its areas.
 """
 
 from __future__ import annotations
@@ -43,4 +43,6 @@ class ZoneSensor(ModesEntity, SensorEntity):
             "mode": self._rt.mode,
             "source": st.get("source"),
             "params": st.get("params", {}),
+            "status": st.get("status"),
+            **{k: v for k, v in (st.get("entities") or {}).items()},
         }

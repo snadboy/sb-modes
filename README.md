@@ -7,7 +7,7 @@ leave a mode, zone or entity unhandled.
 
 Design: [SB Modes — design](https://claude.ai/artifact/9GAUvd4N2gctYm88fnMqhs)
 
-## Status: step 1 of 8 (skeleton)
+## Status: step 2 of 8 (first behaviours)
 
 - The **mode table**: modes (each with a default behaviour), zones (an area plus its
   aux areas) and per-zone overrides. Validated on save and re-checked every minute.
@@ -20,7 +20,19 @@ Design: [SB Modes — design](https://claude.ai/artifact/9GAUvd4N2gctYm88fnMqhs)
   the saved table stops validating, for example because an entity or area was deleted.
 - Event **`sb_modes_mode_changed`** `{from, to}`.
 
-No behaviour acts on a device yet; that starts in step 2.
+Behaviours that act (0.2.0):
+
+- **`nightlight_then_dark`**: someone detected while every zone light is off → the
+  `nightlight` targets; every occupancy sensor off for `delay` minutes (default 10) →
+  every light in the zone off, once per vacancy. Entering the mode with the zone already
+  vacant that long goes dark at once. An unavailable sensor counts as not vacant.
+- **`static`**: sets its `targets` once on entering the mode.
+- `hands_off` does nothing; `presence_lux` is validated but not built yet.
+
+A zone's lights and sensors come from its areas: `light.*` entities, `binary_sensor.*`
+with device class occupancy or presence, `sensor.*` with device class illuminance. A zone
+whose behaviour needs one of these and has none is refused. The driver only sends what
+differs from the current state, and every call carries a context SB Modes remembers.
 
 ## Editing the table (until the panel exists)
 
@@ -44,12 +56,16 @@ zones:
     overrides:
       overnight:
         behaviour: nightlight_then_dark
-        params: {nightlight: light.kitchen_aux_sink, level: 10}
+        params:
+          nightlight:
+            light.kitchen_aux_sink: {brightness_pct: 10}
+            light.kitchen_aux_cabinet: {state: "on"}
 ```
 
-Behaviours: `hands_off`, `static` (`targets`), `nightlight_then_dark` (`nightlight`,
-`level`, `delay`), `presence_lux` (`target_lux`, `color_temp_kelvin`, `off_delay`).
-Entities must be `light` or `switch` (the domains a driver controls).
+Behaviours: `hands_off`, `static` (`targets`), `nightlight_then_dark` (`nightlight`
+targets, `delay`), `presence_lux` (`target_lux`, `color_temp_kelvin`, `off_delay`).
+A target is `{state: on|off, brightness_pct, color_temp_kelvin}`; entities in targets
+must be `light` or `switch` (the domains a driver controls).
 
 ## Tests
 

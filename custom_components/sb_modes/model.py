@@ -12,7 +12,7 @@ The CONFIG is the one definition everything else is derived from:
       "zones": [
         {"id": "kitchen", "name": "Kitchen", "areas": ["kitchen", "kitchen_aux"],
          "overrides": {"overnight": {"behaviour": "nightlight_then_dark",
-                                     "params": {"nightlight": "light.kitchen_aux_sink", "level": 10}}}},
+                                     "params": {"nightlight": {"light.kitchen_aux_sink": {"brightness_pct": 10}}}}}},
         …
       ],
     }
@@ -37,15 +37,21 @@ BEHAVIOURS: dict[str, dict[str, dict[str, Any]]] = {
         "targets": {"type": "targets", "required": True},
     },
     "nightlight_then_dark": {
-        "nightlight": {"type": "entity", "domains": ["light", "switch"]},
-        "level": {"type": "number", "min": 1, "max": 100},
-        "delay": {"type": "number", "min": 1, "max": 240},
+        "nightlight": {"type": "targets"},
+        "delay": {"type": "number", "min": 1, "max": 240, "default": 10},
     },
     "presence_lux": {
         "target_lux": {"type": "number", "min": 1, "max": 2000, "required": True},
         "color_temp_kelvin": {"type": "number", "min": 2000, "max": 6500},
         "off_delay": {"type": "number", "min": 1, "max": 240},
     },
+}
+
+# What a behaviour needs from its zone's areas. A zone that runs it in any mode without
+# these is a validation error, not a behaviour that silently does nothing.
+NEEDS: dict[str, tuple[str, ...]] = {
+    "nightlight_then_dark": ("lights", "occupancy"),
+    "presence_lux": ("lights", "occupancy", "illuminance"),
 }
 
 # Domains a driver can control. An entity outside these is an error, not skipped.
@@ -89,4 +95,14 @@ def resolve(config: dict, mode_id: str, zone_id: str) -> dict | None:
         return None
     own = (zone.get("overrides") or {}).get(mode_id)
     picked, source = (own, "override") if own else (mode.get("default") or {}, "default")
-    return {"behaviour": picked.get("behaviour"), "params": dict(picked.get("params") or {}), "source": source}
+    return {"behaviour": picked.get("behaviour"), "params": with_defaults(picked.get("behaviour"), picked.get("params")),
+            "source": source}
+
+
+def with_defaults(behaviour: str | None, params: dict | None) -> dict:
+    """The parameters as given, plus the schema's default for any left out."""
+    out = dict(params or {})
+    for key, spec in BEHAVIOURS.get(behaviour or "", {}).items():
+        if out.get(key) is None and "default" in spec:
+            out[key] = spec["default"]
+    return out
