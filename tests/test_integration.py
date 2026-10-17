@@ -124,6 +124,8 @@ async def test_save_makes_zone_sensors_and_keeps_the_mode(hass: HomeAssistant, k
     assert hass.states.get(SELECT).attributes["options"] == ["day", "evening", "overnight"]
     assert hass.states.get(SELECT).state == "overnight"  # restored across the reload
     assert hass.states.get(SELECT).attributes["since"] == since                   # …and when it began
+    assert hass.states.get(SELECT).attributes["takes_over"] == {
+        "day": [], "evening": [], "overnight": [{"zone": "Kitchen", "behaviour": "nightlight_then_dark"}]}
     zone = hass.states.get(ZONE)
     assert zone.state == "nightlight_then_dark"
     assert zone.attributes["source"] == "override"

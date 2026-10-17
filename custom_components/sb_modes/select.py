@@ -49,6 +49,7 @@ class ModeSelect(ModesEntity, RestoreEntity, SelectEntity):
             "mode_names": {m: self._rt.mode_name(m) for m in self._rt.mode_ids},
             "fallback_mode": self._rt.fallback,
             "since": self._rt.mode_since,
+            "takes_over": self._rt.takes_over(),
         }
 
     async def async_select_option(self, option: str) -> None:

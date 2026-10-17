@@ -159,6 +159,16 @@ class Runtime:
     def zones(self) -> list[dict]:
         return [z for z in self.config.get("zones") or [] if isinstance(z, dict) and z.get("id")]
 
+    def takes_over(self) -> dict[str, list[dict]]:
+        """Per mode, the zones it controls (behaviour other than hands_off), for the panel's
+        "switch to …?" confirmation."""
+        out: dict[str, list[dict]] = {}
+        for m in self.mode_ids:
+            out[m] = [{"zone": z.get("name") or z["id"], "behaviour": picked["behaviour"]}
+                      for z in self.zones()
+                      if (picked := resolve(self.config, m, z["id"])) and picked["behaviour"] != "hands_off"]
+        return out
+
     def zone_state(self, zone_id: str) -> dict | None:
         """What the zone runs now, for its sensor: the resolved choice plus live status."""
         picked = resolve(self.config, self.mode, zone_id) if self.mode else None

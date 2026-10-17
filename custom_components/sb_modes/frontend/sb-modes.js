@@ -11,7 +11,7 @@
  *
  * Rows use the shared SB row style (window.SBKit, from the SB UI Kit integration).
  */
-const VERSION = "0.3.1";
+const VERSION = "0.3.2";
 const CARD = "sb-modes-card";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -43,6 +43,12 @@ const whenKit = () => kitPromise || (kitPromise = new Promise((resolve) => {
 }));
 const KIT_MISSING = `<div style="padding: 16px; color: var(--error-color)">The <b>SB UI Kit</b> integration is not loaded — install “SB UI Kit” from HACS and restart Home Assistant.</div>`;
 
+const MODE_ICONS = {
+  morning: "mdi:weather-sunset-up", day: "mdi:white-balance-sunny", evening: "mdi:weather-sunset-down",
+  overnight: "mdi:weather-night", night: "mdi:weather-night", away: "mdi:home-export-outline",
+};
+const modeIcon = (id) => MODE_ICONS[id] || "mdi:home-clock-outline";
+
 const BEHAVIOUR_NAMES = {
   hands_off: "Hands off",
   static: "Static",
@@ -71,9 +77,20 @@ const STYLE = `
 .mode { height: 36px; padding: 0 16px; border-radius: 18px; border: 1px solid var(--divider-color); background: none; cursor: pointer;
         color: var(--primary-text-color); font: inherit; font-size: 14px; font-weight: 500; }
 .mode:hover { background: color-mix(in srgb, var(--primary-text-color) 8%, transparent); }
-.mode.on { background: var(--primary-color); border-color: var(--primary-color); color: var(--text-primary-color, #fff); cursor: default; }
-.mode:disabled:not(.on) { opacity: .5; cursor: default; }
-.since { padding: 0 16px 12px; font-size: 13px; color: var(--secondary-text-color); }
+.mode.on { background: var(--primary-color); border-color: var(--primary-color); color: var(--text-primary-color, #fff); }
+.mode:disabled { opacity: .5; cursor: default; }
+.mode ha-icon { --mdc-icon-size: 18px; margin: -2px 6px 0 -4px; vertical-align: middle; }
+.now { display: flex; align-items: center; gap: 14px; padding: 16px 16px 10px; }
+.sbk-ico.big { width: 56px; height: 56px; flex: 0 0 56px; border-radius: 28px; --mdc-icon-size: 30px; }
+.cur-l { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--secondary-text-color); }
+.cur { font-size: 26px; font-weight: 500; line-height: 1.15; }
+.since { font-size: 13px; color: var(--secondary-text-color); }
+.switch-l { padding: 4px 16px 6px; font-size: 13px; color: var(--secondary-text-color); }
+.ask { margin: 0 12px 12px; padding: 10px 12px; border-radius: 8px; font-size: 14px; line-height: 1.45;
+       background: color-mix(in srgb, var(--primary-color) 10%, transparent); display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.ask p { margin: 0; flex: 1 1 260px; }
+.ask .go { background: var(--primary-color); border-color: var(--primary-color); color: var(--text-primary-color, #fff); }
+.sbk-head h2.sub { font-size: 16px; }
 .problems { margin: 0 12px 12px; padding: 10px 12px; border-radius: 8px; font-size: 13px; line-height: 1.45;
             background: color-mix(in srgb, var(--error-color, #db4437) 10%, transparent); color: var(--error-color, #db4437); }
 .problems.warn { background: color-mix(in srgb, var(--warning-color, #ffa600) 12%, transparent); color: var(--primary-text-color); }
@@ -150,9 +167,21 @@ class SbModesCard extends HTMLElement {
       return;
     }
     const names = sel.attributes.mode_names || {};
+    const nm = (id) => names[id] || id;
     const since = sel.attributes.since || sel.last_changed;
-    const modes = (sel.attributes.options || []).map((id) => `<button class="mode ${id === sel.state ? "on" : ""}" data-m="${esc(id)}"
-        ${this._busy ? "disabled" : ""} title="${id === sel.state ? "The active mode" : `Switch to ${esc(names[id] || id)}`}">${esc(names[id] || id)}</button>`).join("");
+    if (this._ask && (this._ask === sel.state || !(sel.attributes.options || []).includes(this._ask))) this._ask = null;
+    const modes = (sel.attributes.options || []).filter((id) => id !== sel.state).map((id) => `<button class="mode ${id === this._ask ? "on" : ""}" data-m="${esc(id)}"
+        ${this._busy ? "disabled" : ""} title="Switch to ${esc(nm(id))}"><ha-icon icon="${esc(modeIcon(id))}"></ha-icon>${esc(nm(id))}</button>`).join("");
+    let ask = "";
+    if (this._ask) {
+      const took = (sel.attributes.takes_over || {})[this._ask] || [];
+      const zl = took.map((t) => t.zone);
+      const list = zl.length > 1 ? `${zl.slice(0, -1).join(", ")} and ${zl.at(-1)}` : zl[0];
+      const dark = took.some((t) => t.behaviour === "nightlight_then_dark") ? " Zones that are already empty go dark straight away." : "";
+      ask = `<div class="ask"><p>Switch to <b>${esc(nm(this._ask))}</b> now? ${zl.length
+          ? `It takes over ${esc(list)} at once.${dark}` : "It controls no zones, so nothing changes in the house."}</p>
+        <button class="sbk-btn no">Cancel</button><button class="sbk-btn go">Switch</button></div>`;
+    }
     const prob = this._problem();
     const errs = prob?.attributes.errors || [], warns = prob?.attributes.warnings || [];
     const problems = errs.length
@@ -161,11 +190,15 @@ class SbModesCard extends HTMLElement {
     const zones = this._zones();
     const rows = zones.map((z) => this._row(z, names[sel.state] || sel.state)).join("");
     body.innerHTML = `
-      <div class="sbk-head"><h2>${esc(this._config.title)}</h2>
-        <span class="sbk-count">${zones.length} zone${zones.length === 1 ? "" : "s"}</span></div>
-      <div class="modes" role="group" aria-label="Mode">${modes}</div>
-      <div class="since">${esc(names[sel.state] || sel.state)} since ${esc(hhmm(since, this._hass.config?.time_zone))} (${esc(ago(since))} ago) · fallback ${esc(names[sel.attributes.fallback_mode] || sel.attributes.fallback_mode)}</div>
+      <div class="now"><span class="sbk-ico armed big"><ha-icon icon="${esc(modeIcon(sel.state))}"></ha-icon></span>
+        <div><div class="cur-l">Current mode</div><div class="cur">${esc(nm(sel.state))}</div>
+          <div class="since">since ${esc(hhmm(since, this._hass.config?.time_zone))} (${esc(ago(since))} ago) · fallback ${esc(nm(sel.attributes.fallback_mode))}</div></div></div>
+      <div class="switch-l">Switch to</div>
+      <div class="modes" role="group" aria-label="Switch to another mode">${modes}</div>
+      ${ask}
       ${problems}
+      <div class="sbk-head"><h2 class="sub">Zones</h2>
+        <span class="sbk-count">${zones.length} zone${zones.length === 1 ? "" : "s"}</span></div>
       ${rows || `<div class="sbk-empty">No zones yet. Add them to the table with the <code>sb_modes.save_config</code> action.</div>`}
       ${this._msg ? `<div class="sbk-note">${esc(this._msg)}</div>` : ""}`;
     this._wire();
@@ -205,13 +238,18 @@ class SbModesCard extends HTMLElement {
 
   _wire() {
     const root = this.shadowRoot.querySelector(".body");
-    root.querySelectorAll("button.mode:not(.on)").forEach((b) => b.addEventListener("click", async () => {
-      const sel = this._select();
-      this._busy = true; this._render();
-      try { await this._hass.callService("select", "select_option", { entity_id: sel.entity_id, option: b.dataset.m }); this._msg = ""; }
+    // A mode acts on the house the moment it starts, so a tap only asks; Switch confirms.
+    root.querySelectorAll("button.mode").forEach((b) => b.addEventListener("click", () => {
+      this._ask = this._ask === b.dataset.m ? null : b.dataset.m; this._render();
+    }));
+    root.querySelector(".ask .no")?.addEventListener("click", () => { this._ask = null; this._render(); });
+    root.querySelector(".ask .go")?.addEventListener("click", async () => {
+      const sel = this._select(), target = this._ask;
+      this._ask = null; this._busy = true; this._render();
+      try { await this._hass.callService("select", "select_option", { entity_id: sel.entity_id, option: target }); this._msg = ""; }
       catch (e) { this._msg = `Could not change the mode: ${e?.message || e}`; }
       finally { this._busy = false; this._sig = ""; this._render(); }
-    }));
+    });
     root.querySelectorAll(".sbk-row .sbk-open").forEach((b) => b.addEventListener("click", () => {
       const id = b.closest("[data-z]").dataset.z;
       if (this._open.has(id)) this._open.delete(id); else this._open.add(id);
@@ -247,14 +285,14 @@ class SbModesPanel extends HTMLElement {
     </style>
     <div class="bar"><ha-menu-button></ha-menu-button><div class="title">SB Modes</div><a href="/config/integrations/integration/sb_modes">Integration page</a></div>
     <div class="page"><div class="col">
-      <div class="intro">The house is in one mode at a time; each zone runs one behaviour for it. Tap a mode to switch; tap a zone to see its lights and sensors.</div>
+      <div class="intro">The house is in one mode at a time; each zone runs one behaviour for it. Switching asks first, because a mode acts at once. Tap a zone to see its lights and sensors.</div>
       <div class="slot"></div>
       <div class="ver">SB Modes ${VERSION}</div>
     </div></div>`;
     this._menu = root.querySelector("ha-menu-button");
     this._menu.narrow = this._narrow;
     const card = document.createElement(CARD);
-    card.setConfig({ title: "Mode" });
+    card.setConfig({ title: "Modes" });
     root.querySelector(".slot").appendChild(card);
     this._card = card;
   }
