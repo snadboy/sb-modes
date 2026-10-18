@@ -96,6 +96,16 @@ card rebuilds once the tag exists. **SB Background's card has the same bug** (it
 add_extra_js_url too) — fix it the same way in that repo. Lovelace-resource cards (SB Watch,
 Scheduler) are unaffected.
 
+## Bug fixed 2026-10-18 (0.9.1)
+
+18:43:20 living room lamps switched on at the wall while the FP300 still read empty; SB Modes
+switched them off at 18:43:27. Causes: presence_lux re-applied its vacant setting on every
+lux change while empty; the keeper released a hand change immediately when the room had
+already been empty longer than the delay. Now: vacant settings apply once per vacancy
+(presence_lux, occupied_vacant); a hand change during a vacancy lasts its delay counted
+from the change (vacancy_off: min(off_after, max_on)); a timer release re-runs the zone's
+behaviour so the released lights follow the rule again. Regression tests added.
+
 ## Known limitations (accepted)
 
 - A light changed by hand WHILE HA IS DOWN is not marked as an override (changes out of
