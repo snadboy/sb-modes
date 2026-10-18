@@ -30,7 +30,8 @@ from typing import Any
 # Behaviours and their parameter schemas. The code that RUNS each behaviour arrives
 # in later steps; the schemas exist now so a table can be validated from day one.
 #   number:   {"min", "max"}            entity:  {"domains"}      entities: a list of entity ids
-#   bool:     true / false
+#   bool:     true / false               mode: a mode id
+#   steps:    [{"after_minutes": n, "targets": {…}}, …]   (minutes after the mode began)
 #   targets:  {entity_id: {"state": "on"|"off", "brightness_pct": 0-100, "color_temp_kelvin": K,
 #                          "hs_color": [h, s], "effect": name}}   for lights and switches
 #             {entity_id: {"value": n}}                           for number entities
@@ -53,6 +54,10 @@ BEHAVIOURS: dict[str, dict[str, dict[str, Any]]] = {
         "occupied": {"type": "targets", "required": True},
         "vacant": {"type": "targets", "required": True},
         "vacant_after_minutes": {"type": "number", "min": 0, "max": 240, "default": 0},
+    },
+    "wake_sequence": {
+        "after_mode": {"type": "mode", "required": True},
+        "steps": {"type": "steps", "required": True},
     },
     "presence_lux": {
         "target_lux": {"type": "number", "min": 1, "max": 2000, "required": True},
@@ -135,15 +140,22 @@ def with_defaults(behaviour: str | None, params: dict | None) -> dict:
 
 
 # ── the schedule ─────────────────────────────────────────────────────────────
-# config["schedule"] = [{"days": ["mon", …], "at": "HH:MM", "mode": id}, …]
-# Each rule starts its mode at that local time on those calendar days. The scheduled mode at
-# any moment is the mode of the most recent rule occurrence; a rule at 00:30 on "sat" is the
-# start of Friday night's overnight.
+# config["schedule"] = [rule, …]; a rule starts `mode` at `at` on the days it matches.
+#   days:     ["mon", …]                    — those weekdays, or
+#   day_set:  "workday"                     — an SB Scheduler day set (its calendar), with
+#     eve:    true                          — "the day BEFORE a day in the set", and/or
+#     not:    true                          — "a day NOT in the set"
+#   at:       "HH:MM" | "sunset" | "sunset-01:00" | "sunrise+00:30"   (local time)
+# The scheduled mode at any moment is the mode of the most recent occurrence; a rule at 00:30
+# starts that night's mode for the day before. Day-set membership and sun times come from
+# resolvers (in_set(day_set, date) → bool | None when unknown; sun(event, date) → datetime |
+# None), so this stays pure.
 DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+SUN_EVENTS = ("sunrise", "sunset")
 
 
 def parse_at(at: Any) -> tuple[int, int] | None:
-    """'HH:MM' → (h, m), or None when it is not a valid time."""
+    """'HH:MM' → (h, m), or None when it is not a valid clock time."""
     if not isinstance(at, str) or len(at) != 5 or at[2] != ":":
         return None
     try:
@@ -153,7 +165,42 @@ def parse_at(at: Any) -> tuple[int, int] | None:
     return (h, m) if 0 <= h <= 23 and 0 <= m <= 59 else None
 
 
-def occurrences(config: dict, start, end):
+def parse_when(at: Any):
+    """("clock", h, m) | ("sun", event, offset_minutes) | None for an invalid `at`."""
+    hm = parse_at(at)
+    if hm:
+        return ("clock", hm[0], hm[1])
+    if not isinstance(at, str):
+        return None
+    for event in SUN_EVENTS:
+        if at == event:
+            return ("sun", event, 0)
+        if at.startswith(event) and len(at) == len(event) + 6 and at[len(event)] in "+-":
+            off = parse_at(at[len(event) + 1:])
+            if off:
+                sign = -1 if at[len(event)] == "-" else 1
+                return ("sun", event, sign * (off[0] * 60 + off[1]))
+    return None
+
+
+def rule_day_sets(config: dict) -> set[str]:
+    return {r["day_set"] for r in config.get("schedule") or [] if isinstance(r, dict) and r.get("day_set")}
+
+
+def _matches(rule: dict, day, in_set):
+    """True / False whether the rule applies on this date; None when its day set is unknown."""
+    from datetime import timedelta
+    if rule.get("days") is not None:
+        return DAYS[day.weekday()] in rule["days"]
+    if in_set is None:
+        return None
+    m = in_set(rule.get("day_set"), day + timedelta(days=1) if rule.get("eve") else day)
+    if m is None:
+        return None
+    return (not m) if rule.get("not") else m
+
+
+def occurrences(config: dict, start, end, in_set=None, sun=None):
     """Every rule occurrence in [start, end), oldest first: (when, mode id). `start` and
     `end` are timezone-aware datetimes in the house's local time zone."""
     from datetime import datetime, timedelta
@@ -161,26 +208,32 @@ def occurrences(config: dict, start, end):
     tz = start.tzinfo
     day = start.date() - timedelta(days=1)
     while day <= end.date():
-        name = DAYS[day.weekday()]
         for rule in config.get("schedule") or []:
-            hm = parse_at(rule.get("at"))
-            if hm and name in (rule.get("days") or []):
-                when = datetime(day.year, day.month, day.day, hm[0], hm[1], tzinfo=tz)
-                if start <= when < end:
-                    out.append((when, rule.get("mode")))
+            when = parse_when(rule.get("at"))
+            if not when or not _matches(rule, day, in_set):
+                continue
+            if when[0] == "clock":
+                at = datetime(day.year, day.month, day.day, when[1], when[2], tzinfo=tz)
+            else:
+                base = sun(when[1], day) if sun else None
+                if base is None:
+                    continue
+                at = base.astimezone(tz) + timedelta(minutes=when[2])
+            if start <= at < end:
+                out.append((at, rule.get("mode")))
         day += timedelta(days=1)
     return sorted(out, key=lambda o: o[0])
 
 
-def scheduled_mode(config: dict, now):
+def scheduled_mode(config: dict, now, in_set=None, sun=None):
     """(mode id, since when) the schedule puts the house in at `now`; (None, None) with no rules."""
     from datetime import timedelta
-    past = occurrences(config, now - timedelta(days=8), now + timedelta(microseconds=1))
+    past = occurrences(config, now - timedelta(days=8), now + timedelta(microseconds=1), in_set, sun)
     return past[-1][::-1] if past else (None, None)
 
 
-def next_change(config: dict, now):
+def next_change(config: dict, now, in_set=None, sun=None):
     """(mode id, when) of the next rule occurrence after `now`; (None, None) with no rules."""
     from datetime import timedelta
-    nxt = occurrences(config, now + timedelta(microseconds=1), now + timedelta(days=8))
+    nxt = occurrences(config, now + timedelta(microseconds=1), now + timedelta(days=8), in_set, sun)
     return nxt[0][::-1] if nxt else (None, None)

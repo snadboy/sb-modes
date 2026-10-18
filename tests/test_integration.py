@@ -637,3 +637,50 @@ async def test_presence_lux_empty_goes_to_the_nightlight(hass, kitchen, lights, 
     hass.states.async_set(OCC, "on")                                      # back in the dark: on again
     await hass.async_block_till_done()
     assert lights["on"][-1].data == {"entity_id": CEILING, "brightness_pct": 82}
+
+
+# ── wake sequences, sun-relative rules, zone light lists ────────────────────
+
+WAKE = {"after_mode": "overnight", "steps": [{"after_minutes": 30, "targets": {SINK: {"brightness_pct": 1}}},
+                                             {"after_minutes": 40, "targets": {SINK: {"brightness_pct": 4}}}]}
+
+
+async def test_wake_sequence_after_overnight_only(hass, kitchen, lights, freezer) -> None:
+    await _setup(hass)
+    t = _table()
+    t["zones"][0]["overrides"] = {"*": {"behaviour": "wake_sequence", "params": WAKE}}
+    await _save(hass, t)
+    await _mode(hass, "overnight")
+    await _mode(hass, "day")                                              # came from Overnight
+    assert _zone(hass)["status"].startswith("next step at")
+    await _tick(hass, freezer, minutes=30, seconds=1)
+    assert [c.data.get("brightness_pct") for c in lights["on"]] == [1]
+    hass.states.async_set(SINK, "on", {"brightness": 3})
+    await _tick(hass, freezer, minutes=10)
+    assert [c.data.get("brightness_pct") for c in lights["on"]] == [1, 4]
+    assert _zone(hass)["status"] == "done"
+    await _mode(hass, "evening")                                          # from Day: not a wake-up
+    assert _zone(hass)["status"] == "only after Overnight"
+
+
+async def test_sunset_relative_rule(hass, kitchen) -> None:
+    from homeassistant.helpers.sun import get_astral_event_date
+    from homeassistant.util import dt as dt_util
+    await _setup(hass)
+    t = _table()
+    t["schedule"] = [{"days": ALL, "at": "sunset-01:00", "mode": "evening"}]
+    await _save(hass, t)
+    today = dt_util.now().date()
+    expect = [get_astral_event_date(hass, "sunset", today + timedelta(days=n)) - timedelta(hours=1) for n in range(3)]
+    expect = next(e for e in expect if e > dt_util.utcnow())
+    got = dt_util.parse_datetime(_sel(hass).attributes["next_change"]["at"])
+    assert abs((got - expect).total_seconds()) < 1, (got, expect)
+
+
+async def test_zone_lights_list_replaces_the_areas_lights(hass, kitchen) -> None:
+    await _setup(hass)
+    t = _table()
+    t["zones"][0]["lights"] = [CEILING]
+    await _save(hass, t)
+    await _mode(hass, "overnight")
+    assert _zone(hass)["lights"] == [CEILING]

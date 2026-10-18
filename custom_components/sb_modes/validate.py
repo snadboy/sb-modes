@@ -20,7 +20,7 @@ import re
 from collections.abc import Callable
 from typing import Any
 
-from .model import ALL_MODES, BEHAVIOURS, DAYS, DRIVER_DOMAINS, NEEDS, TARGET_KEYS, mode_ids, parse_at, resolve
+from .model import ALL_MODES, BEHAVIOURS, DAYS, DRIVER_DOMAINS, NEEDS, TARGET_KEYS, mode_ids, parse_at, parse_when, resolve
 
 UNAVAILABLE = ("unavailable", "unknown")
 NEED_LABELS = {"lights": "a light", "occupancy": "an occupancy sensor", "illuminance": "an illuminance sensor"}
@@ -32,13 +32,15 @@ def check_config(
     state_of: Callable[[str], str | None],
     area_exists: Callable[[str], bool],
     zone_entities: Callable[[list[str]], dict[str, list[str]]] | None = None,
+    day_set_exists: Callable[[str], bool] | None = None,
 ) -> tuple[list[str], list[str]]:
     """(errors, warnings) for a whole table.
 
     state_of(entity_id) → its state, or None when the entity does not exist.
     area_exists(area_id) → whether the area registry has it.
     zone_entities(area_ids) → {"lights": [...], "occupancy": [...], "illuminance": [...]}
-    found in those areas; None skips the needs check.
+    found in those areas; None skips the needs check and the light-overlap check.
+    day_set_exists(id) → whether SB Scheduler publishes that day set; None skips that check.
     """
     errors: list[str] = []
     warnings: list[str] = []
@@ -59,7 +61,7 @@ def check_config(
         if not mode.get("default"):
             errors.append(f"{where}: needs a default behaviour (a mode exists only through its default).")
         else:
-            _check_choice(mode["default"], f"{where}, default", state_of, errors, warnings)
+            _check_choice(mode["default"], f"{where}, default", state_of, errors, warnings, mode_ids(config))
         names[mode.get("id")] = mode.get("name") or mode.get("id")
     _check_unique([m.get("id") for m in modes if isinstance(m, dict)], "Mode", errors)
 
@@ -74,6 +76,7 @@ def check_config(
     if not isinstance(zones, list):
         errors.append("Zones must be a list.")
         zones = []
+    claimed: dict[str, str] = {}                      # light → the zone that has it
     for i, zone in enumerate(zones):
         if not isinstance(zone, dict):
             errors.append(f"Zone {i + 1} must be an object.")
@@ -95,21 +98,37 @@ def check_config(
             continue
         for mode_id, choice in overrides.items():
             if mode_id == ALL_MODES:
-                _check_choice(choice, f"{where}, all modes", state_of, errors, warnings)
+                _check_choice(choice, f"{where}, all modes", state_of, errors, warnings, ids)
                 continue
             if mode_id not in ids:
                 errors.append(f"{where}: overrides mode “{mode_id}”, which is not defined.")
                 continue
-            _check_choice(choice, f"{where}, {names.get(mode_id, mode_id)}", state_of, errors, warnings)
+            _check_choice(choice, f"{where}, {names.get(mode_id, mode_id)}", state_of, errors, warnings, ids)
+        own = zone.get("lights")
+        if own is not None:
+            if not isinstance(own, list) or not own:
+                errors.append(f"{where}: lights must be a list of light entity ids (or left out to use the areas' lights).")
+                own = None
+            else:
+                for eid in own:
+                    _check_entity(eid, ["light", "switch"], f"{where}, lights", state_of, errors, warnings)
         if areas_ok and zone_entities is not None and isinstance(zone.get("id"), str):
-            _check_needs(config, zone, ids, names, zone_entities(areas), where, errors)
+            found = dict(zone_entities(areas))
+            if own:
+                found["lights"] = list(own)
+            _check_needs(config, zone, ids, names, found, where, errors)
+            for light in found.get("lights", []):
+                other = claimed.get(light)
+                if other is not None and other != where:
+                    errors.append(f"{where}: {light} is also in {other} — give one of them its own `lights` list.")
+                claimed.setdefault(light, where)
     _check_unique([z.get("id") for z in zones if isinstance(z, dict)], "Zone", errors)
-    _check_schedule(config.get("schedule"), ids, names, errors)
+    _check_schedule(config.get("schedule"), ids, names, errors, day_set_exists)
     return errors, warnings
 
 
-def _check_schedule(schedule: Any, ids: list[str], names: dict, errors: list[str]) -> None:
-    """Rules name existing modes, real days and times, and never two modes at one moment."""
+def _check_schedule(schedule: Any, ids: list[str], names: dict, errors: list[str], day_set_exists=None) -> None:
+    """Rules name existing modes, real days / day sets and times, and never two modes at one moment."""
     if schedule is None:
         return
     if not isinstance(schedule, list):
@@ -121,11 +140,21 @@ def _check_schedule(schedule: Any, ids: list[str], names: dict, errors: list[str
         if not isinstance(rule, dict):
             errors.append(f"{where} must be an object.")
             continue
-        mode, at, days = rule.get("mode"), rule.get("at"), rule.get("days")
+        mode, at, days, day_set = rule.get("mode"), rule.get("at"), rule.get("days"), rule.get("day_set")
         if mode not in ids:
             errors.append(f"{where}: mode “{mode}” is not defined.")
-        if parse_at(at) is None:
-            errors.append(f"{where}: time {at!r} must be HH:MM (24-hour).")
+        if parse_when(at) is None:
+            errors.append(f"{where}: time {at!r} must be HH:MM (24-hour), sunrise or sunset, optionally ±HH:MM (sunset-01:00).")
+        for flag in ("eve", "not"):
+            if flag in rule and not isinstance(rule[flag], bool):
+                errors.append(f"{where}: {flag} must be true or false.")
+        if (days is None) == (day_set is None):
+            errors.append(f"{where}: give either days ({', '.join(DAYS)}) or a day_set — one of the two.")
+            continue
+        if day_set is not None:
+            if not isinstance(day_set, str) or (day_set_exists is not None and not day_set_exists(day_set)):
+                errors.append(f"{where}: day set {day_set!r} is not published by SB Scheduler.")
+            continue
         if not isinstance(days, list) or not days:
             errors.append(f"{where}: list the days it applies to ({', '.join(DAYS)}).")
             continue
@@ -165,7 +194,7 @@ def _check_unique(ids: list, kind: str, errors: list[str]) -> None:
         seen.add(i)
 
 
-def _check_choice(choice: Any, where: str, state_of, errors: list[str], warnings: list[str]) -> None:
+def _check_choice(choice: Any, where: str, state_of, errors: list[str], warnings: list[str], ids: list[str] | None = None) -> None:
     """One {"behaviour", "params"} pair against its behaviour's schema."""
     if not isinstance(choice, dict):
         errors.append(f"{where}: must be {{behaviour, params}}.")
@@ -188,11 +217,28 @@ def _check_choice(choice: Any, where: str, state_of, errors: list[str], warnings
             if spec.get("required"):
                 errors.append(f"{where}: {name} needs “{key}”.")
             continue
-        _check_param(value, spec, f"{where}, {key}", state_of, errors, warnings)
+        _check_param(value, spec, f"{where}, {key}", state_of, errors, warnings, ids)
 
 
-def _check_param(value: Any, spec: dict, where: str, state_of, errors: list[str], warnings: list[str]) -> None:
+def _check_param(value: Any, spec: dict, where: str, state_of, errors: list[str], warnings: list[str], ids=None) -> None:
     kind = spec["type"]
+    if kind == "mode":
+        if ids is not None and value not in ids:
+            errors.append(f"{where}: mode “{value}” is not defined.")
+        return
+    if kind == "steps":
+        if not isinstance(value, list) or not value:
+            errors.append(f"{where}: must be a list of steps {{after_minutes, targets}}.")
+            return
+        for n, step in enumerate(value, 1):
+            if not isinstance(step, dict):
+                errors.append(f"{where} {n}: must be an object.")
+                continue
+            am = step.get("after_minutes")
+            if isinstance(am, bool) or not isinstance(am, (int, float)) or not 0 <= am <= 720:
+                errors.append(f"{where} {n}: after_minutes must be 0–720.")
+            _check_param(step.get("targets"), {"type": "targets"}, f"{where} {n}, targets", state_of, errors, warnings)
+        return
     if kind == "number":
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             errors.append(f"{where}: {value!r} is not a number.")

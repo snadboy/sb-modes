@@ -33,7 +33,8 @@ class ModeSelect(ModesEntity, RestoreEntity, SelectEntity):
         await super().async_added_to_hass()
         last = await self.async_get_last_state()
         since = (last.attributes.get("since") or last.last_changed.isoformat()) if last else None
-        self._rt.restore_mode(last.state if last else None, since, last.attributes.get("manual") if last else None)
+        self._rt.restore_mode(last.state if last else None, since, last.attributes.get("manual") if last else None,
+                              last.attributes.get("previous_mode") if last else None)
 
     @property
     def options(self) -> list[str]:
@@ -52,6 +53,7 @@ class ModeSelect(ModesEntity, RestoreEntity, SelectEntity):
             "mode_names": {m: self._rt.mode_name(m) for m in self._rt.mode_ids},
             "fallback_mode": self._rt.fallback,
             "since": self._rt.mode_since,
+            "previous_mode": self._rt.prev_mode,
             "takes_over": self._rt.takes_over(),
             "manual": self._rt.manual,
             "scheduled_mode": sched,

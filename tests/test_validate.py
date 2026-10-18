@@ -225,7 +225,7 @@ def test_schedule_validates():
                                   {"days": ["mon"], "at": "09:00", "mode": "overnight"}]
     e, _ = check(cfg)
     assert e == ["Schedule rule 5: mode “evening” is not defined.",
-                 "Schedule rule 5: time '9:00' must be HH:MM (24-hour).",
+                 "Schedule rule 5: time '9:00' must be HH:MM (24-hour), sunrise or sunset, optionally ±HH:MM (sunset-01:00).",
                  "Schedule rule 5: 'funday' is not a day (mon, tue, wed, thu, fri, sat, sun).",
                  "Schedule rule 6: Day and Overnight both start at 09:00 on mon."], e
 
@@ -287,6 +287,78 @@ def test_new_param_types():
         "vacant": {"number.clock_brightness": {"value": "dim"}}}}}
     e, _ = check(cfg)
     assert e == ["Zone Dining Room, all modes, vacant, number.clock_brightness: a number entity needs a numeric value."], e
+
+
+WORKDAYS = {"2026-10-16", "2026-10-19", "2026-10-20", "2026-10-21", "2026-10-22"}   # Fri, then Mon–Thu; Fri 23rd off
+
+
+def in_set(ds, d):
+    from datetime import date
+    if ds != "workday" or d > date(2026, 10, 30):
+        return None
+    return d.isoformat() in WORKDAYS
+
+
+def sun(event, d):
+    return _at(d.year, d.month, d.day, 18, 10) if event == "sunset" else _at(d.year, d.month, d.day, 7, 0)
+
+
+DAYSET = [
+    {"day_set": "workday", "at": "06:00", "mode": "morning"},
+    {"days": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"], "at": "09:00", "mode": "day"},
+    {"days": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"], "at": "sunset-01:00", "mode": "evening"},
+    {"day_set": "workday", "eve": True, "at": "23:00", "mode": "overnight"},
+    {"day_set": "workday", "not": True, "at": "00:30", "mode": "overnight"},
+]
+
+
+def test_parse_when():
+    assert M.parse_when("06:30") == ("clock", 6, 30)
+    assert M.parse_when("sunset") == ("sun", "sunset", 0)
+    assert M.parse_when("sunset-01:00") == ("sun", "sunset", -60)
+    assert M.parse_when("sunrise+00:30") == ("sun", "sunrise", 30)
+    assert M.parse_when("sunset-1:00") is None and M.parse_when("noon") is None
+
+
+def test_day_set_and_sun_schedule():
+    cfg = {"schedule": DAYSET}
+    sm = lambda *a: M.scheduled_mode(cfg, _at(*a), in_set, sun)[0]
+    assert sm(2026, 10, 19, 6, 1) == "morning"            # Monday, a workday
+    assert sm(2026, 10, 19, 17, 11) == "evening"          # sunset 18:10 − 1 h = 17:10
+    assert sm(2026, 10, 19, 23, 1) == "overnight"         # eve of Tuesday, a workday
+    assert sm(2026, 10, 22, 23, 1) == "evening"           # Thursday: Friday 23rd is a day off → no 23:00
+    assert sm(2026, 10, 23, 0, 31) == "overnight"         # Friday (day off) 00:30
+    assert sm(2026, 10, 23, 8, 0) == "overnight"          # day off: no 06:00 Morning
+    assert sm(2026, 10, 23, 9, 0) == "day"
+    assert M.next_change(cfg, _at(2026, 10, 19, 10, 0), in_set, sun) == ("evening", _at(2026, 10, 19, 17, 10))
+    assert M.rule_day_sets(cfg) == {"workday"}
+
+
+def test_unknown_day_set_membership_is_skipped():
+    cfg = {"schedule": DAYSET}
+    assert M.scheduled_mode(cfg, _at(2026, 10, 19, 6, 1))[0] == "day"   # no resolver: day-set rules unknown
+
+
+def test_day_set_rule_validation():
+    cfg = copy.deepcopy(GOOD)
+    cfg["schedule"] = [{"day_set": "workday", "at": "06:00", "mode": "day"},
+                       {"day_set": "payday", "at": "sunset-01:00", "mode": "day"},
+                       {"day_set": "workday", "days": ["mon"], "at": "06:00", "mode": "day"},
+                       {"day_set": "workday", "eve": "yes", "at": "06:00", "mode": "day"}]
+    e, _ = V.check_config(cfg, state_of, area_exists, None, lambda ds: ds == "workday")
+    assert e == ["Schedule rule 2: day set 'payday' is not published by SB Scheduler.",
+                 "Schedule rule 3: give either days (mon, tue, wed, thu, fri, sat, sun) or a day_set — one of the two.",
+                 "Schedule rule 4: eve must be true or false."], e
+
+
+def test_zone_lights_must_not_overlap():
+    cfg = copy.deepcopy(GOOD)
+    cfg["zones"][1]["areas"] = ["kitchen"]                 # same area as Kitchen → same lights
+    e, _ = V.check_config(cfg, state_of, area_exists, zone_entities)
+    assert "Zone Dining Room: light.kitchen_aux_sink is also in Zone Kitchen — give one of them its own `lights` list." in e, e
+    cfg["zones"][1]["lights"] = ["light.kitchen_aux_cabinet"]
+    e, _ = V.check_config(cfg, state_of, area_exists, zone_entities)
+    assert not [x for x in e if "also in" in x], e
 
 
 def test_not_an_object():

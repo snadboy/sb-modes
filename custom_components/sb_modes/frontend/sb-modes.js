@@ -11,7 +11,7 @@
  *
  * Rows use the shared SB row style (window.SBKit, from the SB UI Kit integration).
  */
-const VERSION = "0.7.0";
+const VERSION = "0.8.0";
 const CARD = "sb-modes-card";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -87,6 +87,22 @@ const daysText = (days) => {
   }
   return runs.join(", ");
 };
+const pretty = (id) => String(id || "").replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
+/** A rule's days in words: weekdays, or a day set ("Workday", "Night before a workday", "Not a workday"). */
+const ruleDays = (r) => {
+  if (!r.day_set) return daysText(r.days);
+  const ds = pretty(r.day_set).toLowerCase();
+  if (r.eve && r.not) return `Night before a non-${ds}`;
+  if (r.eve) return `Night before a ${ds}`;
+  if (r.not) return `Not a ${ds}`;
+  return pretty(r.day_set);
+};
+/** "06:00" | "sunset-01:00" → "06:00" | "Sunset −1:00" */
+const ruleAt = (at) => {
+  const m = /^(sunrise|sunset)(?:([+-])(\d\d):(\d\d))?$/.exec(String(at));
+  if (!m) return at;
+  return `${pretty(m[1])}${m[2] ? ` ${m[2] === "-" ? "−" : "+"}${Number(m[3])}:${m[4]}` : ""}`;
+};
 const dayOf = (iso, tz) => { try { return new Date(iso).toLocaleDateString([], { weekday: "short", timeZone: tz || undefined }); } catch (e) { return ""; } };
 const HOLDS = [["next", null], ["15", "15 min"], ["30", "30 min"], ["60", "1 hour"], ["paused", "Until I resume"]];
 
@@ -102,6 +118,7 @@ const BEHAVIOUR_NAMES = {
   nightlight_then_dark: "Nightlight, then dark",
   vacancy_off: "Off when empty",
   occupied_vacant: "Occupied / empty",
+  wake_sequence: "Wake-up",
   presence_lux: "Presence + light level",
 };
 
@@ -115,6 +132,8 @@ const look = (behaviour, status) => {
   if (s === "occupied" || s.startsWith("occupied;")) return { icon: "mdi:account", tint: "run" };
   if (s === "on" || s.startsWith("on:")) return { icon: "mdi:lightbulb-on-outline", tint: "run" };
   if (s === "empty") return { icon: "mdi:lightbulb-night-outline", tint: "idle" };
+  if (s.startsWith("next step")) return { icon: "mdi:weather-sunset-up", tint: "armed" };
+  if (behaviour === "wake_sequence") return { icon: "mdi:alarm", tint: "idle" };
   if (s === "vacant; lights off") return { icon: "mdi:lightbulb-off-outline", tint: "idle" };
   if (s.startsWith("vacant")) return { icon: "mdi:timer-sand", tint: "armed" };
   if (s.startsWith("waiting for the sensors")) return { icon: "mdi:motion-sensor-off", tint: "warn" };
@@ -155,7 +174,7 @@ button.zt { display: flex; align-items: center; gap: 6px; width: 100%; border: n
 button.zt .cnt { text-transform: none; letter-spacing: 0; font-weight: 400; }
 button.zt ha-icon { margin-left: auto; --mdc-icon-size: 20px; }
 .rules { padding: 0 16px 10px; }
-.rule { display: grid; grid-template-columns: 52px 22px 110px 1fr; align-items: center; gap: 6px; font-size: 14px; padding: 4px 0; --mdc-icon-size: 18px; }
+.rule { display: grid; grid-template-columns: 104px 22px 100px 1fr; align-items: center; gap: 6px; font-size: 14px; padding: 4px 0; --mdc-icon-size: 18px; }
 .rule .t { font-variant-numeric: tabular-nums; font-weight: 500; }
 .rule .d { color: var(--secondary-text-color); }
 .zh { padding: 6px 16px 8px; font-size: 13px; font-weight: 500; color: var(--secondary-text-color); text-transform: uppercase; letter-spacing: .05em; }
@@ -245,6 +264,7 @@ class SbModesCard extends HTMLElement {
     }
     const names = sel.attributes.mode_names || {};
     const nm = (id) => names[id] || id;
+    this._modeName = nm;
     const options = sel.attributes.options || [];
     const since = sel.attributes.since || sel.last_changed;
     // Looking at a mode and switching to it are separate: a tap on a mode only VIEWS it.
@@ -319,10 +339,11 @@ class SbModesCard extends HTMLElement {
   }
 
   _scheduleHtml(sel, nm) {
-    const rules = [...(sel.attributes.schedule || [])].sort((a, b) => String(a.at).localeCompare(String(b.at)));
+    const key = (r) => (/^\d\d:\d\d$/.test(r.at) ? r.at : /^sunrise/.test(r.at) ? "06:59" : "17:59");   // sun rules sort near when they fall
+    const rules = [...(sel.attributes.schedule || [])].sort((a, b) => key(a).localeCompare(key(b)));
     const open = this._open.has("__schedule");
     const body = !rules.length ? `<div class="sbk-empty">No schedule — the mode changes only by hand.</div>`
-      : open ? rules.map((r) => `<div class="rule"><span class="t">${esc(r.at)}</span><ha-icon icon="${esc(modeIcon(r.mode))}"></ha-icon><span class="m">${esc(nm(r.mode))}</span><span class="d">${esc(daysText(r.days))}</span></div>`).join("") : "";
+      : open ? rules.map((r) => `<div class="rule"><span class="t">${esc(ruleAt(r.at))}</span><ha-icon icon="${esc(modeIcon(r.mode))}"></ha-icon><span class="m">${esc(nm(r.mode))}</span><span class="d">${esc(ruleDays(r))}</span></div>`).join("") : "";
     return `<button class="zh zt" data-x="__schedule" aria-expanded="${open}">Schedule <span class="cnt">${rules.length} rule${rules.length === 1 ? "" : "s"}</span>
         <ha-icon icon="${open ? "mdi:chevron-down" : "mdi:chevron-right"}"></ha-icon></button>${rules.length && !open ? "" : `<div class="rules">${body}</div>`}`;
   }
@@ -351,6 +372,10 @@ class SbModesCard extends HTMLElement {
     if (beh === "occupied_vacant") {
       const after = p.vacant_after_minutes ? ` (after ${p.vacant_after_minutes} min)` : "";
       return `Occupied: ${this._targets(p.occupied)} · Empty${after}: ${this._targets(p.vacant)}`;
+    }
+    if (beh === "wake_sequence") {
+      const steps = (p.steps || []).map((st) => `+${st.after_minutes} min: ${this._targets(st.targets)}`).join(" · ");
+      return `After ${this._modeName?.(p.after_mode) || p.after_mode} ends: ${steps}`;
     }
     if (beh === "presence_lux") {
       const vac = p.vacant && Object.keys(p.vacant).length ? this._targets(p.vacant) : "lights off";

@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 from collections import deque
 from collections.abc import Callable
-from datetime import timedelta
+from datetime import date, timedelta
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -26,6 +26,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.event import async_call_later, async_track_point_in_time, async_track_time_interval
 from homeassistant.helpers.storage import Store
+from homeassistant.helpers.sun import get_astral_event_date
 from homeassistant.util import dt as dt_util
 
 from . import driver
@@ -35,7 +36,7 @@ from .const import (
     ALERT_GRACE_SECONDS, CHECK_SECONDS, DOMAIN, EVENT_MODE_CHANGED, ISSUE_ID, STARTUP_SETTLE_SECONDS, STORE_KEY,
     STORE_VERSION,
 )
-from .model import default_config, find, mode_ids, next_change, resolve, scheduled_mode
+from .model import default_config, find, mode_ids, next_change, resolve, rule_day_sets, scheduled_mode
 from .validate import check_config
 from .zones import zone_entities
 
@@ -72,6 +73,10 @@ class Runtime:
         self.mode: str | None = None
         self.mode_since: str | None = None                 # ISO time the mode last changed
         self.manual: dict | None = None                    # {"hold": next|timed|paused, "since", "until"}
+        self.prev_mode: str | None = None                  # the mode before this one (wake sequences)
+        self._day_sets: dict[str, set[date]] = {}         # day set → dates in it, within _day_window
+        self._day_window: tuple[date, date] | None = None
+        self._calendar_wait = False                        # catch-up held until the day sets load
         self._sched_unsub: CALLBACK_TYPE | None = None
         self._hold_unsub: CALLBACK_TYPE | None = None
         self.errors: list[str] = []
@@ -117,6 +122,70 @@ class Runtime:
     def _set_ready(self) -> None:
         self.ready = True
         self._restart_behaviours()
+        self.hass.async_create_task(self.async_refresh_day_sets(), "sb_modes day sets")
+        self._unsubs.append(async_track_time_interval(
+            self.hass, self._refresh_tick, timedelta(hours=1), cancel_on_shutdown=True))
+
+    @callback
+    def _refresh_tick(self, _now) -> None:
+        self.hass.async_create_task(self.async_refresh_day_sets(), "sb_modes day sets")
+
+    # ── resolvers for the schedule: sun times, day sets (SB Scheduler calendars) ──
+    def sun(self, event: str, day: date):
+        return get_astral_event_date(self.hass, event, day)
+
+    def in_set(self, day_set: str, day: date) -> bool | None:
+        dates = self._day_sets.get(day_set)
+        if dates is None or self._day_window is None or not self._day_window[0] <= day <= self._day_window[1]:
+            return None
+        return day in dates
+
+    def _day_set_entity(self, day_set: str) -> str | None:
+        """The calendar SB Scheduler publishes for a day set (attribute day_set_id)."""
+        for st in self.hass.states.async_all("calendar"):
+            if st.attributes.get("day_set_id") == day_set:
+                return st.entity_id
+        return None
+
+    async def async_refresh_day_sets(self) -> None:
+        """Read which dates each day set the schedule uses holds, from its calendar."""
+        wanted = rule_day_sets(self.config)
+        today = dt_util.now().date()
+        lo, hi = today - timedelta(days=9), today + timedelta(days=10)
+        found: dict[str, set[date]] = {}
+        for ds in wanted:
+            eid = self._day_set_entity(ds)
+            if eid is None:
+                continue
+            try:
+                res = await self.hass.services.async_call(
+                    "calendar", "get_events", {"entity_id": eid,
+                                               "start_date_time": dt_util.start_of_local_day(lo).isoformat(),
+                                               "end_date_time": dt_util.start_of_local_day(hi + timedelta(days=1)).isoformat()},
+                    blocking=True, return_response=True)
+            except Exception:  # noqa: BLE001 — a calendar not ready yet; the next refresh retries
+                _LOGGER.debug("SB Modes: could not read %s", eid, exc_info=True)
+                continue
+            dates: set[date] = set()
+            for ev in (res or {}).get(eid, {}).get("events", []):
+                start, end = dt_util.parse_date(str(ev["start"])[:10]), dt_util.parse_date(str(ev["end"])[:10])
+                if start is None or end is None:
+                    continue
+                d = start
+                while d < end or d == start:
+                    dates.add(d)
+                    d += timedelta(days=1)
+            found[ds] = dates
+        self._day_sets, self._day_window = found, (lo, hi)
+        if wanted and not wanted <= set(found):
+            # not all calendars there yet (SB Scheduler still starting): try again in a minute
+            self._unsubs.append(async_call_later(self.hass, 60, HassJob(self._refresh_tick, cancel_on_shutdown=True)))
+            return
+        if self._calendar_wait:
+            self._calendar_wait = False
+            self._catch_up(source="startup")
+        self._arm_schedule()
+        self.notify()
 
     @callback
     def _tick(self, _now) -> None:
@@ -141,7 +210,8 @@ class Runtime:
     # ── the table ────────────────────────────────────────────────────────────
     def validate(self, config: Any) -> tuple[list[str], list[str]]:
         return check_config(config, state_lookup(self.hass), area_lookup(self.hass),
-                            lambda areas: zone_entities(self.hass, areas))
+                            lambda areas: zone_entities(self.hass, areas),
+                            lambda ds: self._day_set_entity(ds) is not None)
 
     async def async_save(self, config: dict[str, Any]) -> list[str]:
         """Save a table that has no errors (the caller checked); returns its warnings.
@@ -199,7 +269,8 @@ class Runtime:
 
     # ── the active mode ──────────────────────────────────────────────────────
     @callback
-    def restore_mode(self, last: str | None, since: str | None = None, manual: dict | None = None) -> None:
+    def restore_mode(self, last: str | None, since: str | None = None, manual: dict | None = None,
+                     previous: str | None = None) -> None:
         """At startup (and after a table reload): the last mode, when it began and any manual hold,
         then catch up with the schedule — HA may have been down across a scheduled change."""
         if last in self.mode_ids:
@@ -207,8 +278,12 @@ class Runtime:
         else:
             self.mode, self.mode_since = self.fallback, dt_util.utcnow().isoformat()
         self.manual = manual if isinstance(manual, dict) and manual.get("hold") in HOLDS else None
+        self.prev_mode = previous if previous in self.mode_ids else None
         self.keeper.restored(self.mode)
-        self._catch_up(source="startup", restart=False)
+        if rule_day_sets(self.config) and not self._day_sets:
+            self._calendar_wait = True                   # catch up once the calendars are read
+        else:
+            self._catch_up(source="startup", restart=False)
         self._arm_hold()
         self._arm_schedule()
         self._restart_behaviours()
@@ -241,11 +316,11 @@ class Runtime:
 
     @property
     def scheduled(self) -> tuple[str | None, Any]:
-        return scheduled_mode(self.config, dt_util.now())
+        return scheduled_mode(self.config, dt_util.now(), self.in_set, self.sun)
 
     @property
     def upcoming(self) -> tuple[str | None, Any]:
-        return next_change(self.config, dt_util.now())
+        return next_change(self.config, dt_util.now(), self.in_set, self.sun)
 
     @callback
     def _switch(self, mode_id: str, source: str, restart: bool = True) -> bool:
@@ -253,6 +328,7 @@ class Runtime:
         if mode_id == self.mode:
             return False
         old, self.mode = self.mode, mode_id
+        self.prev_mode = old
         self.mode_since = dt_util.utcnow().isoformat()
         self.keeper.mode_changed()
         self.hass.bus.async_fire(EVENT_MODE_CHANGED, {"from": old, "to": mode_id, "source": source})
@@ -263,6 +339,8 @@ class Runtime:
     @callback
     def _catch_up(self, source: str = "schedule", restart: bool = True) -> bool:
         """Follow the schedule unless a manual hold still stands. True when the mode changed."""
+        if self._calendar_wait:
+            return False
         sched, at = self.scheduled
         if sched is None or sched not in self.mode_ids:
             return False
@@ -323,7 +401,7 @@ class Runtime:
     def _start_zone(self, zone: dict) -> None:
         picked = resolve(self.config, self.mode, zone["id"]) or {}
         kind = Held if self.keeper.held(zone["id"]) else KINDS.get(picked.get("behaviour") or "", HandsOff)
-        b = kind(self, zone, picked.get("params") or {}, zone_entities(self.hass, zone.get("areas") or []))
+        b = kind(self, zone, picked.get("params") or {}, zone_entities(self.hass, zone.get("areas") or [], zone.get("lights")))
         self._behaviours[zone["id"]] = b
         b.start()
 
