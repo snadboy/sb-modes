@@ -23,6 +23,7 @@ ZONE = "sensor.sb_modes_kitchen"
 OCC = "binary_sensor.kitchen_occ"
 SINK = "light.sink"
 CEILING = "light.ceiling"
+LUX = "sensor.kitchen_lux"
 
 
 async def _setup(hass: HomeAssistant) -> MockConfigEntry:
@@ -69,9 +70,12 @@ def kitchen(hass: HomeAssistant):
     for domain, uid, dclass in (("light", "sink", None), ("light", "ceiling", None), ("binary_sensor", "kitchen_occ", "occupancy")):
         e = reg.async_get_or_create(domain, "test", uid, suggested_object_id=uid, original_device_class=dclass)
         reg.async_update_entity(e.entity_id, area_id=area.id)
+    e = reg.async_get_or_create("sensor", "test", "kitchen_lux", suggested_object_id="kitchen_lux", original_device_class="illuminance")
+    reg.async_update_entity(e.entity_id, area_id=area.id)
     hass.states.async_set(SINK, "off")
     hass.states.async_set(CEILING, "off")
     hass.states.async_set(OCC, "off")
+    hass.states.async_set(LUX, "60")
 
 
 @pytest.fixture
@@ -572,3 +576,64 @@ async def test_occupied_vacant_and_numbers(hass, kitchen, lights, freezer) -> No
     await hass.async_block_till_done()
     assert number[-1].data == {"entity_id": "number.clock", "value": 255}
     assert lights["on"][-1].data == {"entity_id": SINK, "brightness_pct": 50, "hs_color": [30, 60]}
+
+
+# ── step 4b: presence_lux ───────────────────────────────────────────────────
+
+PL = {"target_lux": 25, "occupied": {CEILING: {"brightness_pct": 82}},
+      "vacant": {SINK: {"brightness_pct": 40}, CEILING: {"state": "off"}}, "vacant_after_minutes": 15}
+
+
+async def _evening_pl(hass):
+    await _setup(hass)
+    await _save(hass, _with("presence_lux", PL, mode="evening"))
+    hass.states.async_set(OCC, "on")
+    await _mode(hass, "evening")
+
+
+async def test_presence_lux_bright_enough_does_nothing(hass, kitchen, lights) -> None:
+    await _evening_pl(hass)
+    assert lights["on"] == [] and _zone(hass)["status"].startswith("occupied; light enough (60")
+
+
+async def test_presence_lux_turns_on_as_it_gets_dark(hass, kitchen, lights) -> None:
+    await _evening_pl(hass)
+    hass.states.async_set(LUX, "30")
+    await hass.async_block_till_done()
+    assert lights["on"] == []
+    hass.states.async_set(LUX, "22")
+    await hass.async_block_till_done()
+    assert [(c.data["entity_id"], c.data.get("brightness_pct")) for c in lights["on"]] == [(CEILING, 82)]
+    hass.states.async_set(LUX, "40")                                     # our own lamps raise it: no dimming
+    hass.states.async_set(LUX, "20")
+    await hass.async_block_till_done()
+    assert len(lights["on"]) == 1 and _zone(hass)["status"] == "on"
+
+
+async def test_presence_lux_arrival_in_the_dark(hass, kitchen, lights) -> None:
+    hass.states.async_set(LUX, "10")
+    await _setup(hass)
+    await _save(hass, _with("presence_lux", PL, mode="evening"))
+    await _mode(hass, "evening")
+    assert lights["on"] == [] or lights["on"][0].data["entity_id"] == SINK   # entering vacant: the empty setting
+    hass.states.async_set(OCC, "on")
+    await hass.async_block_till_done()
+    assert (CEILING, 82) in [(c.data["entity_id"], c.data.get("brightness_pct")) for c in lights["on"]]
+
+
+async def test_presence_lux_empty_goes_to_the_nightlight(hass, kitchen, lights, freezer) -> None:
+    await _evening_pl(hass)
+    hass.states.async_set(LUX, "10")
+    await hass.async_block_till_done()
+    hass.states.async_set(CEILING, "on", {"brightness": 209})
+    hass.states.async_set(OCC, "off")
+    await hass.async_block_till_done()
+    await _tick(hass, freezer, minutes=14)
+    assert lights["off"] == []
+    await _tick(hass, freezer, minutes=1, seconds=2)
+    assert [c.data["entity_id"] for c in lights["off"]] == [CEILING]
+    assert (SINK, 40) in [(c.data["entity_id"], c.data.get("brightness_pct")) for c in lights["on"]]
+    hass.states.async_set(CEILING, "off")
+    hass.states.async_set(OCC, "on")                                      # back in the dark: on again
+    await hass.async_block_till_done()
+    assert lights["on"][-1].data == {"entity_id": CEILING, "brightness_pct": 82}

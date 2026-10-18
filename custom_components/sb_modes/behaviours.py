@@ -15,7 +15,8 @@ behaviour decides what happens from there.
                          when someone arrives) — the old "Lights - Occupancy" automations.
 - occupied_vacant        one set of targets while occupied, another once vacant — the old
                          occupancy scene toggle (the Office).
-- presence_lux           not built yet (step 4b); runs as hands_off.
+- presence_lux           occupied and darker than target_lux → occupied targets; vacant a while →
+                         vacant targets (e.g. a nightlight). The reading only turns lights up.
 
 A light changed by hand is skipped by every behaviour until the zone has been vacant for its
 delay or the mode changes; a zone held by hand runs Held (nothing is sent). bookkeeping.py.
@@ -84,14 +85,6 @@ class Held(Behaviour):
     def start(self) -> None:
         from .bookkeeping import describe_hold
         self._set_status(describe_hold(self.rt.keeper.held(self.zone["id"])) or "held by hand")
-
-
-class NotBuilt(Behaviour):
-    name = "presence_lux"
-
-    @callback
-    def start(self) -> None:
-        self._set_status("not built yet; does nothing")
 
 
 class Static(Behaviour):
@@ -357,11 +350,99 @@ class OccupiedVacant(_Occupancy):
         self._evaluate(first=True)
 
 
+class PresenceLux(_Occupancy):
+    """Someone in the zone and the light reading below `target_lux` → the `occupied` targets;
+    vacant `vacant_after_minutes` → the `vacant` targets (default: the occupied ones off).
+
+    The reading only ever turns lights UP while the zone is occupied (sunset); it never
+    dims them — the zone's own lights would fool it. Lit stays lit until the zone empties."""
+    name = "presence_lux"
+
+    def __init__(self, *args) -> None:
+        super().__init__(*args)
+        self._timer: CALLBACK_TYPE | None = None
+        self._lit = False
+
+    @property
+    def _lux_sensors(self) -> list[str]:
+        return self.entities.get("illuminance", [])
+
+    def _lux(self) -> float | None:
+        """The zone's light reading: the mean of its illuminance sensors that report a number."""
+        vals = []
+        for eid in self._lux_sensors:
+            try:
+                vals.append(float(self.hass.states.get(eid).state))
+            except (AttributeError, TypeError, ValueError):
+                continue
+        return sum(vals) / len(vals) if vals else None
+
+    def _vacant_targets(self) -> dict:
+        vacant = self.params.get("vacant")
+        if vacant:
+            return vacant
+        return {e: {"state": STATE_OFF} for e in self.params.get("occupied") or {}}
+
+    @callback
+    def start(self) -> None:
+        self._unsubs.append(async_track_state_change_event(self.hass, self._sensors + self._lux_sensors, self._changed))
+        self._evaluate()
+
+    @callback
+    def stop(self) -> None:
+        self._cancel()
+        super().stop()
+
+    @callback
+    def _cancel(self) -> None:
+        if self._timer is not None:
+            self._timer()
+            self._timer = None
+
+    @callback
+    def _changed(self, _event) -> None:
+        self._evaluate()
+
+    @callback
+    def _evaluate(self) -> None:
+        self._cancel()
+        target = self.params.get("target_lux")
+        if self._occupied():
+            lux = self._lux()
+            dark = lux is None or lux < target
+            if not self._lit and dark:
+                self._lit = True
+                self._apply(self.params.get("occupied") or {}, f"on: {'no reading' if lux is None else f'{lux:.0f} lx'} < {target} lx")
+            elif self._lit:
+                self._set_status("on")
+            else:
+                self._set_status(f"occupied; light enough ({lux:.0f} ≥ {target} lx)")
+            return
+        since = self._vacant_since()
+        if since is None:
+            self._set_status("waiting for the sensors")
+            return
+        due = since + timedelta(minutes=self.params.get("vacant_after_minutes", 15))
+        now = dt_util.utcnow()
+        if due <= now:
+            self._lit = False
+            self.rt.keeper.release_overrides(self.zone["id"])
+            self._apply(self._vacant_targets(), "empty")
+            return
+        self._timer = async_call_later(self.hass, (due - now).total_seconds(), HassJob(self._timer_done, cancel_on_shutdown=True))
+        self._set_status("vacant; empty setting at " + dt_util.as_local(due).strftime("%H:%M"))
+
+    @callback
+    def _timer_done(self, _now) -> None:
+        self._timer = None
+        self._evaluate()
+
+
 KINDS: dict[str, type[Behaviour]] = {
     "vacancy_off": VacancyOff,
     "occupied_vacant": OccupiedVacant,
     "hands_off": HandsOff,
     "static": Static,
     "nightlight_then_dark": NightlightThenDark,
-    "presence_lux": NotBuilt,
+    "presence_lux": PresenceLux,
 }

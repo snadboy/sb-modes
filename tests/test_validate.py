@@ -128,7 +128,7 @@ def test_unknown_behaviour_and_param():
 
 def test_required_param():
     e, _ = edit(lambda c: c["modes"][0].update(default={"behaviour": "presence_lux", "params": {}}))
-    assert e == ["Mode Day, default: presence_lux needs “target_lux”."], e
+    assert e == ["Mode Day, default: presence_lux needs “target_lux”.", "Mode Day, default: presence_lux needs “occupied”."], e
 
 
 def test_number_range_and_type():
@@ -171,7 +171,7 @@ def test_needs_from_areas():
     cfg = copy.deepcopy(GOOD)
     cfg["zones"][1]["overrides"] = {"overnight": {"behaviour": "hands_off"}}
     assert V.check_config(cfg, state_of, area_exists, zone_entities) == ([], [])
-    cfg["modes"][0]["default"] = {"behaviour": "presence_lux", "params": {"target_lux": 50}}
+    cfg["modes"][0]["default"] = {"behaviour": "presence_lux", "params": {"target_lux": 50, "occupied": {"light.kitchen_aux_sink": {"brightness_pct": 80}}}}
     e, _ = V.check_config(cfg, state_of, area_exists, zone_entities)
     assert e == ["Zone Kitchen: presence_lux (Day) needs an illuminance sensor in the zone's areas; there is none.",
                  "Zone Dining Room: presence_lux (Day) needs an occupancy sensor in the zone's areas; there is none.",

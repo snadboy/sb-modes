@@ -56,8 +56,9 @@ BEHAVIOURS: dict[str, dict[str, dict[str, Any]]] = {
     },
     "presence_lux": {
         "target_lux": {"type": "number", "min": 1, "max": 2000, "required": True},
-        "color_temp_kelvin": {"type": "number", "min": 2000, "max": 6500},
-        "off_delay": {"type": "number", "min": 1, "max": 240},
+        "occupied": {"type": "targets", "required": True},
+        "vacant": {"type": "targets"},
+        "vacant_after_minutes": {"type": "number", "min": 1, "max": 240, "default": 15},
     },
 }
 
@@ -67,7 +68,7 @@ NEEDS: dict[str, tuple[str, ...]] = {
     "vacancy_off": ("occupancy",),
     "occupied_vacant": ("occupancy",),
     "nightlight_then_dark": ("lights", "occupancy"),
-    "presence_lux": ("lights", "occupancy", "illuminance"),
+    "presence_lux": ("occupancy", "illuminance"),
 }
 
 # Domains a driver can control. An entity outside these is an error, not skipped.

@@ -11,7 +11,7 @@
  *
  * Rows use the shared SB row style (window.SBKit, from the SB UI Kit integration).
  */
-const VERSION = "0.6.0";
+const VERSION = "0.7.0";
 const CARD = "sb-modes-card";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -102,7 +102,7 @@ const BEHAVIOUR_NAMES = {
   nightlight_then_dark: "Nightlight, then dark",
   vacancy_off: "Off when empty",
   occupied_vacant: "Occupied / empty",
-  presence_lux: "Presence + lux",
+  presence_lux: "Presence + light level",
 };
 
 /** A zone's live status → the row's icon, its tint and the words. */
@@ -112,7 +112,9 @@ const look = (behaviour, status) => {
   if (behaviour === "hands_off") return { icon: "mdi:hand-back-left-off-outline", tint: "idle" };
   if (s.startsWith("dark")) return { icon: "mdi:weather-night", tint: "idle" };
   if (s === "nightlight") return { icon: "mdi:lightbulb-night-outline", tint: "run" };
-  if (s === "occupied") return { icon: "mdi:account", tint: "run" };
+  if (s === "occupied" || s.startsWith("occupied;")) return { icon: "mdi:account", tint: "run" };
+  if (s === "on" || s.startsWith("on:")) return { icon: "mdi:lightbulb-on-outline", tint: "run" };
+  if (s === "empty") return { icon: "mdi:lightbulb-night-outline", tint: "idle" };
   if (s === "vacant; lights off") return { icon: "mdi:lightbulb-off-outline", tint: "idle" };
   if (s.startsWith("vacant")) return { icon: "mdi:timer-sand", tint: "armed" };
   if (s.startsWith("waiting for the sensors")) return { icon: "mdi:motion-sensor-off", tint: "warn" };
@@ -350,7 +352,10 @@ class SbModesCard extends HTMLElement {
       const after = p.vacant_after_minutes ? ` (after ${p.vacant_after_minutes} min)` : "";
       return `Occupied: ${this._targets(p.occupied)} · Empty${after}: ${this._targets(p.vacant)}`;
     }
-    if (beh === "presence_lux") return `Lights to ${p.target_lux} lx when occupied (not built yet)`;
+    if (beh === "presence_lux") {
+      const vac = p.vacant && Object.keys(p.vacant).length ? this._targets(p.vacant) : "lights off";
+      return `Occupied and below ${p.target_lux} lx: ${this._targets(p.occupied)} · Empty ${p.vacant_after_minutes ?? 15} min: ${vac}`;
+    }
     return beh;
   }
 
