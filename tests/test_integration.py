@@ -724,3 +724,46 @@ async def test_reporting_entities(hass, kitchen, lights, freezer) -> None:
     await hass.async_block_till_done()
     assert hass.states.get(SCHED).state == "paused"
     assert hass.states.get(DEV).state == "1"                              # the mode change ended the by-hand mark
+
+
+# ── regression 2026-10-18 18:43: the empty setting re-applied over a hand change ─────────
+
+async def test_empty_setting_once_and_hand_changes_while_empty_respected(hass, kitchen, lights, freezer) -> None:
+    await _setup(hass)
+    await _save(hass, _with("presence_lux", PL, mode="evening"))
+    hass.states.async_set(CEILING, "on", {"brightness": 209})
+    await _tick(hass, freezer, minutes=30)                                # long empty
+    await _mode(hass, "evening")
+    assert [c.data["entity_id"] for c in lights["off"]] == [CEILING]      # empty setting, once
+    hass.states.async_set(CEILING, "off")
+    await hass.async_block_till_done()
+    await _tick(hass, freezer, minutes=20)                                # well after our own command
+    # someone switches it on at the wall while the room still reads empty; the reading rises
+    hass.states.async_set(CEILING, "on", {"brightness": 209}, context=Context())
+    hass.states.async_set(LUX, "80")
+    await hass.async_block_till_done()
+    await _tick(hass, freezer, seconds=10)
+    assert len(lights["off"]) == 1                                        # NOT switched off again
+    assert CEILING in _zone(hass)["overrides"]
+    await _tick(hass, freezer, minutes=14)
+    assert len(lights["off"]) == 1                                        # still respected
+    await _tick(hass, freezer, minutes=1, seconds=5)                      # 15 min after the hand change
+    assert _zone(hass)["overrides"] == {}
+    assert [c.data["entity_id"] for c in lights["off"]] == [CEILING, CEILING]   # back to the empty setting
+
+
+async def test_occupied_vacant_vacant_set_applied_once(hass, kitchen, lights, freezer) -> None:
+    await _setup(hass)
+    await _save(hass, _with("occupied_vacant", {"occupied": {SINK: {"brightness_pct": 50}},
+                                                "vacant": {SINK: {"state": "off"}}, "vacant_after_minutes": 1}))
+    hass.states.async_set(SINK, "on", {"brightness": 128})
+    await _tick(hass, freezer, minutes=2)
+    assert len(lights["off"]) == 1
+    hass.states.async_set(SINK, "off")
+    await _tick(hass, freezer, minutes=1)
+    hass.states.async_set(OCC, "unavailable")                             # a sensor blip while empty
+    hass.states.async_set(OCC, "off")
+    hass.states.async_set(SINK, "on", {"brightness": 128}, context=Context())
+    await hass.async_block_till_done()
+    await _tick(hass, freezer, seconds=5)
+    assert len(lights["off"]) == 1                                        # not re-applied over the hand change

@@ -161,10 +161,17 @@ class Keeper:
         states = [self.hass.states.get(s) for s in info["occupancy"]]
         if not all(st is not None and st.state == STATE_OFF for st in states):
             return                                       # occupied (or a sensor unavailable)
-        since = max(st.last_changed for st in states)
+        # counted from when the zone emptied or the latest hand change, whichever is later:
+        # a light changed in an already-empty room is still respected for the full delay
+        since = max([st.last_changed for st in states] +
+                    [dt_util.parse_datetime(o["since"]) for o in self.overrides[zone].values()])
         left = (since + timedelta(minutes=info["delay"]) - dt_util.utcnow()).total_seconds()
         if left <= 0:
-            self.release_overrides(zone)
+            # empty long enough: the hand changes end, and the zone's behaviour runs again so
+            # its rule reaches those lights too (e.g. back to the empty setting)
+            if self.overrides.pop(zone, None) is not None:
+                self._save()
+                self.rt.restart_zone(zone)
             return
         self._vacant[zone] = async_call_later(self.hass, left, HassJob(partial(self._release_due, zone), cancel_on_shutdown=True))
 
@@ -174,7 +181,17 @@ class Keeper:
         self._arm_release(zone)                          # re-checks vacancy; releases when due
 
     @callback
-    def release_overrides(self, zone: str) -> None:
+    def release_overrides(self, zone: str, vacant_since=None) -> None:
+        """End the zone's hand changes. With `vacant_since`, only those made before the
+        zone emptied: one made during the vacancy is kept for its own full delay."""
+        if vacant_since is not None and self.overrides.get(zone):
+            keep = {e: o for e, o in self.overrides[zone].items() if dt_util.parse_datetime(o["since"]) > vacant_since}
+            if keep:
+                if len(keep) != len(self.overrides[zone]):
+                    self.overrides[zone] = keep
+                    self._save()
+                    self.rt.notify()
+                return
         if self.overrides.pop(zone, None) is not None:
             if (unsub := self._vacant.pop(zone, None)) is not None:
                 unsub()
@@ -257,6 +274,9 @@ def release_delay(behaviour: str | None, params: dict[str, Any]) -> float:
         if isinstance(params.get(key), (int, float)):
             return params[key]
     if isinstance(params.get("off_after_seconds"), (int, float)):
-        return params["off_after_seconds"] / 60
+        minutes = params["off_after_seconds"] / 60
+        if params.get("max_on_minutes"):                 # the cap holds for hand changes too
+            minutes = min(minutes, params["max_on_minutes"])
+        return minutes
     return DEFAULT_RELEASE_MINUTES
 

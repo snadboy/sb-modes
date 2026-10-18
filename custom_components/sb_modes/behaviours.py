@@ -187,7 +187,7 @@ class NightlightThenDark(Behaviour):
     @callback
     def _go_dark(self) -> None:
         self._dark_done = True
-        self.rt.keeper.release_overrides(self.zone["id"])   # vacant for the delay: hand changes end
+        self.rt.keeper.release_overrides(self.zone["id"], vacant_since=self._vacant_since())   # vacant for the delay
         self._apply({light: {"state": STATE_OFF} for light in self._lights},
                     "dark since " + dt_util.as_local(dt_util.utcnow()).strftime("%H:%M"))
 
@@ -277,7 +277,7 @@ class VacancyOff(_Occupancy):
             return
         now_off = [light for light, d in dues.items() if d <= now]
         if now_off:
-            self.rt.keeper.release_overrides(self.zone["id"])     # vacant long enough: hand changes end
+            self.rt.keeper.release_overrides(self.zone["id"], vacant_since=vacant_since)   # vacant long enough
             self._apply({light: {"state": STATE_OFF} for light in now_off}, "off: vacant")
             later = {k: v for k, v in dues.items() if k not in now_off}
             if not later:
@@ -303,6 +303,7 @@ class OccupiedVacant(_Occupancy):
         super().__init__(*args)
         self._timer: CALLBACK_TYPE | None = None
         self._was_occupied: bool | None = None
+        self._vacant_done = False
 
     @callback
     def start(self) -> None:
@@ -327,6 +328,7 @@ class OccupiedVacant(_Occupancy):
             self._timer = None
         occupied = self._occupied()
         if occupied:
+            self._vacant_done = False
             if first or not self._was_occupied:
                 self._apply(self.params.get("occupied") or {}, "occupied")
             else:
@@ -334,6 +336,8 @@ class OccupiedVacant(_Occupancy):
             self._was_occupied = True
             return
         self._was_occupied = False
+        if self._vacant_done:
+            return                      # applied once for this vacancy
         since = self._vacant_since()
         if since is None:
             self._set_status("waiting for the sensors")
@@ -341,7 +345,8 @@ class OccupiedVacant(_Occupancy):
         due = since + timedelta(minutes=self.params.get("vacant_after_minutes", 0))
         now = dt_util.utcnow()
         if due <= now:
-            self.rt.keeper.release_overrides(self.zone["id"])
+            self._vacant_done = True
+            self.rt.keeper.release_overrides(self.zone["id"], vacant_since=since)
             self._apply(self.params.get("vacant") or {}, "vacant")
             return
         self._timer = async_call_later(self.hass, (due - now).total_seconds(), HassJob(self._timer_done, cancel_on_shutdown=True))
@@ -365,6 +370,7 @@ class PresenceLux(_Occupancy):
         super().__init__(*args)
         self._timer: CALLBACK_TYPE | None = None
         self._lit = False
+        self._vacant_done = False      # the vacant setting is applied ONCE per vacancy
 
     @property
     def _lux_sensors(self) -> list[str]:
@@ -411,6 +417,7 @@ class PresenceLux(_Occupancy):
         self._cancel()
         target = self.params.get("target_lux")
         if self._occupied():
+            self._vacant_done = False
             lux = self._lux()
             dark = lux is None or lux < target
             if not self._lit and dark:
@@ -421,6 +428,8 @@ class PresenceLux(_Occupancy):
             else:
                 self._set_status(f"occupied; light enough ({lux:.0f} ≥ {target} lx)")
             return
+        if self._vacant_done:
+            return                      # already set for this vacancy: a lux change or a hand change must not redo it
         since = self._vacant_since()
         if since is None:
             self._set_status("waiting for the sensors")
@@ -429,7 +438,8 @@ class PresenceLux(_Occupancy):
         now = dt_util.utcnow()
         if due <= now:
             self._lit = False
-            self.rt.keeper.release_overrides(self.zone["id"])
+            self._vacant_done = True
+            self.rt.keeper.release_overrides(self.zone["id"], vacant_since=since)
             self._apply(self._vacant_targets(), "empty")
             return
         self._timer = async_call_later(self.hass, (due - now).total_seconds(), HassJob(self._timer_done, cancel_on_shutdown=True))
