@@ -29,8 +29,11 @@ from typing import Any
 
 # Behaviours and their parameter schemas. The code that RUNS each behaviour arrives
 # in later steps; the schemas exist now so a table can be validated from day one.
-#   number:   {"min", "max"}            entity:  {"domains"}
-#   targets:  {entity_id: {"state": "on"|"off", "brightness_pct": 0-100, "color_temp_kelvin": K}}
+#   number:   {"min", "max"}            entity:  {"domains"}      entities: a list of entity ids
+#   bool:     true / false
+#   targets:  {entity_id: {"state": "on"|"off", "brightness_pct": 0-100, "color_temp_kelvin": K,
+#                          "hs_color": [h, s], "effect": name}}   for lights and switches
+#             {entity_id: {"value": n}}                           for number entities
 BEHAVIOURS: dict[str, dict[str, dict[str, Any]]] = {
     "hands_off": {},
     "static": {
@@ -39,6 +42,17 @@ BEHAVIOURS: dict[str, dict[str, dict[str, Any]]] = {
     "nightlight_then_dark": {
         "nightlight": {"type": "targets"},
         "delay": {"type": "number", "min": 1, "max": 240, "default": 10},
+    },
+    "vacancy_off": {
+        "lights": {"type": "entities", "domains": ["light", "switch"], "required": True},
+        "off_after_seconds": {"type": "number", "min": 0, "max": 3600, "default": 60},
+        "max_on_minutes": {"type": "number", "min": 0, "max": 1440, "default": 0},
+        "on_when_occupied": {"type": "bool", "default": False},
+    },
+    "occupied_vacant": {
+        "occupied": {"type": "targets", "required": True},
+        "vacant": {"type": "targets", "required": True},
+        "vacant_after_minutes": {"type": "number", "min": 0, "max": 240, "default": 0},
     },
     "presence_lux": {
         "target_lux": {"type": "number", "min": 1, "max": 2000, "required": True},
@@ -50,14 +64,18 @@ BEHAVIOURS: dict[str, dict[str, dict[str, Any]]] = {
 # What a behaviour needs from its zone's areas. A zone that runs it in any mode without
 # these is a validation error, not a behaviour that silently does nothing.
 NEEDS: dict[str, tuple[str, ...]] = {
+    "vacancy_off": ("occupancy",),
+    "occupied_vacant": ("occupancy",),
     "nightlight_then_dark": ("lights", "occupancy"),
     "presence_lux": ("lights", "occupancy", "illuminance"),
 }
 
 # Domains a driver can control. An entity outside these is an error, not skipped.
-DRIVER_DOMAINS = ("light", "switch")
+DRIVER_DOMAINS = ("light", "switch", "number")
 
-TARGET_KEYS = {"state", "brightness_pct", "color_temp_kelvin"}
+TARGET_KEYS = {"state", "brightness_pct", "color_temp_kelvin", "hs_color", "effect", "value"}
+
+ALL_MODES = "*"     # a zone override that applies in every mode the zone does not set itself
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "fallback_mode": "day",
@@ -87,15 +105,21 @@ def find(items: list | None, item_id: str) -> dict | None:
 def resolve(config: dict, mode_id: str, zone_id: str) -> dict | None:
     """The behaviour a zone runs in a mode: {"behaviour", "params", "source"}.
 
-    source is "override" when the zone sets its own, else "default". None when the
+    Precedence: the zone's own setting for this mode ("override"), then the zone's setting for
+    all modes, key "*" ("zone"), then the mode's default ("default"). None when the
     mode or zone does not exist (validation keeps a saved table from getting there).
     """
     mode = find(config.get("modes"), mode_id)
     zone = find(config.get("zones"), zone_id)
     if mode is None or zone is None:
         return None
-    own = (zone.get("overrides") or {}).get(mode_id)
-    picked, source = (own, "override") if own else (mode.get("default") or {}, "default")
+    overrides = zone.get("overrides") or {}
+    if overrides.get(mode_id):
+        picked, source = overrides[mode_id], "override"
+    elif overrides.get(ALL_MODES):
+        picked, source = overrides[ALL_MODES], "zone"
+    else:
+        picked, source = mode.get("default") or {}, "default"
     return {"behaviour": picked.get("behaviour"), "params": with_defaults(picked.get("behaviour"), picked.get("params")),
             "source": source}
 

@@ -11,7 +11,7 @@
  *
  * Rows use the shared SB row style (window.SBKit, from the SB UI Kit integration).
  */
-const VERSION = "0.5.0";
+const VERSION = "0.6.0";
 const CARD = "sb-modes-card";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -100,6 +100,8 @@ const BEHAVIOUR_NAMES = {
   hands_off: "Hands off",
   static: "Static",
   nightlight_then_dark: "Nightlight, then dark",
+  vacancy_off: "Off when empty",
+  occupied_vacant: "Occupied / empty",
   presence_lux: "Presence + lux",
 };
 
@@ -111,6 +113,7 @@ const look = (behaviour, status) => {
   if (s.startsWith("dark")) return { icon: "mdi:weather-night", tint: "idle" };
   if (s === "nightlight") return { icon: "mdi:lightbulb-night-outline", tint: "run" };
   if (s === "occupied") return { icon: "mdi:account", tint: "run" };
+  if (s === "vacant; lights off") return { icon: "mdi:lightbulb-off-outline", tint: "idle" };
   if (s.startsWith("vacant")) return { icon: "mdi:timer-sand", tint: "armed" };
   if (s.startsWith("waiting for the sensors")) return { icon: "mdi:motion-sensor-off", tint: "warn" };
   if (s.startsWith("waiting")) return { icon: "mdi:timer-sand-paused", tint: "idle" };
@@ -322,9 +325,11 @@ class SbModesCard extends HTMLElement {
         <ha-icon icon="${open ? "mdi:chevron-down" : "mdi:chevron-right"}"></ha-icon></button>${rules.length && !open ? "" : `<div class="rules">${body}</div>`}`;
   }
 
+  _name(e) { return this._hass.states[e]?.attributes.friendly_name || e; }
+
   _targets(targets) {
-    return Object.entries(targets || {}).map(([e, t]) => `${this._hass.states[e]?.attributes.friendly_name || e} ${
-      t.state === "off" ? "off" : t.brightness_pct != null ? `${t.brightness_pct}%` : "on"}`).join(", ");
+    return Object.entries(targets || {}).map(([e, t]) => `${this._name(e)} ${
+      t.value != null ? t.value : t.state === "off" ? "off" : t.brightness_pct != null ? `${t.brightness_pct}%` : "on"}${t.effect ? ` (${t.effect})` : ""}`).join(", ");
   }
 
   /** What a behaviour does with these parameters, in words. */
@@ -334,6 +339,16 @@ class SbModesCard extends HTMLElement {
     if (beh === "nightlight_then_dark") {
       const nl = this._targets(p.nightlight);
       return `${nl ? `Nightlight (${nl}) when someone comes in · ` : ""}dark after ${p.delay ?? 10} min empty`;
+    }
+    if (beh === "vacancy_off") {
+      const secs = p.off_after_seconds ?? 60;
+      const after = secs >= 120 && secs % 60 === 0 ? `${secs / 60} min` : `${secs} s`;
+      return `${(p.lights || []).map((e) => this._name(e)).join(", ")} off ${after} after empty${
+        p.max_on_minutes ? ` · or once on ${p.max_on_minutes} min while empty` : ""}${p.on_when_occupied ? " · on when someone comes in" : ""}`;
+    }
+    if (beh === "occupied_vacant") {
+      const after = p.vacant_after_minutes ? ` (after ${p.vacant_after_minutes} min)` : "";
+      return `Occupied: ${this._targets(p.occupied)} · Empty${after}: ${this._targets(p.vacant)}`;
     }
     if (beh === "presence_lux") return `Lights to ${p.target_lux} lx when occupied (not built yet)`;
     return beh;
@@ -348,7 +363,7 @@ class SbModesCard extends HTMLElement {
     const doing = previewing ? what : held ? a.status : beh === "hands_off" ? `Not controlled in ${modeName}` : a.status || "";
     const l = previewing ? { icon: look(beh, "").icon, tint: "idle" } : look(beh, a.status);
     const open = this._open.has(z.id);
-    const src = pick.source === "override" ? "this zone's own setting" : "the mode's default";
+    const src = pick.source === "override" ? "this zone's own setting for this mode" : pick.source === "zone" ? "this zone's setting for all modes" : "the mode's default";
     const ent = (eid, kind) => {
       const st = this._hass.states[eid];
       const name = st?.attributes.friendly_name || eid;

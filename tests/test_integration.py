@@ -495,3 +495,80 @@ async def test_hold_unknown_zone_refused(hass, kitchen) -> None:
     await _overnight(hass)
     with pytest.raises(ServiceValidationError, match="not a zone"):
         await hass.services.async_call(DOMAIN, "hold_zone", {"zone": "attic"}, blocking=True)
+
+
+# ── step 4a: vacancy_off, occupied_vacant, numbers ──────────────────────────
+
+def _with(behaviour: str, params: dict, mode: str = "*") -> dict:
+    t = _table()
+    t["zones"][0]["overrides"] = {mode: {"behaviour": behaviour, "params": params}}
+    return t
+
+
+async def _tick(hass, freezer, **kw):
+    freezer.tick(timedelta(**kw))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+
+
+async def test_vacancy_off_after_the_delay(hass, kitchen, lights, freezer) -> None:
+    await _setup(hass)
+    hass.states.async_set(OCC, "on")
+    hass.states.async_set(CEILING, "on", {"brightness": 255})
+    await _save(hass, _with("vacancy_off", {"lights": [CEILING], "off_after_seconds": 180}))
+    hass.states.async_set(OCC, "off")
+    await hass.async_block_till_done()
+    await _tick(hass, freezer, seconds=170)
+    assert lights["off"] == []
+    await _tick(hass, freezer, seconds=15)
+    assert [c.data["entity_id"] for c in lights["off"]] == [CEILING]
+    assert _zone(hass)["source"] == "zone"
+
+
+async def test_vacancy_off_light_turned_on_while_vacant(hass, kitchen, lights, freezer) -> None:
+    await _setup(hass)
+    await _save(hass, _with("vacancy_off", {"lights": [CEILING], "off_after_seconds": 60}))
+    await _tick(hass, freezer, minutes=30)                                # long vacant
+    hass.states.async_set(CEILING, "on", {"brightness": 255}, context=Context(user_id="app"))
+    await hass.async_block_till_done()
+    await _tick(hass, freezer, seconds=50)
+    assert lights["off"] == []                                            # counted from when it came on
+    await _tick(hass, freezer, seconds=15)
+    assert [c.data["entity_id"] for c in lights["off"]] == [CEILING]
+
+
+async def test_vacancy_off_max_on(hass, kitchen, lights, freezer) -> None:
+    await _setup(hass)
+    await _save(hass, _with("vacancy_off", {"lights": [CEILING], "off_after_seconds": 3600, "max_on_minutes": 5}))
+    hass.states.async_set(CEILING, "on", {"brightness": 255}, context=Context(user_id="app"))
+    await hass.async_block_till_done()
+    await _tick(hass, freezer, minutes=5, seconds=5)
+    assert [c.data["entity_id"] for c in lights["off"]] == [CEILING]
+
+
+async def test_vacancy_off_on_when_occupied(hass, kitchen, lights) -> None:
+    await _setup(hass)
+    await _save(hass, _with("vacancy_off", {"lights": [CEILING], "on_when_occupied": True}))
+    hass.states.async_set(OCC, "on")
+    await hass.async_block_till_done()
+    assert [c.data["entity_id"] for c in lights["on"]] == [CEILING]
+
+
+async def test_occupied_vacant_and_numbers(hass, kitchen, lights, freezer) -> None:
+    number = async_mock_service(hass, "number", "set_value")
+    er.async_get(hass).async_get_or_create("number", "test", "clock", suggested_object_id="clock")
+    hass.states.async_set("number.clock", "255")
+    await _setup(hass)
+    await _save(hass, _with("occupied_vacant", {
+        "occupied": {SINK: {"brightness_pct": 50, "hs_color": [30, 60]}, "number.clock": {"value": 255}},
+        "vacant": {SINK: {"brightness_pct": 1, "effect": "Breath"}, "number.clock": {"value": 64}},
+        "vacant_after_minutes": 2}))
+    # entering the mode vacant (since setup) applies the vacant set once its delay has passed
+    await _tick(hass, freezer, minutes=3)
+    assert [c.data for c in number] == [{"entity_id": "number.clock", "value": 64}]
+    assert lights["on"][-1].data == {"entity_id": SINK, "brightness_pct": 1, "effect": "Breath"}
+    hass.states.async_set("number.clock", "64")
+    hass.states.async_set(OCC, "on")
+    await hass.async_block_till_done()
+    assert number[-1].data == {"entity_id": "number.clock", "value": 255}
+    assert lights["on"][-1].data == {"entity_id": SINK, "brightness_pct": 50, "hs_color": [30, 60]}

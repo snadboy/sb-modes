@@ -20,7 +20,7 @@ import re
 from collections.abc import Callable
 from typing import Any
 
-from .model import BEHAVIOURS, DAYS, DRIVER_DOMAINS, NEEDS, TARGET_KEYS, mode_ids, parse_at, resolve
+from .model import ALL_MODES, BEHAVIOURS, DAYS, DRIVER_DOMAINS, NEEDS, TARGET_KEYS, mode_ids, parse_at, resolve
 
 UNAVAILABLE = ("unavailable", "unknown")
 NEED_LABELS = {"lights": "a light", "occupancy": "an occupancy sensor", "illuminance": "an illuminance sensor"}
@@ -94,6 +94,9 @@ def check_config(
             errors.append(f"{where}: overrides must map a mode id to a behaviour.")
             continue
         for mode_id, choice in overrides.items():
+            if mode_id == ALL_MODES:
+                _check_choice(choice, f"{where}, all modes", state_of, errors, warnings)
+                continue
             if mode_id not in ids:
                 errors.append(f"{where}: overrides mode “{mode_id}”, which is not defined.")
                 continue
@@ -195,8 +198,17 @@ def _check_param(value: Any, spec: dict, where: str, state_of, errors: list[str]
             errors.append(f"{where}: {value!r} is not a number.")
         elif not spec.get("min", value) <= value <= spec.get("max", value):
             errors.append(f"{where}: {value} is outside {spec['min']}–{spec['max']}.")
+    elif kind == "bool":
+        if not isinstance(value, bool):
+            errors.append(f"{where}: {value!r} must be true or false.")
     elif kind == "entity":
         _check_entity(value, spec.get("domains"), where, state_of, errors, warnings)
+    elif kind == "entities":
+        if not isinstance(value, list) or not value:
+            errors.append(f"{where}: must be a list of entity ids.")
+            return
+        for eid in value:
+            _check_entity(eid, spec.get("domains"), where, state_of, errors, warnings)
     elif kind == "targets":
         if not isinstance(value, dict):
             errors.append(f"{where}: must map entity ids to their target states.")
@@ -211,6 +223,14 @@ def _check_param(value: Any, spec: dict, where: str, state_of, errors: list[str]
                     errors.append(f"{where}, {eid}: unknown target key “{k}”.")
             if target.get("state") not in (None, "on", "off"):
                 errors.append(f"{where}, {eid}: state must be on or off.")
+            if eid.split(".", 1)[0] == "number" if isinstance(eid, str) else False:
+                v = target.get("value")
+                if isinstance(v, bool) or not isinstance(v, (int, float)):
+                    errors.append(f"{where}, {eid}: a number entity needs a numeric value.")
+                continue
+            hs = target.get("hs_color")
+            if hs is not None and not (isinstance(hs, list) and len(hs) == 2 and all(isinstance(x, (int, float)) for x in hs)):
+                errors.append(f"{where}, {eid}: hs_color must be [hue, saturation].")
             pct = target.get("brightness_pct")
             if pct is not None and (isinstance(pct, bool) or not isinstance(pct, (int, float)) or not 0 <= pct <= 100):
                 errors.append(f"{where}, {eid}: brightness_pct must be 0–100.")

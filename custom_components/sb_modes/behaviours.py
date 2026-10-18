@@ -11,7 +11,11 @@ behaviour decides what happens from there.
                          minutes → every zone light off, once per vacancy. Entering the
                          mode with the zone already vacant that long goes dark at once.
                          An unavailable sensor counts as not vacant.
-- presence_lux           not built yet (step 4); runs as hands_off.
+- vacancy_off            lights off when the zone has been vacant a while (and optionally on
+                         when someone arrives) — the old "Lights - Occupancy" automations.
+- occupied_vacant        one set of targets while occupied, another once vacant — the old
+                         occupancy scene toggle (the Office).
+- presence_lux           not built yet (step 4b); runs as hands_off.
 
 A light changed by hand is skipped by every behaviour until the zone has been vacant for its
 delay or the mode changes; a zone held by hand runs Held (nothing is sent). bookkeeping.py.
@@ -192,7 +196,170 @@ class NightlightThenDark(Behaviour):
                     "dark since " + dt_util.as_local(dt_util.utcnow()).strftime("%H:%M"))
 
 
+class _Occupancy(Behaviour):
+    """Shared: the zone's occupancy sensors. Any on = occupied; all off = vacant; an
+    unavailable sensor makes the zone neither (nothing is done on its say-so)."""
+
+    @property
+    def _sensors(self) -> list[str]:
+        return self.entities.get("occupancy", [])
+
+    def _occupied(self) -> bool:
+        return any(self.hass.states.is_state(s, STATE_ON) for s in self._sensors)
+
+    def _vacant_since(self):
+        states = [self.hass.states.get(s) for s in self._sensors]
+        if not states or not all(st is not None and st.state == STATE_OFF for st in states):
+            return None
+        return max(st.last_changed for st in states)
+
+
+class VacancyOff(_Occupancy):
+    """Lights off once the zone has been vacant `off_after_seconds` (counted from when it
+    emptied or the light came on, whichever is later), or once a light has been on
+    `max_on_minutes` while the zone is vacant. Optionally on when someone arrives."""
+    name = "vacancy_off"
+
+    def __init__(self, *args) -> None:
+        super().__init__(*args)
+        self._timer: CALLBACK_TYPE | None = None
+        self._was_occupied = False
+
+    @property
+    def _lights(self) -> list[str]:
+        return list(self.params.get("lights") or [])
+
+    @callback
+    def start(self) -> None:
+        self._unsubs.append(async_track_state_change_event(self.hass, self._sensors + self._lights, self._changed))
+        self._was_occupied = self._occupied()
+        self._evaluate()
+
+    @callback
+    def stop(self) -> None:
+        self._cancel()
+        super().stop()
+
+    @callback
+    def _cancel(self) -> None:
+        if self._timer is not None:
+            self._timer()
+            self._timer = None
+
+    @callback
+    def _changed(self, event: Event[EventStateChangedData]) -> None:
+        occupied = self._occupied()
+        if occupied and not self._was_occupied and self.params.get("on_when_occupied"):
+            self._apply({light: {"state": STATE_ON} for light in self._lights}, "on: someone came in")
+        self._was_occupied = occupied
+        self._evaluate()
+
+    def _due(self, light: str, vacant_since):
+        """When this light should go off (None: it is off, or the zone is not vacant)."""
+        st = self.hass.states.get(light)
+        if st is None or st.state != STATE_ON or vacant_since is None:
+            return None
+        due = max(vacant_since, st.last_changed) + timedelta(seconds=self.params.get("off_after_seconds", 60))
+        if max_on := self.params.get("max_on_minutes"):
+            due = min(due, max(vacant_since, st.last_changed + timedelta(minutes=max_on)))
+        return due
+
+    @callback
+    def _evaluate(self) -> None:
+        self._cancel()
+        vacant_since = self._vacant_since()
+        now = dt_util.utcnow()
+        dues = {light: d for light in self._lights if (d := self._due(light, vacant_since)) is not None}
+        if self._occupied():
+            self._set_status("occupied")
+            return
+        if vacant_since is None:
+            self._set_status("waiting for the sensors" if self._sensors else "no occupancy sensor")
+            return
+        if not dues:
+            self._set_status("vacant; lights off")
+            return
+        now_off = [light for light, d in dues.items() if d <= now]
+        if now_off:
+            self.rt.keeper.release_overrides(self.zone["id"])     # vacant long enough: hand changes end
+            self._apply({light: {"state": STATE_OFF} for light in now_off}, "off: vacant")
+            later = {k: v for k, v in dues.items() if k not in now_off}
+            if not later:
+                return
+            dues = later
+        nxt = min(dues.values())
+        self._timer = async_call_later(self.hass, max(1, (nxt - now).total_seconds()),
+                                       HassJob(self._timer_done, cancel_on_shutdown=True))
+        self._set_status("vacant; off at " + dt_util.as_local(nxt).strftime("%H:%M:%S"))
+
+    @callback
+    def _timer_done(self, _now) -> None:
+        self._timer = None
+        self._evaluate()
+
+
+class OccupiedVacant(_Occupancy):
+    """`occupied` targets when someone is in the zone; `vacant` targets once it has been
+    vacant `vacant_after_minutes`. On entering the mode, whichever applies now."""
+    name = "occupied_vacant"
+
+    def __init__(self, *args) -> None:
+        super().__init__(*args)
+        self._timer: CALLBACK_TYPE | None = None
+        self._was_occupied: bool | None = None
+
+    @callback
+    def start(self) -> None:
+        self._unsubs.append(async_track_state_change_event(self.hass, self._sensors, self._changed))
+        self._evaluate(first=True)
+
+    @callback
+    def stop(self) -> None:
+        if self._timer is not None:
+            self._timer()
+            self._timer = None
+        super().stop()
+
+    @callback
+    def _changed(self, _event) -> None:
+        self._evaluate()
+
+    @callback
+    def _evaluate(self, first: bool = False) -> None:
+        if self._timer is not None:
+            self._timer()
+            self._timer = None
+        occupied = self._occupied()
+        if occupied:
+            if first or not self._was_occupied:
+                self._apply(self.params.get("occupied") or {}, "occupied")
+            else:
+                self._set_status("occupied")
+            self._was_occupied = True
+            return
+        self._was_occupied = False
+        since = self._vacant_since()
+        if since is None:
+            self._set_status("waiting for the sensors")
+            return
+        due = since + timedelta(minutes=self.params.get("vacant_after_minutes", 0))
+        now = dt_util.utcnow()
+        if due <= now:
+            self.rt.keeper.release_overrides(self.zone["id"])
+            self._apply(self.params.get("vacant") or {}, "vacant")
+            return
+        self._timer = async_call_later(self.hass, (due - now).total_seconds(), HassJob(self._timer_done, cancel_on_shutdown=True))
+        self._set_status("vacant; switching at " + dt_util.as_local(due).strftime("%H:%M"))
+
+    @callback
+    def _timer_done(self, _now) -> None:
+        self._timer = None
+        self._evaluate(first=True)
+
+
 KINDS: dict[str, type[Behaviour]] = {
+    "vacancy_off": VacancyOff,
+    "occupied_vacant": OccupiedVacant,
     "hands_off": HandsOff,
     "static": Static,
     "nightlight_then_dark": NightlightThenDark,

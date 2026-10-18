@@ -253,8 +253,10 @@ def describe_hold(h: dict | None) -> str | None:
 
 def release_delay(behaviour: str | None, params: dict[str, Any]) -> float:
     """Minutes a zone must be vacant before its overrides end."""
-    for key in ("delay", "off_delay"):
+    for key in ("delay", "off_delay", "vacant_after_minutes"):
         if isinstance(params.get(key), (int, float)):
             return params[key]
+    if isinstance(params.get("off_after_seconds"), (int, float)):
+        return params["off_after_seconds"] / 60
     return DEFAULT_RELEASE_MINUTES
 

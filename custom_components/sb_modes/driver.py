@@ -1,7 +1,8 @@
 """Drivers: make devices match targets, sending only what differs.
 
-A target is {"state": "on"|"off", "brightness_pct": 0-100, "color_temp_kelvin": K};
-brightness or colour temperature without a state means on. An entity that is
+A target is {"state": "on"|"off", "brightness_pct": 0-100, "color_temp_kelvin": K,
+"hs_color": [h, s], "effect": name} for lights and switches — any light setting without a
+state means on — or {"value": n} for a number entity (number.set_value). An entity that is
 unavailable or missing is skipped (validation reports it). Every call carries a
 Context the caller keeps, so later steps can tell SB Modes' own changes from a
 person's.
@@ -24,6 +25,16 @@ def plan(state: State | None, target: dict) -> tuple[str, dict] | None:
     if state is None or state.state in SKIP:
         return None
     domain = state.entity_id.split(".", 1)[0]
+    if domain == "number":
+        value = target.get("value")
+        if value is None:
+            return None
+        try:
+            if abs(float(state.state) - float(value)) < 1e-6:
+                return None
+        except (TypeError, ValueError):
+            pass
+        return ("set_value", {"value": value})
     if target.get("state") == STATE_OFF:
         return None if state.state == STATE_OFF else ("turn_off", {})
     data: dict = {}
@@ -32,6 +43,10 @@ def plan(state: State | None, target: dict) -> tuple[str, dict] | None:
             data["brightness_pct"] = pct
         if (kelvin := target.get("color_temp_kelvin")) is not None:
             data["color_temp_kelvin"] = kelvin
+        if (hs := target.get("hs_color")) is not None:
+            data["hs_color"] = hs
+        if (effect := target.get("effect")) is not None:
+            data["effect"] = effect
     if state.state == STATE_ON and _matches(state, data):
         return None
     return ("turn_on", data)
@@ -46,6 +61,12 @@ def _matches(state: State, data: dict) -> bool:
         k = state.attributes.get("color_temp_kelvin")
         if k is None or abs(k - kelvin) > 50:
             return False
+    if (hs := data.get("hs_color")) is not None:
+        cur = state.attributes.get("hs_color")
+        if not cur or abs(cur[0] - hs[0]) > 2 or abs(cur[1] - hs[1]) > 2:
+            return False
+    if (effect := data.get("effect")) is not None and state.attributes.get("effect") != effect:
+        return False
     return True
 
 

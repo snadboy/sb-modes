@@ -263,6 +263,32 @@ def test_significant_changes():
     assert not MAN.significant("off", "off", None, None)
 
 
+def test_all_modes_setting_precedence():
+    cfg = copy.deepcopy(GOOD)
+    cfg["zones"][1]["overrides"] = {"*": {"behaviour": "vacancy_off", "params": {"lights": ["light.kitchen_aux_sink"]}}}
+    assert check(cfg) == ([], [])
+    assert M.resolve(cfg, "day", "dining")["source"] == "zone"                 # zone-wide beats the mode default
+    assert M.resolve(cfg, "overnight", "dining")["behaviour"] == "vacancy_off"
+    cfg["zones"][1]["overrides"]["overnight"] = {"behaviour": "hands_off"}
+    assert M.resolve(cfg, "overnight", "dining") == {"behaviour": "hands_off", "params": {}, "source": "override"}
+    assert M.resolve(cfg, "day", "dining")["params"] == {"lights": ["light.kitchen_aux_sink"], "off_after_seconds": 60,
+                                                        "max_on_minutes": 0, "on_when_occupied": False}
+
+
+def test_new_param_types():
+    cfg = copy.deepcopy(GOOD)
+    cfg["zones"][1]["overrides"] = {"*": {"behaviour": "vacancy_off", "params": {"lights": [], "on_when_occupied": "yes"}}}
+    e, _ = check(cfg)
+    assert e == ["Zone Dining Room, all modes, lights: must be a list of entity ids.",
+                 "Zone Dining Room, all modes, on_when_occupied: 'yes' must be true or false."], e
+    STATES["number.clock_brightness"] = "64"
+    cfg["zones"][1]["overrides"] = {"*": {"behaviour": "occupied_vacant", "params": {
+        "occupied": {"number.clock_brightness": {"value": 255}, "light.kitchen_aux_sink": {"hs_color": [220, 50], "effect": "Breath"}},
+        "vacant": {"number.clock_brightness": {"value": "dim"}}}}}
+    e, _ = check(cfg)
+    assert e == ["Zone Dining Room, all modes, vacant, number.clock_brightness: a number entity needs a numeric value."], e
+
+
 def test_not_an_object():
     assert check([]) == (["The table must be an object."], [])
 
