@@ -96,6 +96,15 @@ card rebuilds once the tag exists. **SB Background's card has the same bug** (it
 add_extra_js_url too) — fix it the same way in that repo. Lovelace-resource cards (SB Watch,
 Scheduler) are unaffected.
 
+## Known limitations (accepted)
+
+- A light changed by hand WHILE HA IS DOWN is not marked as an override (changes out of
+  `unavailable` are ignored on purpose). Off-when-empty rules then treat it as the house's
+  state; occupied_vacant (Office) may re-apply its set over it. A shutdown snapshot +
+  startup compare would fix it — user 2026-10-18: not worth the effort.
+- After a restart, vacancy clocks restart (HA resets last_changed) and wake steps whose time
+  passed during the downtime are skipped, not run late.
+
 ## Design notes (code)
 
 - `model.py`, `validate.py`: pure, no HA imports. Tests load them as a bare package so
