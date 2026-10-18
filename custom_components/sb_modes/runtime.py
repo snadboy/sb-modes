@@ -29,7 +29,8 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from . import driver
-from .behaviours import KINDS, Behaviour, HandsOff
+from .behaviours import KINDS, Behaviour, HandsOff, Held
+from .bookkeeping import Keeper, describe_hold, release_delay
 from .const import (
     ALERT_GRACE_SECONDS, CHECK_SECONDS, DOMAIN, EVENT_MODE_CHANGED, ISSUE_ID, STARTUP_SETTLE_SECONDS, STORE_KEY,
     STORE_VERSION,
@@ -78,6 +79,7 @@ class Runtime:
         self.ready = False                                # behaviours may run
         self.own_contexts: deque[str] = deque(maxlen=500)  # ids of the contexts of our own calls
         self._behaviours: dict[str, Behaviour] = {}
+        self.keeper = Keeper(self)
         self._listeners: list[Callable[[], None]] = []
         self._unsubs: list[CALLBACK_TYPE] = []
         self._grace: CALLBACK_TYPE | None = None
@@ -90,6 +92,7 @@ class Runtime:
             await self.store.async_save(self.config)     # seed: four hands_off modes, no zones
         else:
             self.config = stored
+        await self.keeper.async_load()
 
     @callback
     def start(self) -> None:
@@ -133,6 +136,7 @@ class Runtime:
                 setattr(self, name, None)
         self._cancel_grace()
         self._stop_behaviours()
+        self.keeper.stop()
 
     # ── the table ────────────────────────────────────────────────────────────
     def validate(self, config: Any) -> tuple[list[str], list[str]]:
@@ -189,6 +193,8 @@ class Runtime:
         b = self._behaviours.get(zone_id)
         picked["status"] = b.status if b else "waiting for start-up"
         picked["entities"] = b.entities if b else {}
+        picked["hold"] = self.keeper.held(zone_id)
+        picked["overrides"] = self.keeper.overridden(zone_id)
         return picked
 
     # ── the active mode ──────────────────────────────────────────────────────
@@ -201,6 +207,7 @@ class Runtime:
         else:
             self.mode, self.mode_since = self.fallback, dt_util.utcnow().isoformat()
         self.manual = manual if isinstance(manual, dict) and manual.get("hold") in HOLDS else None
+        self.keeper.restored(self.mode)
         self._catch_up(source="startup", restart=False)
         self._arm_hold()
         self._arm_schedule()
@@ -247,6 +254,7 @@ class Runtime:
             return False
         old, self.mode = self.mode, mode_id
         self.mode_since = dt_util.utcnow().isoformat()
+        self.keeper.mode_changed()
         self.hass.bus.async_fire(EVENT_MODE_CHANGED, {"from": old, "to": mode_id, "source": source})
         if restart:
             self._restart_behaviours()
@@ -307,12 +315,40 @@ class Runtime:
         self._stop_behaviours()
         if self.ready and self.mode:
             for zone in self.zones():
-                picked = resolve(self.config, self.mode, zone["id"]) or {}
-                kind = KINDS.get(picked.get("behaviour") or "", HandsOff)
-                b = kind(self, zone, picked.get("params") or {}, zone_entities(self.hass, zone.get("areas") or []))
-                self._behaviours[zone["id"]] = b
-                b.start()
+                self._start_zone(zone)
+        self._rewatch()
         self.notify()
+
+    @callback
+    def _start_zone(self, zone: dict) -> None:
+        picked = resolve(self.config, self.mode, zone["id"]) or {}
+        kind = Held if self.keeper.held(zone["id"]) else KINDS.get(picked.get("behaviour") or "", HandsOff)
+        b = kind(self, zone, picked.get("params") or {}, zone_entities(self.hass, zone.get("areas") or []))
+        self._behaviours[zone["id"]] = b
+        b.start()
+
+    @callback
+    def restart_zone(self, zone_id: str) -> None:
+        """One zone's behaviour again, for the current mode (after a hold or a release)."""
+        if (b := self._behaviours.pop(zone_id, None)) is not None:
+            b.stop()
+        zone = next((z for z in self.zones() if z["id"] == zone_id), None)
+        if zone and self.ready and self.mode:
+            self._start_zone(zone)
+        self._rewatch()
+        self.notify()
+
+    @callback
+    def _rewatch(self) -> None:
+        """Watch the lights of every zone whose behaviour acts, for changes made by hand."""
+        watch = {}
+        for zid, b in self._behaviours.items():
+            if b.name in ("hands_off", "held"):
+                continue
+            picked = resolve(self.config, self.mode, zid) or {}
+            watch[zid] = {"lights": b.entities.get("lights", []), "occupancy": b.entities.get("occupancy", []),
+                          "delay": release_delay(picked.get("behaviour"), picked.get("params") or {})}
+        self.keeper.watch(watch)
 
     @callback
     def _stop_behaviours(self) -> None:
@@ -321,8 +357,17 @@ class Runtime:
         self._behaviours.clear()
 
     @callback
-    def apply(self, targets: dict[str, dict], why: str) -> None:
-        """Send targets through the driver, under a context remembered as our own."""
+    def apply(self, targets: dict[str, dict], why: str, zone_id: str | None = None) -> None:
+        """Send targets through the driver, under a context remembered as our own. Lights
+        changed by hand in the zone are left out."""
+        if zone_id is not None:
+            if self.keeper.held(zone_id):
+                return
+            skip = self.keeper.overridden(zone_id)
+            targets = {e: t for e, t in targets.items() if e not in skip}
+        if not targets:
+            return
+        self.keeper.commanded(targets)
         ctx = Context()
         self.own_contexts.append(ctx.id)
         _LOGGER.debug("SB Modes: %s → %s", why, targets)

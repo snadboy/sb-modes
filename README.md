@@ -47,6 +47,19 @@ A manual change carries a **hold**:
 At startup SB Modes catches up with any scheduled change it missed, unless a hold stands.
 The mode-changed event carries `source`: manual, schedule, resume, hold_ended or startup.
 
+## Lights changed by hand, and zone holds (0.5.0)
+
+- **Changed by hand**: a zone light changed by a person (app, dashboard, voice) or at the
+  device (wall switch, Lutron app) is left alone by every behaviour until the zone has been
+  empty for its delay (`delay` / `off_delay`, else 10 min) or the mode changes. Changes by
+  SB Modes itself, by other automations, and a device echoing SB Modes' own command within
+  15 s do not count. Shown on the zone's row; `overrides` attribute on its sensor.
+- **Hold a zone** (row ⋮, or `sb_modes.hold_zone {zone, hold}`): its behaviour sends nothing
+  for 15/30/60 min (`hold: minutes`), until the next mode change (`next`, default) or until
+  released (`paused`). **Release** (`sb_modes.release_zone {zone}`) ends the hold and the
+  hand changes; the zone's behaviour starts again for the current mode.
+- Both are saved (`.storage/sb_modes.state`) and survive restarts and table reloads.
+
 ## Editing the table (until the panel exists)
 
 | Action | Does |
@@ -56,6 +69,8 @@ The mode-changed event carries `source`: manual, schedule, resume, hold_ended or
 | `sb_modes.save_config` `{config}` | Saves a table with no errors, then reloads (zones become entities) |
 | `sb_modes.set_mode` `{mode, hold}` | Manual mode change; hold `next` (default), `paused`, or minutes |
 | `sb_modes.resume_schedule` | End any hold; switch to the scheduled mode now |
+| `sb_modes.hold_zone` `{zone, hold}` | Hold a zone by hand: `next` (default), `paused`, or minutes |
+| `sb_modes.release_zone` `{zone}` | End a zone's hold and its lights changed by hand |
 
 ```yaml
 fallback_mode: day

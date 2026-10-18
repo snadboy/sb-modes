@@ -32,7 +32,7 @@ to mode changes instead. Key decisions, all in the design doc:
 
 1. ✅ Skeleton: table + validation, mode select, zone sensors, problem sensor + Repairs, fallback. (0.1.0, deployed 2026-10-17 by tar + full restart; entry added via the config flow API)
 2. ✅ `nightlight_then_dark` + `static` with a light driver; move the 3 overnight zones; retire SB Background instances. (0.2.0, live 2026-10-17 09:30 CDT; first overnight 23:00 that night)
-3. Bookkeeping: own-context tracking, manual overrides with expiry (kitchen first).
+3. ✅ Bookkeeping (0.5.0, 2026-10-18): manual changes (`manual.py` classify: ours / user / automation parent / device echo within 15 s) → per-light overrides released on vacancy-for-delay or mode change; zone holds (15/30/60, next, paused) + release; `bookkeeping.Keeper`, `.storage/sb_modes.state`, handed over in hass.data across reloads (delayed save would otherwise lose it). Overrides are only tracked for zones whose behaviour acts (not hands_off / held).
 4. `presence_lux`; evening for one zone, then the rest. Replaces the 8 `Lights - Occupancy` automations.
 5. Overlays (TV first) and holds (the "Family Room Light Hold" BILRESA button, currently unavailable).
 6. Sidebar panel `/sb-modes` + `custom:sb-modes-card` (SB UI kit, ha-form). **Started early (0.3.x, 2026-10-17): view-only panel + card**; 0.3.4 matches the other SB cards' header (title from the card editor · "Day · 4 modes · 3 zones" · ⋮ Open the SB Modes page · collapse chevron, remembered per browser); a "+ Add" comes with the editor — mode picker, "since", problems, a row per zone (behaviour chip + live status), tap a zone for its areas / nightlight / occupancy / lights. Editor still to come.

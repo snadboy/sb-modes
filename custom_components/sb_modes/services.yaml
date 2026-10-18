@@ -22,3 +22,19 @@ set_mode:
       selector:
         text:
 resume_schedule:
+hold_zone:
+  fields:
+    zone:
+      required: true
+      selector:
+        text:
+    hold:
+      default: next
+      selector:
+        text:
+release_zone:
+  fields:
+    zone:
+      required: true
+      selector:
+        text:

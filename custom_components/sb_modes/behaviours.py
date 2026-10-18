@@ -12,6 +12,9 @@ behaviour decides what happens from there.
                          mode with the zone already vacant that long goes dark at once.
                          An unavailable sensor counts as not vacant.
 - presence_lux           not built yet (step 4); runs as hands_off.
+
+A light changed by hand is skipped by every behaviour until the zone has been vacant for its
+delay or the mode changes; a zone held by hand runs Held (nothing is sent). bookkeeping.py.
 """
 
 from __future__ import annotations
@@ -62,11 +65,21 @@ class Behaviour:
     @callback
     def _apply(self, targets: dict[str, dict], status: str) -> None:
         self._set_status(status)
-        self.rt.apply(targets, f"{self.zone['id']}: {status}")
+        self.rt.apply(targets, f"{self.zone['id']}: {status}", self.zone["id"])
 
 
 class HandsOff(Behaviour):
     name = "hands_off"
+
+
+class Held(Behaviour):
+    """A zone a person holds: nothing is sent; the status says until when."""
+    name = "held"
+
+    @callback
+    def start(self) -> None:
+        from .bookkeeping import describe_hold
+        self._set_status(describe_hold(self.rt.keeper.held(self.zone["id"])) or "held by hand")
 
 
 class NotBuilt(Behaviour):
@@ -174,6 +187,7 @@ class NightlightThenDark(Behaviour):
     @callback
     def _go_dark(self) -> None:
         self._dark_done = True
+        self.rt.keeper.release_overrides(self.zone["id"])   # vacant for the delay: hand changes end
         self._apply({light: {"state": STATE_OFF} for light in self._lights},
                     "dark since " + dt_util.as_local(dt_util.utcnow()).strftime("%H:%M"))
 

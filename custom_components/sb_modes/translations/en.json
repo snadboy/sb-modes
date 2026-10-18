@@ -70,6 +70,30 @@
     "resume_schedule": {
       "name": "Resume schedule",
       "description": "End any manual hold and switch to the mode the schedule says now."
+    },
+    "hold_zone": {
+      "name": "Hold zone",
+      "description": "Hold a zone by hand: its behaviour sends nothing to its lights.",
+      "fields": {
+        "zone": {
+          "name": "Zone",
+          "description": "A zone id, e.g. kitchen."
+        },
+        "hold": {
+          "name": "Hold",
+          "description": "next = until the next mode change (default); paused = until released; a number = that many minutes."
+        }
+      }
+    },
+    "release_zone": {
+      "name": "Release zone",
+      "description": "End a zone's hold and its lights changed by hand; its behaviour starts again for the current mode.",
+      "fields": {
+        "zone": {
+          "name": "Zone",
+          "description": "A zone id, e.g. kitchen."
+        }
+      }
     }
   }
 }

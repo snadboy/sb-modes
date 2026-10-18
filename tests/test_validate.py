@@ -26,6 +26,7 @@ def _load(name):
 
 M = _load("model")
 V = _load("validate")
+MAN = _load("manual")
 
 STATES = {
     "light.kitchen_aux_sink": "on",
@@ -241,6 +242,25 @@ def test_scheduled_mode_weekday_and_weekend():
     assert M.next_change(cfg, _at(2026, 10, 16, 10, 0)) == ("overnight", _at(2026, 10, 17, 0, 30))
     assert M.next_change(cfg, _at(2026, 10, 18, 9, 0)) == ("overnight", _at(2026, 10, 18, 23, 0))
     assert M.scheduled_mode({}, _at(2026, 10, 16, 10, 0)) == (None, None)
+
+
+def test_manual_classification():
+    own = {"ours"}
+    assert MAN.classify("ours", None, None, own, None) is None                  # our own call
+    assert MAN.classify("x", None, "ours", own, None) is None                   # descended from ours
+    assert MAN.classify("x", "user1", None, own, None) == "person"              # app / dashboard / voice
+    assert MAN.classify("x", None, "automation-ctx", own, None) is None         # another automation
+    assert MAN.classify("x", None, None, own, None) == "device"                 # wall switch / Lutron app
+    assert MAN.classify("x", None, None, own, 3.0) is None                      # the device echoing our command
+    assert MAN.classify("x", None, None, own, 60.0) == "device"
+
+
+def test_significant_changes():
+    assert MAN.significant("off", "on", None, 128)
+    assert MAN.significant("on", "on", 100, 140)
+    assert not MAN.significant("on", "on", 100, 102)                           # rounding noise
+    assert not MAN.significant("unavailable", "on", None, 128)
+    assert not MAN.significant("off", "off", None, None)
 
 
 def test_not_an_object():

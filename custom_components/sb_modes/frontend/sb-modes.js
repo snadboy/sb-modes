@@ -11,7 +11,7 @@
  *
  * Rows use the shared SB row style (window.SBKit, from the SB UI Kit integration).
  */
-const VERSION = "0.4.0";
+const VERSION = "0.5.0";
 const CARD = "sb-modes-card";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -106,6 +106,7 @@ const BEHAVIOUR_NAMES = {
 /** A zone's live status → the row's icon, its tint and the words. */
 const look = (behaviour, status) => {
   const s = String(status || "");
+  if (s.startsWith("held")) return { icon: "mdi:hand-back-right-outline", tint: "warn" };
   if (behaviour === "hands_off") return { icon: "mdi:hand-back-left-off-outline", tint: "idle" };
   if (s.startsWith("dark")) return { icon: "mdi:weather-night", tint: "idle" };
   if (s === "nightlight") return { icon: "mdi:lightbulb-night-outline", tint: "run" };
@@ -343,7 +344,8 @@ class SbModesCard extends HTMLElement {
     const pick = (a.by_mode || {})[viewed] || { behaviour: z.state, params: a.params, source: a.source };
     const beh = pick.behaviour;
     const what = this._describe(beh, pick.params);
-    const doing = previewing ? what : beh === "hands_off" ? `Not controlled in ${modeName}` : a.status || "";
+    const held = !previewing && String(a.status || "").startsWith("held");
+    const doing = previewing ? what : held ? a.status : beh === "hands_off" ? `Not controlled in ${modeName}` : a.status || "";
     const l = previewing ? { icon: look(beh, "").icon, tint: "idle" } : look(beh, a.status);
     const open = this._open.has(z.id);
     const src = pick.source === "override" ? "this zone's own setting" : "the mode's default";
@@ -361,13 +363,27 @@ class SbModesCard extends HTMLElement {
         ${(a.occupancy || []).length ? `<div><b>Occupancy</b> ${a.occupancy.map((e) => ent(e, "occ")).join("")}</div>` : ""}
         ${(a.lights || []).length ? `<div><b>Lights</b> ${a.lights.map((e) => ent(e, "light")).join("")}</div>` : ""}
       </div>` : "";
+    // live view only: lights changed by hand, and the hold / release menu
+    const ov = previewing ? {} : (a.overrides || {});
+    const ovNames = Object.keys(ov).map((e) => this._hass.states[e]?.attributes.friendly_name || e);
+    const third = ovNames.length ? `<span class="sbk-m warn">Changed by hand: ${esc(ovNames.join(", "))} · left alone until ${esc(z.name)} is empty ${esc(String((pick.params || {}).delay ?? (pick.params || {}).off_delay ?? 10))} min or the mode changes</span>` : "";
+    const key = `z:${z.id}`;
+    const menu = !previewing && this._menu === key ? kit().menu(`${z.name} actions`, [
+      { act: "hold:15", icon: "mdi:hand-back-right-outline", label: "Hold 15 min" },
+      { act: "hold:30", icon: "mdi:hand-back-right-outline", label: "Hold 30 min" },
+      { act: "hold:60", icon: "mdi:hand-back-right-outline", label: "Hold 1 hour" },
+      { act: "hold:next", icon: "mdi:hand-back-right-outline", label: "Hold until the next mode change" },
+      { act: "hold:paused", icon: "mdi:hand-back-right-off-outline", label: "Hold until released" },
+      "-",
+      { act: "release", icon: "mdi:play-outline", label: `Release — back to ${modeName}`, disabled: !a.hold && !ovNames.length },
+    ]) : "";
     return `<div class="sbk-row ${previewing ? "pv" : ""}" data-z="${esc(z.id)}">
         <button class="sbk-open" aria-expanded="${open}" title="${open ? "Hide" : "Show"} what ${esc(z.name)} holds">
           <span class="sbk-ico ${l.tint}"><ha-icon icon="${esc(l.icon)}"></ha-icon></span>
           <span class="sbk-txt"><span class="sbk-t">${esc(z.name)}</span>
-            <span class="sbk-s"><span class="sbk-chip" title="${esc(src)}">${esc(BEHAVIOUR_NAMES[beh] || beh)}</span>${esc(doing)}</span></span>
+            <span class="sbk-s"><span class="sbk-chip" title="${esc(src)}">${esc(BEHAVIOUR_NAMES[beh] || beh)}</span>${esc(doing)}</span>${third}</span>
         </button>
-        <span class="sbk-kb" aria-hidden="true"><ha-icon icon="${open ? "mdi:chevron-down" : "mdi:chevron-right"}"></ha-icon></span>
+        ${previewing ? "" : `<button class="sbk-kb zkb ${menu ? "on" : ""}" aria-label="Hold or release ${esc(z.name)}" title="Hold or release ${esc(z.name)}" aria-expanded="${menu ? "true" : "false"}">${kit().kbIcon}</button>${menu}`}
       </div>${detail}`;
   }
 
@@ -410,9 +426,23 @@ class SbModesCard extends HTMLElement {
     root.querySelector("button.fold")?.addEventListener("click", () => {
       const k = foldKey(CARD, this._config.title); foldSet(k, !foldGet(k)); this._render();
     });
-    root.querySelectorAll(".sbk-menu button").forEach((b) => b.addEventListener("click", () => {
+    root.querySelectorAll(".sbk-row .zkb").forEach((b) => b.addEventListener("click", () => {
+      const k = `z:${b.closest("[data-z]").dataset.z}`; this._setMenu(this._menu === k ? null : k);
+    }));
+    root.querySelectorAll(".sbk-menu button").forEach((b) => b.addEventListener("click", async () => {
+      const act = b.dataset.act, zone = b.closest("[data-z]")?.dataset.z;
       this._setMenu(null);
-      if (b.dataset.act === "page") { history.pushState(null, "", "/sb-modes"); window.dispatchEvent(new CustomEvent("location-changed")); }
+      if (act === "page") { history.pushState(null, "", "/sb-modes"); window.dispatchEvent(new CustomEvent("location-changed")); return; }
+      try {
+        if (act.startsWith("hold:")) {
+          const h = act.slice(5);
+          await this._hass.callService("sb_modes", "hold_zone", { zone, hold: /^\d+$/.test(h) ? Number(h) : h });
+        } else if (act === "release") {
+          await this._hass.callService("sb_modes", "release_zone", { zone });
+        }
+        this._msg = "";
+      } catch (e) { this._msg = `Could not change ${zone}: ${e?.message || e}`; }
+      this._sig = ""; this._render();
     }));
     root.querySelectorAll(".sbk-row .sbk-open").forEach((b) => b.addEventListener("click", () => {
       const id = b.closest("[data-z]").dataset.z;

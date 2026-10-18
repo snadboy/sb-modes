@@ -375,3 +375,123 @@ async def test_bad_schedule_is_refused(hass, kitchen) -> None:
     t["schedule"] = [{"days": ["mon"], "at": "25:00", "mode": "weekend"}]
     with pytest.raises(ServiceValidationError, match="not defined"):
         await _save(hass, t)
+
+
+# ── step 3: lights changed by hand, zone holds ──────────────────────────────
+
+from homeassistant.core import Context  # noqa: E402
+
+
+def _rt(hass):
+    return hass.config_entries.async_entries(DOMAIN)[0].runtime_data
+
+
+def _zone(hass):
+    return hass.states.get(ZONE).attributes
+
+
+async def _overnight(hass):
+    await _setup(hass)
+    await _save(hass, _table())
+    await _mode(hass, "overnight")
+
+
+async def test_a_persons_change_is_an_override(hass, kitchen, lights) -> None:
+    await _overnight(hass)
+    hass.states.async_set(SINK, "on", {"brightness": 200}, context=Context(user_id="someone"))
+    await hass.async_block_till_done()
+    assert _zone(hass)["overrides"][SINK]["by"] == "person"
+
+
+async def test_a_wall_switch_is_an_override(hass, kitchen, lights) -> None:
+    await _overnight(hass)
+    hass.states.async_set(CEILING, "on", {"brightness": 255}, context=Context())
+    await hass.async_block_till_done()
+    assert _zone(hass)["overrides"][CEILING]["by"] == "device"
+
+
+async def test_not_overrides_ours_automations_and_echoes(hass, kitchen, lights) -> None:
+    await _overnight(hass)
+    rt = _rt(hass)
+    ours = Context(); rt.own_contexts.append(ours.id)
+    hass.states.async_set(SINK, "on", {"brightness": 25}, context=ours)                        # our own call
+    hass.states.async_set(SINK, "on", {"brightness": 120}, context=Context(parent_id="automation"))  # another automation
+    rt.keeper.commanded([CEILING])
+    hass.states.async_set(CEILING, "on", {"brightness": 128}, context=Context())               # the device echoing us
+    await hass.async_block_till_done()
+    assert _zone(hass)["overrides"] == {}
+
+
+async def test_overridden_lights_are_skipped(hass, kitchen, lights) -> None:
+    await _overnight(hass)
+    hass.states.async_set(SINK, "on", {"brightness": 200}, context=Context(user_id="someone"))
+    await hass.async_block_till_done()
+    _rt(hass).apply({SINK: {"state": "off"}, CEILING: {"state": "on"}}, "test", "kitchen")
+    await hass.async_block_till_done()
+    assert [c.data["entity_id"] for c in lights["off"]] == [] and [c.data["entity_id"] for c in lights["on"]] == [CEILING]
+
+
+async def test_override_ends_when_vacant_for_the_delay(hass, kitchen, lights, freezer) -> None:
+    await _overnight(hass)
+    hass.states.async_set(OCC, "on")
+    hass.states.async_set(SINK, "on", {"brightness": 200}, context=Context(user_id="someone"))
+    await hass.async_block_till_done()
+    hass.states.async_set(OCC, "off")
+    await hass.async_block_till_done()
+    freezer.tick(timedelta(minutes=9))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert SINK in _zone(hass)["overrides"]
+    freezer.tick(timedelta(minutes=1, seconds=2))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert _zone(hass)["overrides"] == {}
+    assert SINK in [c.data["entity_id"] for c in lights["off"]]          # and the zone went dark, sink included
+
+
+async def test_override_ends_with_the_mode(hass, kitchen, lights) -> None:
+    await _overnight(hass)
+    hass.states.async_set(SINK, "on", {"brightness": 200}, context=Context(user_id="someone"))
+    await hass.async_block_till_done()
+    await _mode(hass, "evening")
+    await _mode(hass, "overnight")
+    assert _zone(hass)["overrides"] == {}
+
+
+async def test_timed_hold_stops_the_behaviour_then_releases(hass, kitchen, lights, freezer) -> None:
+    await _overnight(hass)
+    await hass.services.async_call(DOMAIN, "hold_zone", {"zone": "kitchen", "hold": 30}, blocking=True)
+    await hass.async_block_till_done()
+    assert _zone(hass)["status"].startswith("held by hand until") and _zone(hass)["hold"]["hold"] == "timed"
+    hass.states.async_set(OCC, "on")                                      # arrival in the dark: no nightlight
+    await hass.async_block_till_done()
+    assert lights["on"] == []
+    freezer.tick(timedelta(minutes=31))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert _zone(hass)["hold"] is None and _zone(hass)["status"] == "occupied"
+
+
+async def test_hold_until_next_mode_change(hass, kitchen, lights) -> None:
+    await _overnight(hass)
+    await hass.services.async_call(DOMAIN, "hold_zone", {"zone": "kitchen"}, blocking=True)
+    assert _zone(hass)["status"] == "held by hand until the next mode change"
+    await _mode(hass, "evening")
+    assert _zone(hass)["hold"] is None
+
+
+async def test_paused_hold_survives_mode_changes_and_reloads_until_released(hass, kitchen, lights) -> None:
+    await _overnight(hass)
+    await hass.services.async_call(DOMAIN, "hold_zone", {"zone": "kitchen", "hold": "paused"}, blocking=True)
+    await _mode(hass, "evening")
+    await _save(hass, _table())                                           # reload
+    assert _zone(hass)["hold"]["hold"] == "paused"
+    await hass.services.async_call(DOMAIN, "release_zone", {"zone": "kitchen"}, blocking=True)
+    await hass.async_block_till_done()
+    assert _zone(hass)["hold"] is None and _zone(hass)["status"] != "held by hand until released"
+
+
+async def test_hold_unknown_zone_refused(hass, kitchen) -> None:
+    await _overnight(hass)
+    with pytest.raises(ServiceValidationError, match="not a zone"):
+        await hass.services.async_call(DOMAIN, "hold_zone", {"zone": "attic"}, blocking=True)

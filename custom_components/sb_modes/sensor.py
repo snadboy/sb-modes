@@ -47,6 +47,8 @@ class ZoneSensor(ModesEntity, SensorEntity):
             "source": st.get("source"),
             "params": st.get("params", {}),
             "status": st.get("status"),
+            "hold": st.get("hold"),
+            "overrides": st.get("overrides") or {},
             "by_mode": self._rt.zone_by_mode(self._zone_id),
             **{k: v for k, v in (st.get("entities") or {}).items()},
         }
