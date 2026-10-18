@@ -11,7 +11,7 @@
  *
  * Rows use the shared SB row style (window.SBKit, from the SB UI Kit integration).
  */
-const VERSION = "0.3.4";
+const VERSION = "0.3.5";
 const CARD = "sb-modes-card";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -366,8 +366,6 @@ class SbModesCardEditor extends HTMLElement {
   }
 }
 
-if (!customElements.get(CARD)) customElements.define(CARD, SbModesCard);
-if (!customElements.get(`${CARD}-editor`)) customElements.define(`${CARD}-editor`, SbModesCardEditor);
 window.customCards = window.customCards || [];
 if (!window.customCards.some((c) => c.type === CARD)) {
   window.customCards.push({ type: CARD, name: "SB Modes Card", description: "The current mode, what each mode does per zone, and a deliberate, confirmed switch.",
@@ -408,5 +406,21 @@ class SbModesPanel extends HTMLElement {
     this._card = card;
   }
 }
-if (!customElements.get("sb-modes-panel")) customElements.define("sb-modes-panel", SbModesPanel);
+// Register the elements — and register them AGAIN if they go missing. Since HA 2026.10 the
+// frontend replaces window.customElements with a scoped-registry polyfill on dashboard pages,
+// after integration modules (add_extra_js_url) have already run, so a definition made at load
+// is lost and the card shows "Configuration error" (seen 2026-10-18). A fresh subclass is
+// defined each time: a constructor cannot be registered twice. HA's error card rebuilds itself
+// once the tag is defined in the current registry.
+const DEFS = [[CARD, SbModesCard], [`${CARD}-editor`, SbModesCardEditor], ["sb-modes-panel", SbModesPanel]];
+const ensureDefined = () => {
+  for (const [tag, C] of DEFS) {
+    if (customElements.get(tag)) continue;
+    try { customElements.define(tag, class extends C {}); } catch (e) { /* defined meanwhile */ }
+  }
+};
+ensureDefined();
+const settle = setInterval(ensureDefined, 500);
+setTimeout(() => clearInterval(settle), 60000);
+window.addEventListener("location-changed", ensureDefined);
 console.info(`%c SB-MODES %c v${VERSION} `, "background:#37474f;color:#fff", "background:#90a4ae;color:#000");

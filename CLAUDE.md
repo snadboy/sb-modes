@@ -71,6 +71,17 @@ step 6 — each new behaviour/overlay/hold gets its view (and later controls) on
   on arrival still untested live (lights were dim, so correctly "occupied").
 - Restored afterwards: mode Morning + scene.early_morning_scene.
 
+## HA 2026.10 card registration (2026-10-18)
+
+On dashboard pages the frontend replaces `window.customElements` with a scoped-registry
+polyfill (constructor name "A", non-native define) AFTER add_extra_js_url modules have run,
+so their definitions are lost → "Configuration error" cards. Panel pages are fine (the panel
+loads module_url itself). Fix in 0.3.5: `ensureDefined()` re-defines a fresh subclass of each
+element if missing — every 500 ms for 60 s after load, and on `location-changed`; HA's error
+card rebuilds once the tag exists. **SB Background's card has the same bug** (its module uses
+add_extra_js_url too) — fix it the same way in that repo. Lovelace-resource cards (SB Watch,
+Scheduler) are unaffected.
+
 ## Design notes (code)
 
 - `model.py`, `validate.py`: pure, no HA imports. Tests load them as a bare package so
