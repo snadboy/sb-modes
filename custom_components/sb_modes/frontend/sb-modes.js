@@ -11,7 +11,7 @@
  *
  * Rows use the shared SB row style (window.SBKit, from the SB UI Kit integration).
  */
-const VERSION = "0.3.3";
+const VERSION = "0.3.4";
 const CARD = "sb-modes-card";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -41,6 +41,34 @@ const whenKit = () => kitPromise || (kitPromise = new Promise((resolve) => {
   setTimeout(() => { if (!kit()) import(`/sb_ui_kit_static/sb-ui-kit.js?v=retry-${Date.now()}`).then(on, () => {}); }, 3000);
   setTimeout(() => resolve(kit()), 15000);
 }));
+// Collapsed or not, per card (type + title), per browser — the same keys and button as the
+// other SB cards. Storage can be blocked (private window): then it is simply not remembered.
+const foldKey = (card, title) => `sb-card-collapsed:${card}:${title || ""}`;
+const foldGet = (k) => { try { return localStorage.getItem(k) === "1"; } catch (e) { return false; } };
+const foldSet = (k, v) => { try { if (v) localStorage.setItem(k, "1"); else localStorage.removeItem(k); } catch (e) { /* not remembered */ } };
+const foldBtn = (folded) => `<button class="sbk-kb fold" title="${folded ? "Show the entries" : "Hide the entries"}" aria-label="${folded ? "Show the entries" : "Hide the entries"}" aria-expanded="${folded ? "false" : "true"}"><ha-icon icon="${folded ? "mdi:chevron-right" : "mdi:chevron-down"}"></ha-icon></button>`;
+const fire = (node, type, detail) => node.dispatchEvent(new CustomEvent(type, { detail, bubbles: true, composed: true }));
+
+// HA lazy-loads ha-form with the card editors; force it in before the card editor shows.
+const loadHaForm = async () => {
+  if (customElements.get("ha-form")) return true;
+  try {
+    if (!window.loadCardHelpers) {
+      await customElements.whenDefined("partial-panel-resolver");
+      const ppr = document.createElement("partial-panel-resolver");
+      ppr.hass = { panels: [{ url_path: "tmp", component_name: "lovelace" }] };
+      ppr._updateRoutes();
+      await ppr.routerOptions.routes.tmp.load();
+    }
+    const helpers = await window.loadCardHelpers();
+    helpers.createCardElement({ type: "entities", entities: [] });
+    await Promise.race([customElements.whenDefined("hui-entities-card"), new Promise((r) => setTimeout(r, 5000))]);
+    const C = customElements.get("hui-entities-card");
+    if (C?.getConfigElement) await C.getConfigElement();
+  } catch (e) { /* the editor simply does not show */ }
+  return !!customElements.get("ha-form");
+};
+
 const KIT_MISSING = `<div style="padding: 16px; color: var(--error-color)">The <b>SB UI Kit</b> integration is not loaded — install “SB UI Kit” from HACS and restart Home Assistant.</div>`;
 
 const MODE_ICONS = {
@@ -80,7 +108,7 @@ const STYLE = `
 .mode.on { background: var(--primary-color); border-color: var(--primary-color); color: var(--text-primary-color, #fff); }
 .mode:disabled { opacity: .5; cursor: default; }
 .mode ha-icon { --mdc-icon-size: 18px; margin: -2px 6px 0 -4px; vertical-align: middle; }
-.now { display: flex; align-items: center; gap: 14px; padding: 16px 16px 10px; }
+.now { display: flex; align-items: center; gap: 14px; padding: 4px 16px 10px; border-top: 1px solid var(--divider-color); padding-top: 14px; }
 .sbk-ico.big { width: 56px; height: 56px; flex: 0 0 56px; border-radius: 28px; --mdc-icon-size: 30px; }
 .cur-l { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--secondary-text-color); }
 .cur { font-size: 26px; font-weight: 500; line-height: 1.15; }
@@ -90,7 +118,9 @@ const STYLE = `
        background: color-mix(in srgb, var(--primary-color) 10%, transparent); display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .ask p { margin: 0; flex: 1 1 260px; }
 .ask .go { background: var(--primary-color); border-color: var(--primary-color); color: var(--text-primary-color, #fff); }
-.sbk-head h2.sub { font-size: 16px; }
+.zh { padding: 6px 16px 8px; font-size: 13px; font-weight: 500; color: var(--secondary-text-color); text-transform: uppercase; letter-spacing: .05em; }
+.pvtag { margin-left: 6px; padding: 1px 7px; border-radius: 9px; font-size: 11px; letter-spacing: .04em;
+         background: color-mix(in srgb, var(--warning-color, #ffa600) 18%, transparent); color: var(--primary-text-color); }
 .curtag { margin-left: 8px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; opacity: .75; }
 .mode.on .curtag { opacity: .9; }
 .ask .make { border-color: var(--primary-color); color: var(--primary-color); }
@@ -121,11 +151,12 @@ class SbModesCard extends HTMLElement {
   }
 
   static getStubConfig() { return { title: "Modes" }; }
+  static getConfigElement() { return document.createElement(`${CARD}-editor`); }
   setConfig(config) { this._config = { title: "Modes", ...(config || {}) }; this._sig = ""; this._render(); }
   getCardSize() { return 3 + this._zones().length; }
 
   connectedCallback() { this._tick = setInterval(() => { this._sig = ""; this._render(); }, 30000); }
-  disconnectedCallback() { clearInterval(this._tick); }
+  disconnectedCallback() { clearInterval(this._tick); this._unMenu?.(); }
 
   set hass(h) {
     this._hass = h;
@@ -202,7 +233,18 @@ class SbModesCard extends HTMLElement {
       : warns.length ? `<div class="problems warn"><b>Warnings</b><ul>${warns.map((e) => `<li>${esc(e)}</li>`).join("")}</ul></div>` : "";
     const zones = this._zones();
     const rows = zones.map((z) => this._row(z, viewed, nm(viewed), previewing)).join("");
-    body.innerHTML = `
+    const cfg = this._config;
+    const folded = !cfg.panel && foldGet(foldKey(CARD, cfg.title));
+    const attention = errs.length ? 1 + zones.filter((z) => look(z.state, z.attr.status).tint === "warn").length
+      : zones.filter((z) => look(z.state, z.attr.status).tint === "warn").length;
+    const headMenu = !cfg.panel && this._menu === "__head" ? kit().menu("Card actions", [{ act: "page", icon: "mdi:open-in-app", label: "Open the SB Modes page" }]) : "";
+    const head = `<div class="sbk-head sbk-hwrap"><h2>${esc(cfg.title || "")}</h2>
+        <span class="sbk-count">${esc(nm(sel.state))} · ${options.length} mode${options.length === 1 ? "" : "s"} · ${zones.length} zone${zones.length === 1 ? "" : "s"}${
+          folded && attention ? ` · <span style="color: var(--error-color)">${attention} need${attention === 1 ? "s" : ""} attention</span>` : ""}</span>
+        ${cfg.panel ? "" : `<button class="sbk-kb hkb ${headMenu ? "on" : ""}" aria-label="More" title="More: open the SB Modes page" aria-expanded="${headMenu ? "true" : "false"}">${kit().kbIcon}</button>${headMenu}${foldBtn(folded)}`}
+      </div>`;
+    if (folded) { body.innerHTML = head; this._wire(); return; }
+    body.innerHTML = `${head}
       <div class="now"><span class="sbk-ico armed big"><ha-icon icon="${esc(modeIcon(sel.state))}"></ha-icon></span>
         <div><div class="cur-l">Current mode</div><div class="cur">${esc(nm(sel.state))}</div>
           <div class="since">since ${esc(hhmm(since, this._hass.config?.time_zone))} (${esc(ago(since))} ago) · fallback ${esc(nm(sel.attributes.fallback_mode))}</div></div></div>
@@ -210,8 +252,7 @@ class SbModesCard extends HTMLElement {
       <div class="modes" role="group" aria-label="See a mode">${chips}</div>
       ${banner}
       ${problems}
-      <div class="sbk-head"><h2 class="sub">Zones${previewing ? ` in ${esc(nm(viewed))}` : ""}</h2>
-        <span class="sbk-count">${previewing ? "preview" : "live"} · ${zones.length} zone${zones.length === 1 ? "" : "s"}</span></div>
+      <div class="zh">Zones${previewing ? ` in ${esc(nm(viewed))} <span class="pvtag">preview</span>` : ""}</div>
       ${rows || `<div class="sbk-empty">No zones yet. Add them to the table with the <code>sb_modes.save_config</code> action.</div>`}
       ${this._msg ? `<div class="sbk-note">${esc(this._msg)}</div>` : ""}`;
     this._wire();
@@ -267,6 +308,14 @@ class SbModesCard extends HTMLElement {
       </div>${detail}`;
   }
 
+  _setMenu(id) {
+    this._menu = id;
+    // one outside click / Escape closes it; installed only while a menu is open
+    this._unMenu?.();
+    if (id) { const off = kit().away(() => this._setMenu(null)); this._unMenu = () => { off(); this._unMenu = null; }; }
+    this._render();
+  }
+
   _wire() {
     const root = this.shadowRoot.querySelector(".body");
     // A tap on a mode only shows it. Switching takes two deliberate steps: "Make … the
@@ -285,6 +334,14 @@ class SbModesCard extends HTMLElement {
       catch (e) { this._msg = `Could not change the mode: ${e?.message || e}`; }
       finally { this._busy = false; this._sig = ""; this._render(); }
     });
+    root.querySelector("button.hkb")?.addEventListener("click", () => this._setMenu(this._menu === "__head" ? null : "__head"));
+    root.querySelector("button.fold")?.addEventListener("click", () => {
+      const k = foldKey(CARD, this._config.title); foldSet(k, !foldGet(k)); this._render();
+    });
+    root.querySelectorAll(".sbk-menu button").forEach((b) => b.addEventListener("click", () => {
+      this._setMenu(null);
+      if (b.dataset.act === "page") { history.pushState(null, "", "/sb-modes"); window.dispatchEvent(new CustomEvent("location-changed")); }
+    }));
     root.querySelectorAll(".sbk-row .sbk-open").forEach((b) => b.addEventListener("click", () => {
       const id = b.closest("[data-z]").dataset.z;
       if (this._open.has(id)) this._open.delete(id); else this._open.add(id);
@@ -292,10 +349,29 @@ class SbModesCard extends HTMLElement {
     }));
   }
 }
+class SbModesCardEditor extends HTMLElement {
+  setConfig(config) { this._config = { ...config }; this._render(); }
+  set hass(hass) { this._hass = hass; if (this._form) this._form.hass = hass; }
+  async _render() {
+    if (!(await loadHaForm())) return;
+    if (!this._form) {
+      this._form = document.createElement("ha-form");
+      this._form.hass = this._hass;
+      this._form.schema = [{ name: "title", selector: { text: {} } }];
+      this._form.computeLabel = (sch) => ({ title: "Title" }[sch.name]);
+      this._form.addEventListener("value-changed", (e) => { e.stopPropagation(); this._config = { ...this._config, ...e.detail.value }; fire(this, "config-changed", { config: this._config }); });
+      this.appendChild(this._form);
+    }
+    this._form.data = { title: "Modes", ...this._config };
+  }
+}
+
 if (!customElements.get(CARD)) customElements.define(CARD, SbModesCard);
+if (!customElements.get(`${CARD}-editor`)) customElements.define(`${CARD}-editor`, SbModesCardEditor);
 window.customCards = window.customCards || [];
 if (!window.customCards.some((c) => c.type === CARD)) {
-  window.customCards.push({ type: CARD, name: "SB Modes", description: "The current mode, what each mode does per zone, and a confirmed switch." });
+  window.customCards.push({ type: CARD, name: "SB Modes Card", description: "The current mode, what each mode does per zone, and a deliberate, confirmed switch.",
+                            preview: true, documentationURL: "https://github.com/snadboy/sb-modes" });
 }
 
 class SbModesPanel extends HTMLElement {
@@ -327,7 +403,7 @@ class SbModesPanel extends HTMLElement {
     this._menu = root.querySelector("ha-menu-button");
     this._menu.narrow = this._narrow;
     const card = document.createElement(CARD);
-    card.setConfig({ title: "Modes" });
+    card.setConfig({ title: "Modes", panel: true });
     root.querySelector(".slot").appendChild(card);
     this._card = card;
   }
