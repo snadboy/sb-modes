@@ -47,7 +47,7 @@ step 6 — each new behaviour/overlay/hold gets its view (and later controls) on
 - Table: modes morning/day/evening/overnight (overnight default `nightlight_then_dark`,
   delay 10; others `hands_off`), fallback day. Zones kitchen (kitchen + kitchen_aux;
   nightlight sink 10% + cabinet on), dining_room (+ dining_room_aux; sideboard on),
-  living_room (plants lamp 20%). Copy of the saved JSON: `sb_modes.get_config`.
+  living_room (plants lamp 40% since 2026-10-18; 20% too dim on Caseta). Copy of the saved JSON: `sb_modes.get_config`.
 - **Mode source (interim):** `automation.sb_modes_schedule_interim` — 06:00 morning,
   09:00 day, 23:00 overnight. No evening trigger. No HA-start recompute (the select restores).
 - **SB Background nightlight instances disabled, not deleted** (switch.*_overnight_enabled
@@ -56,6 +56,20 @@ step 6 — each new behaviour/overlay/hold gets its view (and later controls) on
 - Behaviour change vs the old scenes: "dark" now turns off EVERY light in the zone, so the
   dining chandelier and the living room reading lamp also go off after 10 min vacant
   overnight (the old dark scenes left them alone).
+
+## Live test 2026-10-18 06:12 (Overnight forced from Morning)
+
+- Dining Room: sideboard nightlight on entry ✓, dark after 10 min ✓.
+- Living Room: plants lamp turned on at 06:13:27 with brightness_pct 20 (proved from the
+  MariaDB call_service record — `docker exec app_core_mariadb mariadb -u root homeassistant`),
+  but 20% on that Lutron Caseta lamp is too subtle → nightlight raised to **40%**.
+  Note: this lamp's live state carries brightness, but the recorder/history keep NO brightness
+  for it — history attributes are not evidence of a level.
+- Kitchen: **conflict found** — when SB Modes turns the ceiling off, `automation.ambience_kitchen`
+  (low_bright) re-applies the dim scene 1 s later, undoing dark. Fixed 2026-10-18 by a `not`
+  condition on that branch: skip while `select.sb_modes_mode` is overnight. Kitchen nightlight
+  on arrival still untested live (lights were dim, so correctly "occupied").
+- Restored afterwards: mode Morning + scene.early_morning_scene.
 
 ## Design notes (code)
 
