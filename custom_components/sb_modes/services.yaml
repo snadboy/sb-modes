@@ -11,3 +11,14 @@ save_config:
       required: true
       selector:
         object:
+set_mode:
+  fields:
+    mode:
+      required: true
+      selector:
+        text:
+    hold:
+      default: next
+      selector:
+        text:
+resume_schedule:

@@ -24,7 +24,7 @@ from homeassistant.core import CALLBACK_TYPE, Context, CoreState, HassJob, HomeA
 from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
-from homeassistant.helpers.event import async_call_later, async_track_time_interval
+from homeassistant.helpers.event import async_call_later, async_track_point_in_time, async_track_time_interval
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
@@ -34,11 +34,12 @@ from .const import (
     ALERT_GRACE_SECONDS, CHECK_SECONDS, DOMAIN, EVENT_MODE_CHANGED, ISSUE_ID, STARTUP_SETTLE_SECONDS, STORE_KEY,
     STORE_VERSION,
 )
-from .model import default_config, find, mode_ids, resolve
+from .model import default_config, find, mode_ids, next_change, resolve, scheduled_mode
 from .validate import check_config
 from .zones import zone_entities
 
 _LOGGER = logging.getLogger(__name__)
+HOLDS = ("next", "timed", "paused")
 
 
 def state_lookup(hass: HomeAssistant) -> Callable[[str], str | None]:
@@ -69,6 +70,9 @@ class Runtime:
         self.config: dict[str, Any] = default_config()
         self.mode: str | None = None
         self.mode_since: str | None = None                 # ISO time the mode last changed
+        self.manual: dict | None = None                    # {"hold": next|timed|paused, "since", "until"}
+        self._sched_unsub: CALLBACK_TYPE | None = None
+        self._hold_unsub: CALLBACK_TYPE | None = None
         self.errors: list[str] = []
         self.warnings: list[str] = []
         self.ready = False                                # behaviours may run
@@ -123,6 +127,10 @@ class Runtime:
             except ValueError:                           # a listen_once that already fired
                 pass
         self._unsubs.clear()
+        for name in ("_sched_unsub", "_hold_unsub"):
+            if getattr(self, name):
+                getattr(self, name)()
+                setattr(self, name, None)
         self._cancel_grace()
         self._stop_behaviours()
 
@@ -185,24 +193,113 @@ class Runtime:
 
     # ── the active mode ──────────────────────────────────────────────────────
     @callback
-    def restore_mode(self, last: str | None, since: str | None = None) -> None:
-        """At startup: the last mode (and when it began) if it still exists, else the fallback."""
+    def restore_mode(self, last: str | None, since: str | None = None, manual: dict | None = None) -> None:
+        """At startup (and after a table reload): the last mode, when it began and any manual hold,
+        then catch up with the schedule — HA may have been down across a scheduled change."""
         if last in self.mode_ids:
             self.mode, self.mode_since = last, since or dt_util.utcnow().isoformat()
         else:
             self.mode, self.mode_since = self.fallback, dt_util.utcnow().isoformat()
+        self.manual = manual if isinstance(manual, dict) and manual.get("hold") in HOLDS else None
+        self._catch_up(source="startup", restart=False)
+        self._arm_hold()
+        self._arm_schedule()
         self._restart_behaviours()
 
     @callback
-    def set_mode(self, mode_id: str) -> None:
+    def set_mode(self, mode_id: str, hold: str | int = "next") -> None:
+        """A MANUAL mode change (the select, the panel, voice, an automation). `hold` says how long
+        it beats the schedule: "next" until the next scheduled change, minutes (int) for that long
+        then back to the scheduled mode, or "paused" until resume_schedule()."""
         if mode_id not in self.mode_ids:
             raise ValueError(f"“{mode_id}” is not a defined mode.")
+        now = dt_util.utcnow()
+        if isinstance(hold, int) and not isinstance(hold, bool):
+            self.manual = {"hold": "timed", "since": now.isoformat(), "until": (now + timedelta(minutes=hold)).isoformat()}
+        elif hold in ("next", "paused"):
+            self.manual = {"hold": hold, "since": now.isoformat(), "until": None}
+        else:
+            raise ValueError(f"Unknown hold {hold!r}: next, paused or a number of minutes.")
+        self._arm_hold()
+        if not self._switch(mode_id, "manual"):
+            self.notify()
+
+    @callback
+    def resume_schedule(self) -> None:
+        """End any manual hold and go to the mode the schedule says now."""
+        self.manual = None
+        self._arm_hold()
+        if not self._catch_up(source="resume"):
+            self.notify()
+
+    @property
+    def scheduled(self) -> tuple[str | None, Any]:
+        return scheduled_mode(self.config, dt_util.now())
+
+    @property
+    def upcoming(self) -> tuple[str | None, Any]:
+        return next_change(self.config, dt_util.now())
+
+    @callback
+    def _switch(self, mode_id: str, source: str, restart: bool = True) -> bool:
+        """Make mode_id the active mode; False when it already is."""
         if mode_id == self.mode:
-            return
+            return False
         old, self.mode = self.mode, mode_id
         self.mode_since = dt_util.utcnow().isoformat()
-        self.hass.bus.async_fire(EVENT_MODE_CHANGED, {"from": old, "to": mode_id})
-        self._restart_behaviours()
+        self.hass.bus.async_fire(EVENT_MODE_CHANGED, {"from": old, "to": mode_id, "source": source})
+        if restart:
+            self._restart_behaviours()
+        return True
+
+    @callback
+    def _catch_up(self, source: str = "schedule", restart: bool = True) -> bool:
+        """Follow the schedule unless a manual hold still stands. True when the mode changed."""
+        sched, at = self.scheduled
+        if sched is None or sched not in self.mode_ids:
+            return False
+        m, now = self.manual, dt_util.utcnow()
+        if m:
+            if m["hold"] == "paused":
+                return False
+            if m["hold"] == "timed" and m.get("until") and dt_util.parse_datetime(m["until"]) > now:
+                return False
+            if m["hold"] == "next" and at is not None and at <= dt_util.parse_datetime(m["since"]):
+                return False                         # no scheduled change since the manual one
+            self.manual = None
+        return self._switch(sched, source, restart)
+
+    @callback
+    def _arm_schedule(self) -> None:
+        if self._sched_unsub:
+            self._sched_unsub()
+            self._sched_unsub = None
+        _mode, when = self.upcoming
+        if when is not None:
+            self._sched_unsub = async_track_point_in_time(self.hass, self._schedule_due, when)
+
+    @callback
+    def _schedule_due(self, _now) -> None:
+        self._sched_unsub = None
+        if not self._catch_up():
+            self.notify()                            # a held change still moves "next change"
+        self._arm_schedule()
+
+    @callback
+    def _arm_hold(self) -> None:
+        if self._hold_unsub:
+            self._hold_unsub()
+            self._hold_unsub = None
+        m = self.manual
+        if m and m["hold"] == "timed" and m.get("until"):
+            self._hold_unsub = async_track_point_in_time(self.hass, self._hold_over, dt_util.parse_datetime(m["until"]))
+
+    @callback
+    def _hold_over(self, _now) -> None:
+        self._hold_unsub = None
+        self.manual = None
+        if not self._catch_up(source="hold_ended"):
+            self.notify()
 
     # ── behaviours ───────────────────────────────────────────────────────────
     @callback

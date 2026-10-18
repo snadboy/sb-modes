@@ -68,6 +68,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         {"id": "overnight", "name": "Overnight", "default": {"behaviour": "hands_off", "params": {}}},
     ],
     "zones": [],
+    "schedule": [],
 }
 
 
@@ -106,3 +107,55 @@ def with_defaults(behaviour: str | None, params: dict | None) -> dict:
         if out.get(key) is None and "default" in spec:
             out[key] = spec["default"]
     return out
+
+
+# ── the schedule ─────────────────────────────────────────────────────────────
+# config["schedule"] = [{"days": ["mon", …], "at": "HH:MM", "mode": id}, …]
+# Each rule starts its mode at that local time on those calendar days. The scheduled mode at
+# any moment is the mode of the most recent rule occurrence; a rule at 00:30 on "sat" is the
+# start of Friday night's overnight.
+DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+
+
+def parse_at(at: Any) -> tuple[int, int] | None:
+    """'HH:MM' → (h, m), or None when it is not a valid time."""
+    if not isinstance(at, str) or len(at) != 5 or at[2] != ":":
+        return None
+    try:
+        h, m = int(at[:2]), int(at[3:])
+    except ValueError:
+        return None
+    return (h, m) if 0 <= h <= 23 and 0 <= m <= 59 else None
+
+
+def occurrences(config: dict, start, end):
+    """Every rule occurrence in [start, end), oldest first: (when, mode id). `start` and
+    `end` are timezone-aware datetimes in the house's local time zone."""
+    from datetime import datetime, timedelta
+    out = []
+    tz = start.tzinfo
+    day = start.date() - timedelta(days=1)
+    while day <= end.date():
+        name = DAYS[day.weekday()]
+        for rule in config.get("schedule") or []:
+            hm = parse_at(rule.get("at"))
+            if hm and name in (rule.get("days") or []):
+                when = datetime(day.year, day.month, day.day, hm[0], hm[1], tzinfo=tz)
+                if start <= when < end:
+                    out.append((when, rule.get("mode")))
+        day += timedelta(days=1)
+    return sorted(out, key=lambda o: o[0])
+
+
+def scheduled_mode(config: dict, now):
+    """(mode id, since when) the schedule puts the house in at `now`; (None, None) with no rules."""
+    from datetime import timedelta
+    past = occurrences(config, now - timedelta(days=8), now + timedelta(microseconds=1))
+    return past[-1][::-1] if past else (None, None)
+
+
+def next_change(config: dict, now):
+    """(mode id, when) of the next rule occurrence after `now`; (None, None) with no rules."""
+    from datetime import timedelta
+    nxt = occurrences(config, now + timedelta(microseconds=1), now + timedelta(days=8))
+    return nxt[0][::-1] if nxt else (None, None)

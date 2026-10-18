@@ -52,6 +52,24 @@
           "description": "The whole mode table: fallback_mode, modes, zones."
         }
       }
+    },
+    "set_mode": {
+      "name": "Set mode",
+      "description": "Switch the house to a mode by hand, held against the schedule.",
+      "fields": {
+        "mode": {
+          "name": "Mode",
+          "description": "A mode id from the table, e.g. overnight."
+        },
+        "hold": {
+          "name": "Hold",
+          "description": "next = until the next scheduled change (default); paused = until the schedule is resumed; a number = that many minutes, then back to the scheduled mode."
+        }
+      }
+    },
+    "resume_schedule": {
+      "name": "Resume schedule",
+      "description": "End any manual hold and switch to the mode the schedule says now."
     }
   }
 }

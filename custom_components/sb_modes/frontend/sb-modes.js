@@ -11,7 +11,7 @@
  *
  * Rows use the shared SB row style (window.SBKit, from the SB UI Kit integration).
  */
-const VERSION = "0.3.5";
+const VERSION = "0.4.0";
 const CARD = "sb-modes-card";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -71,6 +71,25 @@ const loadHaForm = async () => {
 
 const KIT_MISSING = `<div style="padding: 16px; color: var(--error-color)">The <b>SB UI Kit</b> integration is not loaded — install “SB UI Kit” from HACS and restart Home Assistant.</div>`;
 
+const DAY_NAMES = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+const DAY_LABEL = { mon: "Mon", tue: "Tue", wed: "Wed", thu: "Thu", fri: "Fri", sat: "Sat", sun: "Sun" };
+/** ["mon","tue","wed","thu","fri"] → "Mon–Fri"; ["sun","mon"] → "Sun–Mon"; all → "Every day". */
+const daysText = (days) => {
+  const idx = [...new Set(days || [])].map((d) => DAY_NAMES.indexOf(d)).filter((i) => i >= 0).sort((a, b) => a - b);
+  if (idx.length === 7) return "Every day";
+  // runs on a ring, so Sun–Thu stays one run
+  const set = new Set(idx), runs = [];
+  const starts = idx.filter((i) => !set.has((i + 6) % 7));
+  for (const st of (starts.length ? starts : [idx[0]])) {
+    let e = st; while (set.has((e + 1) % 7) && (e + 1) % 7 !== st) e = (e + 1) % 7;
+    const len = ((e - st + 7) % 7) + 1;
+    runs.push(len >= 3 ? `${DAY_LABEL[DAY_NAMES[st]]}–${DAY_LABEL[DAY_NAMES[e]]}` : len === 2 ? `${DAY_LABEL[DAY_NAMES[st]]}, ${DAY_LABEL[DAY_NAMES[e]]}` : DAY_LABEL[DAY_NAMES[st]]);
+  }
+  return runs.join(", ");
+};
+const dayOf = (iso, tz) => { try { return new Date(iso).toLocaleDateString([], { weekday: "short", timeZone: tz || undefined }); } catch (e) { return ""; } };
+const HOLDS = [["next", null], ["15", "15 min"], ["30", "30 min"], ["60", "1 hour"], ["paused", "Until I resume"]];
+
 const MODE_ICONS = {
   morning: "mdi:weather-sunset-up", day: "mdi:white-balance-sunny", evening: "mdi:weather-sunset-down",
   overnight: "mdi:weather-night", night: "mdi:weather-night", away: "mdi:home-export-outline",
@@ -118,6 +137,21 @@ const STYLE = `
        background: color-mix(in srgb, var(--primary-color) 10%, transparent); display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .ask p { margin: 0; flex: 1 1 260px; }
 .ask .go { background: var(--primary-color); border-color: var(--primary-color); color: var(--text-primary-color, #fff); }
+.hold { margin: 0 12px 10px; padding: 8px 12px; border-radius: 8px; font-size: 13px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+        background: color-mix(in srgb, var(--primary-color) 10%, transparent); }
+.hold span { flex: 1 1 200px; }
+.hold.paused { background: color-mix(in srgb, var(--warning-color, #ffa600) 20%, transparent); font-weight: 500; }
+.hold.quiet { background: none; color: var(--secondary-text-color); padding-top: 0; }
+.holds { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; color: var(--secondary-text-color); }
+.holds .mode { height: 30px; padding: 0 12px; font-size: 13px; }
+button.zt { display: flex; align-items: center; gap: 6px; width: 100%; border: none; border-top: 1px solid var(--divider-color); background: none; cursor: pointer;
+            text-align: left; font-family: inherit; padding-top: 10px; }
+button.zt .cnt { text-transform: none; letter-spacing: 0; font-weight: 400; }
+button.zt ha-icon { margin-left: auto; --mdc-icon-size: 20px; }
+.rules { padding: 0 16px 10px; }
+.rule { display: grid; grid-template-columns: 52px 22px 110px 1fr; align-items: center; gap: 6px; font-size: 14px; padding: 4px 0; --mdc-icon-size: 18px; }
+.rule .t { font-variant-numeric: tabular-nums; font-weight: 500; }
+.rule .d { color: var(--secondary-text-color); }
 .zh { padding: 6px 16px 8px; font-size: 13px; font-weight: 500; color: var(--secondary-text-color); text-transform: uppercase; letter-spacing: .05em; }
 .pvtag { margin-left: 6px; padding: 1px 7px; border-radius: 9px; font-size: 11px; letter-spacing: .04em;
          background: color-mix(in srgb, var(--warning-color, #ffa600) 18%, transparent); color: var(--primary-text-color); }
@@ -213,6 +247,20 @@ class SbModesCard extends HTMLElement {
     const previewing = viewed !== sel.state;
     const chips = options.map((id) => `<button class="mode ${id === viewed ? "on" : ""}" data-m="${esc(id)}" ${this._busy ? "disabled" : ""}
         title="${id === sel.state ? "The current mode" : `See what ${esc(nm(id))} does (does not switch)`}"><ha-icon icon="${esc(modeIcon(id))}"></ha-icon>${esc(nm(id))}${id === sel.state ? `<span class="curtag">current</span>` : ""}</button>`).join("");
+    const tz = this._hass.config?.time_zone;
+    const man = sel.attributes.manual, nxt = sel.attributes.next_change;
+    const at = (iso) => `${hhmm(iso, tz)}${dayOf(iso, tz) !== dayOf(new Date().toISOString(), tz) ? ` ${dayOf(iso, tz)}` : ""}`;
+    const nextTxt = nxt ? `${nm(nxt.mode)} at ${at(nxt.at)}` : "";
+    let status = "";
+    if (man?.hold === "paused") {
+      status = `<div class="hold paused"><span>Schedule paused since ${esc(at(man.since))}${nextTxt ? ` · skipping ${esc(nextTxt)}` : ""}</span><button class="sbk-btn resume">Resume schedule</button></div>`;
+    } else if (man?.hold === "timed") {
+      status = `<div class="hold"><span>Set by hand · back to ${esc(nm(sel.attributes.scheduled_mode) || "the schedule")} at ${esc(at(man.until))}</span><button class="sbk-btn resume">Resume schedule</button></div>`;
+    } else if (man?.hold === "next") {
+      status = `<div class="hold"><span>Set by hand · until the next scheduled change${nextTxt ? ` (${esc(nextTxt)})` : ""}</span><button class="sbk-btn resume">Resume schedule</button></div>`;
+    } else if (nextTxt) {
+      status = `<div class="hold quiet"><span>On schedule · next: ${esc(nextTxt)}</span></div>`;
+    }
     let banner = "";
     if (previewing && !this._ask) {
       banner = `<div class="ask"><p>Showing <b>${esc(nm(viewed))}</b>. Nothing has changed: the house is still in <b>${esc(nm(sel.state))}</b>.</p>
@@ -222,8 +270,12 @@ class SbModesCard extends HTMLElement {
       const zl = took.map((t) => t.zone);
       const list = zl.length > 1 ? `${zl.slice(0, -1).join(", ")} and ${zl.at(-1)}` : zl[0];
       const dark = took.some((t) => t.behaviour === "nightlight_then_dark") ? " Zones that are already empty go dark straight away." : "";
+      const hold = this._hold || "next";
+      const holds = HOLDS.map(([v, label]) => `<button class="mode hold-opt ${v === hold ? "on" : ""}" data-h="${v}">${esc(
+        label || (nextTxt ? `Until ${nextTxt}` : "Until the next scheduled change"))}</button>`).join("");
       banner = `<div class="ask sure"><p>Switch the house to <b>${esc(nm(viewed))}</b> now? ${zl.length
           ? `It takes over ${esc(list)} at once.${dark}` : "It controls no zones, so nothing changes in the house."}</p>
+        <div class="holds"><span>For how long:</span>${holds}</div>
         <button class="sbk-btn no">Cancel</button><button class="sbk-btn go">Switch to ${esc(nm(viewed))}</button></div>`;
     }
     const prob = this._problem();
@@ -239,7 +291,7 @@ class SbModesCard extends HTMLElement {
       : zones.filter((z) => look(z.state, z.attr.status).tint === "warn").length;
     const headMenu = !cfg.panel && this._menu === "__head" ? kit().menu("Card actions", [{ act: "page", icon: "mdi:open-in-app", label: "Open the SB Modes page" }]) : "";
     const head = `<div class="sbk-head sbk-hwrap"><h2>${esc(cfg.title || "")}</h2>
-        <span class="sbk-count">${esc(nm(sel.state))} · ${options.length} mode${options.length === 1 ? "" : "s"} · ${zones.length} zone${zones.length === 1 ? "" : "s"}${
+        <span class="sbk-count">${esc(nm(sel.state))}${sel.attributes.manual?.hold === "paused" ? ` <span style="color: var(--warning-color, #ffa600)">(paused)</span>` : sel.attributes.manual ? " (by hand)" : ""} · ${options.length} mode${options.length === 1 ? "" : "s"} · ${zones.length} zone${zones.length === 1 ? "" : "s"}${
           folded && attention ? ` · <span style="color: var(--error-color)">${attention} need${attention === 1 ? "s" : ""} attention</span>` : ""}</span>
         ${cfg.panel ? "" : `<button class="sbk-kb hkb ${headMenu ? "on" : ""}" aria-label="More" title="More: open the SB Modes page" aria-expanded="${headMenu ? "true" : "false"}">${kit().kbIcon}</button>${headMenu}${foldBtn(folded)}`}
       </div>`;
@@ -248,14 +300,25 @@ class SbModesCard extends HTMLElement {
       <div class="now"><span class="sbk-ico armed big"><ha-icon icon="${esc(modeIcon(sel.state))}"></ha-icon></span>
         <div><div class="cur-l">Current mode</div><div class="cur">${esc(nm(sel.state))}</div>
           <div class="since">since ${esc(hhmm(since, this._hass.config?.time_zone))} (${esc(ago(since))} ago) · fallback ${esc(nm(sel.attributes.fallback_mode))}</div></div></div>
+      ${status}
       <div class="switch-l">Modes · tap one to see what it does</div>
       <div class="modes" role="group" aria-label="See a mode">${chips}</div>
       ${banner}
       ${problems}
       <div class="zh">Zones${previewing ? ` in ${esc(nm(viewed))} <span class="pvtag">preview</span>` : ""}</div>
       ${rows || `<div class="sbk-empty">No zones yet. Add them to the table with the <code>sb_modes.save_config</code> action.</div>`}
+      ${this._scheduleHtml(sel, nm)}
       ${this._msg ? `<div class="sbk-note">${esc(this._msg)}</div>` : ""}`;
     this._wire();
+  }
+
+  _scheduleHtml(sel, nm) {
+    const rules = [...(sel.attributes.schedule || [])].sort((a, b) => String(a.at).localeCompare(String(b.at)));
+    const open = this._open.has("__schedule");
+    const body = !rules.length ? `<div class="sbk-empty">No schedule — the mode changes only by hand.</div>`
+      : open ? rules.map((r) => `<div class="rule"><span class="t">${esc(r.at)}</span><ha-icon icon="${esc(modeIcon(r.mode))}"></ha-icon><span class="m">${esc(nm(r.mode))}</span><span class="d">${esc(daysText(r.days))}</span></div>`).join("") : "";
+    return `<button class="zh zt" data-x="__schedule" aria-expanded="${open}">Schedule <span class="cnt">${rules.length} rule${rules.length === 1 ? "" : "s"}</span>
+        <ha-icon icon="${open ? "mdi:chevron-down" : "mdi:chevron-right"}"></ha-icon></button>${rules.length && !open ? "" : `<div class="rules">${body}</div>`}`;
   }
 
   _targets(targets) {
@@ -327,10 +390,19 @@ class SbModesCard extends HTMLElement {
     root.querySelector(".ask .back")?.addEventListener("click", () => { this._view = null; this._ask = false; this._render(); });
     root.querySelector(".ask .make")?.addEventListener("click", () => { this._ask = true; this._render(); });
     root.querySelector(".ask .no")?.addEventListener("click", () => { this._ask = false; this._render(); });
+    root.querySelectorAll(".ask .hold-opt").forEach((b) => b.addEventListener("click", () => { this._hold = b.dataset.h; this._render(); }));
+    root.querySelector(".hold .resume")?.addEventListener("click", async () => {
+      try { await this._hass.callService("sb_modes", "resume_schedule", {}); this._msg = ""; }
+      catch (e) { this._msg = `Could not resume the schedule: ${e?.message || e}`; }
+      this._sig = ""; this._render();
+    });
+    root.querySelector("button.zt")?.addEventListener("click", (e) => {
+      const k = e.currentTarget.dataset.x; if (this._open.has(k)) this._open.delete(k); else this._open.add(k); this._render();
+    });
     root.querySelector(".ask .go")?.addEventListener("click", async () => {
-      const sel = this._select(), target = this._view;
+      const target = this._view, h = this._hold || "next";
       this._ask = false; this._busy = true; this._render();
-      try { await this._hass.callService("select", "select_option", { entity_id: sel.entity_id, option: target }); this._msg = ""; this._view = null; }
+      try { await this._hass.callService("sb_modes", "set_mode", { mode: target, hold: /^\d+$/.test(h) ? Number(h) : h }); this._msg = ""; this._view = null; this._hold = "next"; }
       catch (e) { this._msg = `Could not change the mode: ${e?.message || e}`; }
       finally { this._busy = false; this._sig = ""; this._render(); }
     });

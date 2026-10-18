@@ -34,6 +34,19 @@ with device class occupancy or presence, `sensor.*` with device class illuminanc
 whose behaviour needs one of these and has none is refused. The driver only sends what
 differs from the current state, and every call carries a context SB Modes remembers.
 
+## The schedule and manual changes (0.4.0)
+
+The table's `schedule` is a list of rules `{days: [mon…sun], at: "HH:MM", mode}`; SB Modes
+switches itself at each one (local time; a 00:30 rule on `sat` starts Friday night's mode).
+A manual change carries a **hold**:
+
+- `next` (default; also any plain `select.select_option`) — until the next scheduled change
+- minutes — for that long, then back to whatever the schedule says by then
+- `paused` — the schedule is ignored until `sb_modes.resume_schedule`
+
+At startup SB Modes catches up with any scheduled change it missed, unless a hold stands.
+The mode-changed event carries `source`: manual, schedule, resume, hold_ended or startup.
+
 ## Editing the table (until the panel exists)
 
 | Action | Does |
@@ -41,6 +54,8 @@ differs from the current state, and every call carries a context SB Modes rememb
 | `sb_modes.get_config` | Returns the saved table with its errors and warnings |
 | `sb_modes.check_config` `{config}` | Validates a table without saving |
 | `sb_modes.save_config` `{config}` | Saves a table with no errors, then reloads (zones become entities) |
+| `sb_modes.set_mode` `{mode, hold}` | Manual mode change; hold `next` (default), `paused`, or minutes |
+| `sb_modes.resume_schedule` | End any hold; switch to the scheduled mode now |
 
 ```yaml
 fallback_mode: day

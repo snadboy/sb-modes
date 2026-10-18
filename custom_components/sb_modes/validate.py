@@ -20,7 +20,7 @@ import re
 from collections.abc import Callable
 from typing import Any
 
-from .model import BEHAVIOURS, DRIVER_DOMAINS, NEEDS, TARGET_KEYS, mode_ids, resolve
+from .model import BEHAVIOURS, DAYS, DRIVER_DOMAINS, NEEDS, TARGET_KEYS, mode_ids, parse_at, resolve
 
 UNAVAILABLE = ("unavailable", "unknown")
 NEED_LABELS = {"lights": "a light", "occupancy": "an occupancy sensor", "illuminance": "an illuminance sensor"}
@@ -101,7 +101,39 @@ def check_config(
         if areas_ok and zone_entities is not None and isinstance(zone.get("id"), str):
             _check_needs(config, zone, ids, names, zone_entities(areas), where, errors)
     _check_unique([z.get("id") for z in zones if isinstance(z, dict)], "Zone", errors)
+    _check_schedule(config.get("schedule"), ids, names, errors)
     return errors, warnings
+
+
+def _check_schedule(schedule: Any, ids: list[str], names: dict, errors: list[str]) -> None:
+    """Rules name existing modes, real days and times, and never two modes at one moment."""
+    if schedule is None:
+        return
+    if not isinstance(schedule, list):
+        errors.append("The schedule must be a list of rules.")
+        return
+    seen: dict[tuple[str, str], str] = {}
+    for i, rule in enumerate(schedule):
+        where = f"Schedule rule {i + 1}"
+        if not isinstance(rule, dict):
+            errors.append(f"{where} must be an object.")
+            continue
+        mode, at, days = rule.get("mode"), rule.get("at"), rule.get("days")
+        if mode not in ids:
+            errors.append(f"{where}: mode “{mode}” is not defined.")
+        if parse_at(at) is None:
+            errors.append(f"{where}: time {at!r} must be HH:MM (24-hour).")
+        if not isinstance(days, list) or not days:
+            errors.append(f"{where}: list the days it applies to ({', '.join(DAYS)}).")
+            continue
+        for d in days:
+            if d not in DAYS:
+                errors.append(f"{where}: {d!r} is not a day ({', '.join(DAYS)}).")
+            elif parse_at(at) is not None:
+                other = seen.get((d, at))
+                if other is not None and other != mode:
+                    errors.append(f"{where}: {names.get(other, other)} and {names.get(mode, mode)} both start at {at} on {d}.")
+                seen[(d, at)] = mode
 
 
 def _check_needs(config: dict, zone: dict, ids: list[str], names: dict, found: dict, where: str,

@@ -203,6 +203,46 @@ def test_areas():
     assert e == ["Zone Dining Room: list at least one area."], e
 
 
+SCHEDULE = [
+    {"days": ["mon", "tue", "wed", "thu", "fri"], "at": "09:00", "mode": "day"},
+    {"days": ["sun", "mon", "tue", "wed", "thu"], "at": "23:00", "mode": "overnight"},
+    {"days": ["sat", "sun"], "at": "00:30", "mode": "overnight"},
+    {"days": ["sat", "sun"], "at": "09:00", "mode": "day"},
+]
+
+
+def _at(y, mo, d, h, mi):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    return datetime(y, mo, d, h, mi, tzinfo=ZoneInfo("America/Chicago"))
+
+
+def test_schedule_validates():
+    cfg = copy.deepcopy(GOOD); cfg["schedule"] = SCHEDULE
+    assert check(cfg) == ([], [])
+    cfg["schedule"] = SCHEDULE + [{"days": ["sat", "funday"], "at": "9:00", "mode": "evening"},
+                                  {"days": ["mon"], "at": "09:00", "mode": "overnight"}]
+    e, _ = check(cfg)
+    assert e == ["Schedule rule 5: mode “evening” is not defined.",
+                 "Schedule rule 5: time '9:00' must be HH:MM (24-hour).",
+                 "Schedule rule 5: 'funday' is not a day (mon, tue, wed, thu, fri, sat, sun).",
+                 "Schedule rule 6: Day and Overnight both start at 09:00 on mon."], e
+
+
+def test_scheduled_mode_weekday_and_weekend():
+    cfg = {"schedule": SCHEDULE}
+    # 2026-10-16 is a Friday
+    assert M.scheduled_mode(cfg, _at(2026, 10, 16, 10, 0))[0] == "day"
+    assert M.scheduled_mode(cfg, _at(2026, 10, 16, 23, 30))[0] == "day"          # Friday night: no 23:00
+    assert M.scheduled_mode(cfg, _at(2026, 10, 17, 0, 31))[0] == "overnight"     # Saturday 00:30
+    assert M.scheduled_mode(cfg, _at(2026, 10, 17, 8, 59))[0] == "overnight"     # weekend: no 06:00 morning
+    assert M.scheduled_mode(cfg, _at(2026, 10, 17, 9, 0))[0] == "day"
+    assert M.scheduled_mode(cfg, _at(2026, 10, 18, 23, 5))[0] == "overnight"     # Sunday night 23:00
+    assert M.next_change(cfg, _at(2026, 10, 16, 10, 0)) == ("overnight", _at(2026, 10, 17, 0, 30))
+    assert M.next_change(cfg, _at(2026, 10, 18, 9, 0)) == ("overnight", _at(2026, 10, 18, 23, 0))
+    assert M.scheduled_mode({}, _at(2026, 10, 16, 10, 0)) == (None, None)
+
+
 def test_not_an_object():
     assert check([]) == (["The table must be an object."], [])
 

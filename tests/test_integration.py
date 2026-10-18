@@ -94,7 +94,7 @@ async def test_select_changes_mode_and_fires_event(hass: HomeAssistant) -> None:
     events = async_capture_events(hass, EVENT_MODE_CHANGED)
     await _mode(hass, "evening")
     assert hass.states.get(SELECT).state == "evening"
-    assert [e.data for e in events] == [{"from": "day", "to": "evening"}]
+    assert [e.data for e in events] == [{"from": "day", "to": "evening", "source": "manual"}]
     with pytest.raises(ServiceValidationError):
         await _mode(hass, "party")
 
@@ -276,3 +276,102 @@ async def test_static_sends_only_what_differs(hass, kitchen, lights) -> None:
     await _mode(hass, "day")
     await _mode(hass, "evening")
     assert [(c.data["entity_id"], c.data["brightness_pct"]) for c in lights["on"]] == [(SINK, 50)]
+
+
+# ── the schedule and manual holds ───────────────────────────────────────────
+
+ALL = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+
+
+def _sched_table() -> dict:
+    t = _table()
+    t["schedule"] = [{"days": ALL, "at": "10:00", "mode": "day"},
+                     {"days": ALL, "at": "10:10", "mode": "evening"},
+                     {"days": ALL, "at": "10:20", "mode": "overnight"}]
+    return t
+
+
+async def _at(hass, freezer, h, m, s=0):
+    from datetime import datetime
+    from homeassistant.util import dt as dt_util
+    freezer.move_to(datetime(2026, 10, 16, h, m, s, tzinfo=dt_util.get_default_time_zone()))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+
+
+def _sel(hass):
+    return hass.states.get(SELECT)
+
+
+async def test_schedule_switches_on_time(hass, kitchen, lights, freezer) -> None:
+    await _at(hass, freezer, 10, 5)
+    await _setup(hass)
+    await _save(hass, _sched_table())
+    assert _sel(hass).state == "day"                       # caught up on load (10:00 rule)
+    assert _sel(hass).attributes["next_change"]["mode"] == "evening"
+    events = async_capture_events(hass, EVENT_MODE_CHANGED)
+    await _at(hass, freezer, 10, 10, 1)
+    assert _sel(hass).state == "evening"
+    assert events[-1].data["source"] == "schedule"
+
+
+async def test_manual_holds_until_next_change(hass, kitchen, lights, freezer) -> None:
+    await _at(hass, freezer, 10, 1)
+    await _setup(hass)
+    await _save(hass, _sched_table())
+    await _mode(hass, "overnight")                         # plain select = hold "next"
+    assert _sel(hass).attributes["manual"]["hold"] == "next"
+    await _at(hass, freezer, 10, 5)
+    assert _sel(hass).state == "overnight"                 # no scheduled change yet
+    await _at(hass, freezer, 10, 10, 1)
+    assert _sel(hass).state == "evening" and _sel(hass).attributes["manual"] is None
+
+
+async def test_timed_hold_outlasts_a_change_then_returns(hass, kitchen, lights, freezer) -> None:
+    await _at(hass, freezer, 10, 5)
+    await _setup(hass)
+    await _save(hass, _sched_table())
+    await hass.services.async_call(DOMAIN, "set_mode", {"mode": "overnight", "hold": 15}, blocking=True)
+    await _at(hass, freezer, 10, 10, 1)
+    assert _sel(hass).state == "overnight"                 # held through the 10:10 change
+    await _at(hass, freezer, 10, 20, 1)
+    assert _sel(hass).state == "overnight"                 # 10:20 is overnight anyway; hold over at 10:20
+    assert _sel(hass).attributes["manual"] is None
+
+
+async def test_timed_hold_returns_to_the_scheduled_mode(hass, kitchen, lights, freezer) -> None:
+    await _at(hass, freezer, 10, 1)
+    await _setup(hass)
+    await _save(hass, _sched_table())
+    await hass.services.async_call(DOMAIN, "set_mode", {"mode": "overnight", "hold": 5}, blocking=True)
+    await _at(hass, freezer, 10, 6, 1)
+    assert _sel(hass).state == "day" and _sel(hass).attributes["manual"] is None
+
+
+async def test_paused_until_resumed(hass, kitchen, lights, freezer) -> None:
+    await _at(hass, freezer, 10, 5)
+    await _setup(hass)
+    await _save(hass, _sched_table())
+    await hass.services.async_call(DOMAIN, "set_mode", {"mode": "overnight", "hold": "paused"}, blocking=True)
+    await _at(hass, freezer, 10, 10, 1)
+    await _at(hass, freezer, 10, 15)
+    assert _sel(hass).state == "overnight" and _sel(hass).attributes["manual"]["hold"] == "paused"
+    await hass.services.async_call(DOMAIN, "resume_schedule", {}, blocking=True)
+    assert _sel(hass).state == "evening" and _sel(hass).attributes["manual"] is None
+
+
+async def test_hold_survives_a_reload(hass, kitchen, lights, freezer) -> None:
+    await _at(hass, freezer, 10, 5)
+    await _setup(hass)
+    await _save(hass, _sched_table())
+    await hass.services.async_call(DOMAIN, "set_mode", {"mode": "overnight", "hold": "paused"}, blocking=True)
+    await _save(hass, _sched_table())                      # reload: restored, not caught up
+    assert _sel(hass).state == "overnight" and _sel(hass).attributes["manual"]["hold"] == "paused"
+
+
+async def test_bad_schedule_is_refused(hass, kitchen) -> None:
+    await _setup(hass)
+    t = _table()
+    t["schedule"] = [{"days": ["mon"], "at": "25:00", "mode": "weekend"}]
+    with pytest.raises(ServiceValidationError, match="not defined"):
+        await _save(hass, t)

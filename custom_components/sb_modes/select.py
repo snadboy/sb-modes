@@ -2,7 +2,8 @@
 
 Ids, not display names, so renaming a mode never breaks an automation that selects it.
 Restored across restarts, with when it began (attribute `since`; last_changed is reset
-by a restart); a restored mode that no longer exists becomes the fallback.
+by a restart) and any manual hold; a restored mode that no longer exists becomes the
+fallback. Attributes also carry the schedule, the mode it says now and its next change.
 """
 
 from __future__ import annotations
@@ -32,7 +33,7 @@ class ModeSelect(ModesEntity, RestoreEntity, SelectEntity):
         await super().async_added_to_hass()
         last = await self.async_get_last_state()
         since = (last.attributes.get("since") or last.last_changed.isoformat()) if last else None
-        self._rt.restore_mode(last.state if last else None, since)
+        self._rt.restore_mode(last.state if last else None, since, last.attributes.get("manual") if last else None)
 
     @property
     def options(self) -> list[str]:
@@ -44,16 +45,24 @@ class ModeSelect(ModesEntity, RestoreEntity, SelectEntity):
 
     @property
     def extra_state_attributes(self) -> dict:
+        sched, _ = self._rt.scheduled
+        nxt, at = self._rt.upcoming
         return {
             "sb_modes": True,
             "mode_names": {m: self._rt.mode_name(m) for m in self._rt.mode_ids},
             "fallback_mode": self._rt.fallback,
             "since": self._rt.mode_since,
             "takes_over": self._rt.takes_over(),
+            "manual": self._rt.manual,
+            "scheduled_mode": sched,
+            "next_change": {"mode": nxt, "at": at.isoformat()} if at else None,
+            "schedule": self._rt.config.get("schedule") or [],
         }
 
     async def async_select_option(self, option: str) -> None:
+        """A plain select_option is a manual change held until the next scheduled change;
+        sb_modes.set_mode takes other holds."""
         try:
-            self._rt.set_mode(option)
+            self._rt.set_mode(option, "next")
         except ValueError as err:
             raise ServiceValidationError(str(err)) from err
