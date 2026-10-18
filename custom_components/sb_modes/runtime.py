@@ -251,6 +251,35 @@ class Runtime:
                       if (picked := resolve(self.config, m, z["id"])) and picked["behaviour"] != "hands_off"]
         return out
 
+    @property
+    def schedule_state(self) -> str:
+        """on_schedule | held_until_next | held_timed | paused | no_schedule."""
+        if self.manual:
+            return {"next": "held_until_next", "timed": "held_timed", "paused": "paused"}[self.manual["hold"]]
+        return "on_schedule" if self.config.get("schedule") else "no_schedule"
+
+    def deviations(self) -> list[dict]:
+        """Everything that is not as the table and schedule would have it, each with its type:
+        mode_hold (the mode set by hand), zone_hold (a zone held), changed_by_hand (a light)."""
+        out: list[dict] = []
+        if self.manual:
+            out.append({"type": "mode_hold", "mode": self.mode, "hold": self.manual["hold"],
+                        "since": self.manual.get("since"), "until": self.manual.get("until")})
+        names = {z["id"]: z.get("name") or z["id"] for z in self.zones()}
+        for zid, h in self.keeper.holds.items():
+            out.append({"type": "zone_hold", "zone": zid, "zone_name": names.get(zid, zid), "hold": h["hold"],
+                        "since": h.get("since"), "until": h.get("until")})
+        for zid, lights in self.keeper.overrides.items():
+            for light, o in lights.items():
+                out.append({"type": "changed_by_hand", "zone": zid, "zone_name": names.get(zid, zid), "entity": light,
+                            "by": o.get("by"), "since": o.get("since")})
+        return out
+
+    def zone_control(self, zone_id: str) -> str:
+        if self.keeper.held(zone_id):
+            return "held"
+        return "by_hand" if self.keeper.overridden(zone_id) else "auto"
+
     def zone_by_mode(self, zone_id: str) -> dict[str, dict]:
         """{mode id: {behaviour, params, source}} for one zone, every mode."""
         return {m: picked for m in self.mode_ids if (picked := resolve(self.config, m, zone_id))}

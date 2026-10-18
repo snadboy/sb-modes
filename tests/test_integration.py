@@ -684,3 +684,43 @@ async def test_zone_lights_list_replaces_the_areas_lights(hass, kitchen) -> None
     await _save(hass, t)
     await _mode(hass, "overnight")
     assert _zone(hass)["lights"] == [CEILING]
+
+
+# ── reporting: schedule state, deviations, zone control ─────────────────────
+
+SCHED = "sensor.sb_modes_schedule"
+DEV = "sensor.sb_modes_deviations"
+
+
+async def test_reporting_entities(hass, kitchen, lights, freezer) -> None:
+    await _at(hass, freezer, 10, 5)
+    await _setup(hass)
+    assert hass.states.get(SCHED).state == "no_schedule"
+    await _save(hass, _sched_table())
+    assert hass.states.get(SCHED).state == "on_schedule"
+    assert hass.states.get(SCHED).attributes["next_mode"] == "evening"
+    assert hass.states.get(DEV).state == "0" and _zone(hass)["control"] == "auto"
+
+    await hass.services.async_call(DOMAIN, "set_mode", {"mode": "overnight", "hold": 30}, blocking=True)
+    await hass.services.async_call(DOMAIN, "hold_zone", {"zone": "kitchen", "hold": "paused"}, blocking=True)
+    await hass.async_block_till_done()
+    assert hass.states.get(SCHED).state == "held_timed"
+    dev = hass.states.get(DEV)
+    assert dev.state == "2" and dev.attributes["mode_hold"] == 1 and dev.attributes["zone_hold"] == 1
+    assert {d["type"] for d in dev.attributes["deviations"]} == {"mode_hold", "zone_hold"}
+    assert _zone(hass)["control"] == "held"
+
+    await hass.services.async_call(DOMAIN, "release_zone", {"zone": "kitchen"}, blocking=True)
+    await hass.async_block_till_done()
+    hass.states.async_set(SINK, "on", {"brightness": 200}, context=Context(user_id="someone"))
+    await hass.async_block_till_done()
+    dev = hass.states.get(DEV)
+    assert dev.state == "2" and dev.attributes["changed_by_hand"] == 1
+    hand = next(d for d in dev.attributes["deviations"] if d["type"] == "changed_by_hand")
+    assert hand["entity"] == SINK and hand["by"] == "person" and hand["zone_name"] == "Kitchen"
+    assert _zone(hass)["control"] == "by_hand"
+
+    await hass.services.async_call(DOMAIN, "set_mode", {"mode": "day", "hold": "paused"}, blocking=True)
+    await hass.async_block_till_done()
+    assert hass.states.get(SCHED).state == "paused"
+    assert hass.states.get(DEV).state == "1"                              # the mode change ended the by-hand mark

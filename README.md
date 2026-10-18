@@ -60,6 +60,17 @@ The mode-changed event carries `source`: manual, schedule, resume, hold_ended or
   hand changes; the zone's behaviour starts again for the current mode.
 - Both are saved (`.storage/sb_modes.state`) and survive restarts and table reloads.
 
+## Reporting (0.9.0)
+
+| Entity | State | Attributes |
+|---|---|---|
+| `select.sb_modes_mode` | the current mode | names, schedule, next change, manual hold, previous mode |
+| `sensor.sb_modes_schedule` | `on_schedule` · `held_until_next` · `held_timed` · `paused` · `no_schedule` | scheduled mode now, next mode / at, previous mode, hold since / until |
+| `sensor.sb_modes_deviations` | how many things differ from automatic (0 = none) | `deviations`: list of `{type: mode_hold \| zone_hold \| changed_by_hand, zone, entity, hold, by, since, until}`; counts per type |
+| `sensor.sb_modes_<zone>` | the zone's behaviour now | `control`: `auto` · `held` · `by_hand`; `hold`, `overrides`, status, lights, sensors, by_mode |
+
+Event `sb_modes_mode_changed` `{from, to, source}`.
+
 ## Editing the table (until the panel exists)
 
 | Action | Does |

@@ -26,6 +26,21 @@
       "problem": {
         "name": "Problem"
       }
+    },
+    "sensor": {
+      "schedule": {
+        "name": "Schedule",
+        "state": {
+          "on_schedule": "On schedule",
+          "held_until_next": "Held until the next change",
+          "held_timed": "Held for a while",
+          "paused": "Paused",
+          "no_schedule": "No schedule"
+        }
+      },
+      "deviations": {
+        "name": "Deviations"
+      }
     }
   },
   "services": {

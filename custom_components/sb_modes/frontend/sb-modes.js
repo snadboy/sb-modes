@@ -11,7 +11,7 @@
  *
  * Rows use the shared SB row style (window.SBKit, from the SB UI Kit integration).
  */
-const VERSION = "0.8.0";
+const VERSION = "0.9.0";
 const CARD = "sb-modes-card";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -223,12 +223,14 @@ class SbModesCard extends HTMLElement {
     const zones = this._zones();
     // the zones' own lights and sensors too, so an open detail updates as they change
     const watched = zones.flatMap((z) => [...(z.attr.lights || []), ...(z.attr.occupancy || [])]);
-    const sig = JSON.stringify([sel && [sel.state, sel.attributes], prob && [prob.state, prob.attributes],
+    const dev = this._deviations();
+    const sig = JSON.stringify([sel && [sel.state, sel.attributes], prob && [prob.state, prob.attributes], dev && dev.state,
       zones.map((z) => [z.id, z.state, z.attr]), watched.map((e) => [h.states[e]?.state, h.states[e]?.attributes?.brightness])]);
     if (sig !== this._sig) { this._sig = sig; this._render(); }
   }
 
   _select() { return Object.values(this._hass?.states || {}).find((s) => s.entity_id.startsWith("select.") && s.attributes.sb_modes); }
+  _deviations() { return Object.values(this._hass?.states || {}).find((s) => s.entity_id.startsWith("sensor.") && s.attributes.sb_modes_deviations); }
   _problem() { return Object.values(this._hass?.states || {}).find((s) => s.entity_id.startsWith("binary_sensor.") && s.attributes.sb_modes_problem); }
   _zones() {
     return Object.values(this._hass?.states || {})
@@ -315,9 +317,11 @@ class SbModesCard extends HTMLElement {
     const folded = !cfg.panel && foldGet(foldKey(CARD, cfg.title));
     const attention = errs.length ? 1 + zones.filter((z) => look(z.state, z.attr.status).tint === "warn").length
       : zones.filter((z) => look(z.state, z.attr.status).tint === "warn").length;
+    const devCount = Number(this._deviations()?.state || 0);
     const headMenu = !cfg.panel && this._menu === "__head" ? kit().menu("Card actions", [{ act: "page", icon: "mdi:open-in-app", label: "Open the SB Modes page" }]) : "";
     const head = `<div class="sbk-head sbk-hwrap"><h2>${esc(cfg.title || "")}</h2>
         <span class="sbk-count">${esc(nm(sel.state))}${sel.attributes.manual?.hold === "paused" ? ` <span style="color: var(--warning-color, #ffa600)">(paused)</span>` : sel.attributes.manual ? " (by hand)" : ""} · ${options.length} mode${options.length === 1 ? "" : "s"} · ${zones.length} zone${zones.length === 1 ? "" : "s"}${
+          devCount ? ` · <span style="color: var(--warning-color, #ffa600)" title="Held or changed by hand — see sensor.sb_modes_deviations">${devCount} by hand</span>` : ""}${
           folded && attention ? ` · <span style="color: var(--error-color)">${attention} need${attention === 1 ? "s" : ""} attention</span>` : ""}</span>
         ${cfg.panel ? "" : `<button class="sbk-kb hkb ${headMenu ? "on" : ""}" aria-label="More" title="More: open the SB Modes page" aria-expanded="${headMenu ? "true" : "false"}">${kit().kbIcon}</button>${headMenu}${foldBtn(folded)}`}
       </div>`;
