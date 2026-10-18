@@ -75,8 +75,8 @@ step 6 — each new behaviour/overlay/hold gets its view (and later controls) on
 
 User: weekends skip Morning, start Day at 09:00, Overnight at 00:30 on Fri/Sat nights; manual
 mode changes take a duration (15/30/60 min, until next scheduled change, until resumed).
-Live rules: Mon–Fri 06:00 morning · Mon–Fri 09:00 day · Sun–Thu 23:00 overnight ·
-Sat–Sun 00:30 overnight · Sat–Sun 09:00 day. `automation.sb_modes_schedule_interim` DISABLED
+Live rules: Mon–Fri 06:00 morning · every day 09:00 day · Sun–Thu 23:00 overnight ·
+Sat–Sun 00:30 overnight. `automation.sb_modes_schedule_interim` DISABLED
 2026-10-18 (delete after a week). Manual light changes (switch/app) will default to: until the
 zone is vacant for its delay, or the next mode change (user concurred) — step 3.
 Note "Lights - Whole House" (06:00 Early Morning scene, tod_morning) is still weekend-blind; not SB Modes.
