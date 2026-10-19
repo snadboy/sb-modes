@@ -24,7 +24,9 @@ from homeassistant.core import CALLBACK_TYPE, Context, CoreState, HassJob, HomeA
 from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
-from homeassistant.helpers.event import async_call_later, async_track_point_in_time, async_track_time_interval
+from homeassistant.helpers.event import (
+    async_call_later, async_track_point_in_time, async_track_state_change_event, async_track_time_interval,
+)
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.sun import get_astral_event_date
 from homeassistant.util import dt as dt_util
@@ -79,6 +81,7 @@ class Runtime:
         self._calendar_wait = False                        # catch-up held until the day sets load
         self._sched_unsub: CALLBACK_TYPE | None = None
         self._hold_unsub: CALLBACK_TYPE | None = None
+        self._occ_unsub: CALLBACK_TYPE | None = None
         self.errors: list[str] = []
         self.warnings: list[str] = []
         self.ready = False                                # behaviours may run
@@ -199,7 +202,7 @@ class Runtime:
             except ValueError:                           # a listen_once that already fired
                 pass
         self._unsubs.clear()
-        for name in ("_sched_unsub", "_hold_unsub"):
+        for name in ("_sched_unsub", "_hold_unsub", "_occ_unsub"):
             if getattr(self, name):
                 getattr(self, name)()
                 setattr(self, name, None)
@@ -280,6 +283,18 @@ class Runtime:
             return "held"
         return "by_hand" if self.keeper.overridden(zone_id) else "auto"
 
+    def _occupancy(self, sensors: list[str]) -> tuple[str | None, str | None]:
+        """("occupied" | "vacant" | "unknown", since when) from the zone's occupancy sensors.
+        Occupied since the earliest sensor still on; vacant since the last one went off."""
+        states = [self.hass.states.get(s) for s in sensors]
+        if not states:
+            return None, None
+        if any(st is not None and st.state == "on" for st in states):
+            return "occupied", min(st.last_changed for st in states if st is not None and st.state == "on").isoformat()
+        if all(st is not None and st.state == "off" for st in states):
+            return "vacant", max(st.last_changed for st in states).isoformat()
+        return "unknown", None
+
     def zone_by_mode(self, zone_id: str) -> dict[str, dict]:
         """{mode id: {behaviour, params, source}} for one zone, every mode."""
         return {m: picked for m in self.mode_ids if (picked := resolve(self.config, m, zone_id))}
@@ -292,6 +307,7 @@ class Runtime:
         b = self._behaviours.get(zone_id)
         picked["status"] = b.status if b else "waiting for start-up"
         picked["entities"] = b.entities if b else {}
+        picked["occupancy"], picked["occupancy_since"] = self._occupancy(b.entities.get("occupancy", []) if b else [])
         picked["hold"] = self.keeper.held(zone_id)
         picked["overrides"] = self.keeper.overridden(zone_id)
         return picked
@@ -447,7 +463,14 @@ class Runtime:
 
     @callback
     def _rewatch(self) -> None:
-        """Watch the lights of every zone whose behaviour acts, for changes made by hand."""
+        """Watch the lights of every zone whose behaviour acts, for changes made by hand; and
+        every zone's occupancy sensors, so 'vacant since' / 'occupied since' stay current."""
+        if self._occ_unsub:
+            self._occ_unsub()
+            self._occ_unsub = None
+        occ = sorted({s for b in self._behaviours.values() for s in b.entities.get("occupancy", [])})
+        if occ:
+            self._occ_unsub = async_track_state_change_event(self.hass, occ, self._occupancy_changed)
         watch = {}
         for zid, b in self._behaviours.items():
             if b.name in ("hands_off", "held"):
@@ -456,6 +479,10 @@ class Runtime:
             watch[zid] = {"lights": b.entities.get("lights", []), "occupancy": b.entities.get("occupancy", []),
                           "delay": release_delay(picked.get("behaviour"), picked.get("params") or {})}
         self.keeper.watch(watch)
+
+    @callback
+    def _occupancy_changed(self, _event) -> None:
+        self.notify()
 
     @callback
     def _stop_behaviours(self) -> None:

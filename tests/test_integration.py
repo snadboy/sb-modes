@@ -767,3 +767,18 @@ async def test_occupied_vacant_vacant_set_applied_once(hass, kitchen, lights, fr
     await hass.async_block_till_done()
     await _tick(hass, freezer, seconds=5)
     assert len(lights["off"]) == 1                                        # not re-applied over the hand change
+
+
+async def test_zone_occupancy_and_since(hass, kitchen, lights, freezer) -> None:
+    await _setup(hass)
+    await _save(hass, _table())                                           # day: hands_off — still reported
+    a = _zone(hass)
+    assert a["occupancy"] == "vacant" and a["occupancy_since"] == hass.states.get(OCC).last_changed.isoformat()
+    await _tick(hass, freezer, minutes=5)
+    hass.states.async_set(OCC, "on")
+    await hass.async_block_till_done()
+    a = _zone(hass)
+    assert a["occupancy"] == "occupied" and a["occupancy_since"] == hass.states.get(OCC).last_changed.isoformat()
+    hass.states.async_set(OCC, "unavailable")
+    await hass.async_block_till_done()
+    assert _zone(hass)["occupancy"] == "unknown"

@@ -11,16 +11,34 @@
  *
  * Rows use the shared SB row style (window.SBKit, from the SB UI Kit integration).
  */
-const VERSION = "0.9.2";
+const VERSION = "0.10.0";
 const CARD = "sb-modes-card";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 // Times in Home Assistant's own time zone (its default for users), not the browser's.
-const hhmm = (iso, tz) => {
-  if (!iso) return "";
-  try { return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", timeZone: tz || undefined }); }
-  catch (e) { return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); }
+// Times follow the user's Home Assistant setting (Profile → Time format: 12 / 24 / language),
+// in Home Assistant's time zone. setTimeLocale() is called with each new hass.
+let TIME = { h12: false, tz: undefined };
+const setTimeLocale = (hass) => {
+  const f = hass?.locale?.time_format;
+  let h12 = f === "12" ? true : f === "24" ? false : null;
+  if (h12 === null) {
+    try { h12 = !!new Intl.DateTimeFormat(hass?.locale?.language || undefined, { hour: "numeric" }).resolvedOptions().hour12; }
+    catch (e) { h12 = false; }
+  }
+  TIME = { h12, tz: hass?.config?.time_zone || undefined };
 };
+const clock = (h, m) => (TIME.h12 ? `${((h + 11) % 12) + 1}:${String(m).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`
+                                  : `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`);
+const hhmm = (iso) => {
+  if (!iso) return "";
+  try {
+    const parts = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: TIME.tz }).formatToParts(new Date(iso));
+    return clock(Number(parts.find((p) => p.type === "hour").value), Number(parts.find((p) => p.type === "minute").value));
+  } catch (e) { return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); }
+};
+/** Clock times SB Modes writes into statuses ("dark at 23:14", "off at 18:23:05") in the user's format. */
+const fmtTimes = (text) => String(text || "").replace(/\b([01]\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?\b/g, (_, h, m) => clock(Number(h), Number(m)));
 const ago = (iso, now = Date.now()) => {
   if (!iso) return "";
   const s = Math.max(0, Math.round((now - new Date(iso).getTime()) / 1000));
@@ -99,6 +117,8 @@ const ruleDays = (r) => {
 };
 /** "06:00" | "sunset-01:00" → "06:00" | "Sunset −1:00" */
 const ruleAt = (at) => {
+  const c = /^(\d\d):(\d\d)$/.exec(String(at));
+  if (c) return clock(Number(c[1]), Number(c[2]));
   const m = /^(sunrise|sunset)(?:([+-])(\d\d):(\d\d))?$/.exec(String(at));
   if (!m) return at;
   return `${pretty(m[1])}${m[2] ? ` ${m[2] === "-" ? "−" : "+"}${Number(m[3])}:${m[4]}` : ""}`;
@@ -219,6 +239,7 @@ class SbModesCard extends HTMLElement {
 
   set hass(h) {
     this._hass = h;
+    setTimeLocale(h);
     const sel = this._select(), prob = this._problem();
     const zones = this._zones();
     // the zones' own lights and sensors too, so an open detail updates as they change
@@ -277,7 +298,7 @@ class SbModesCard extends HTMLElement {
         title="${id === sel.state ? "The current mode" : `See what ${esc(nm(id))} does (does not switch)`}"><ha-icon icon="${esc(modeIcon(id))}"></ha-icon>${esc(nm(id))}${id === sel.state ? `<span class="curtag">current</span>` : ""}</button>`).join("");
     const tz = this._hass.config?.time_zone;
     const man = sel.attributes.manual, nxt = sel.attributes.next_change;
-    const at = (iso) => `${hhmm(iso, tz)}${dayOf(iso, tz) !== dayOf(new Date().toISOString(), tz) ? ` ${dayOf(iso, tz)}` : ""}`;
+    const at = (iso) => `${hhmm(iso)}${dayOf(iso, tz) !== dayOf(new Date().toISOString(), tz) ? ` ${dayOf(iso, tz)}` : ""}`;
     const nextTxt = nxt ? `${nm(nxt.mode)} at ${at(nxt.at)}` : "";
     let status = "";
     if (man?.hold === "paused") {
@@ -329,7 +350,7 @@ class SbModesCard extends HTMLElement {
     body.innerHTML = `${head}
       <div class="now"><span class="sbk-ico armed big"><ha-icon icon="${esc(modeIcon(sel.state))}"></ha-icon></span>
         <div><div class="cur-l">Current mode</div><div class="cur">${esc(nm(sel.state))}</div>
-          <div class="since">since ${esc(hhmm(since, this._hass.config?.time_zone))} (${esc(ago(since))} ago) · fallback ${esc(nm(sel.attributes.fallback_mode))}</div></div></div>
+          <div class="since">since ${esc(hhmm(since))} (${esc(ago(since))} ago) · fallback ${esc(nm(sel.attributes.fallback_mode))}</div></div></div>
       ${status}
       <div class="switch-l">Modes · tap one to see what it does</div>
       <div class="modes" role="group" aria-label="See a mode">${chips}</div>
@@ -394,7 +415,13 @@ class SbModesCard extends HTMLElement {
     const beh = pick.behaviour;
     const what = this._describe(beh, pick.params);
     const held = !previewing && String(a.status || "").startsWith("held");
-    const doing = previewing ? what : held ? a.status : beh === "hands_off" ? `Not controlled in ${modeName}` : a.status || "";
+    // live: "Vacant since 12:12 PM · lights off" — occupancy first, then what the behaviour is doing
+    const occ = a.occupancy === "occupied" ? `Occupied since ${hhmm(a.occupancy_since)}`
+      : a.occupancy === "vacant" ? `Vacant since ${hhmm(a.occupancy_since)}`
+      : a.occupancy === "unknown" ? "Occupancy unknown (sensor unavailable)" : "";
+    const rest = held ? a.status : beh === "hands_off" ? `not controlled in ${modeName}`
+      : String(a.status || "").replace(/^(vacant|occupied)(;\s*|$)/, "");
+    const doing = previewing ? what : [occ, fmtTimes(rest)].filter(Boolean).join(" · ");
     const l = previewing ? { icon: look(beh, "").icon, tint: "idle" } : look(beh, a.status);
     const open = this._open.has(z.id);
     const src = pick.source === "override" ? "this zone's own setting for this mode" : pick.source === "zone" ? "this zone's setting for all modes" : "the mode's default";
