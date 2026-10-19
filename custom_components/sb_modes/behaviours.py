@@ -406,6 +406,7 @@ class PresenceLux(_Occupancy):
         so it survives this behaviour being restarted)."""
         if not self._lights_on() and (lux := self._lux()) is not None:
             self.rt.daylight[self.zone["id"]] = (lux, dt_util.utcnow())
+            self.rt.keeper.save_soon()
 
     def _memory(self) -> float | None:
         mem = self.rt.daylight.get(self.zone["id"])

@@ -979,3 +979,13 @@ async def test_stale_daylight_memory_falls_back_to_the_sun(hass, kitchen, lights
     hass.states.async_set(OCC, "on")
     await hass.async_block_till_done()
     assert CEILING not in [c.data["entity_id"] for c in lights["on"]]    # sun up + high reading: light
+
+
+async def test_daylight_memory_survives_a_reload(hass, kitchen, lights) -> None:
+    await _setup(hass)
+    await _save(hass, _with("presence_lux", PL2))
+    hass.states.async_set(LUX, "29")
+    await hass.async_block_till_done()
+    assert _rt(hass).daylight["kitchen"][0] == 29.0
+    await _save(hass, _with("presence_lux", PL2))                         # reload
+    assert _rt(hass).daylight["kitchen"][0] == 29.0

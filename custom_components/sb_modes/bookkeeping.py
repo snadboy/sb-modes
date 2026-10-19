@@ -57,10 +57,23 @@ class Keeper:
         data = self.hass.data.get(DOMAIN, {}).pop("keeper_handover", None) or await self.store.async_load() or {}
         self.holds = data.get("holds") or {}
         self.overrides = data.get("overrides") or {}
+        # the zones' lights-off readings (presence_lux), so a restart doesn't lose them
+        for zone, (lux, when) in (data.get("daylight") or {}).items():
+            if (parsed := dt_util.parse_datetime(when)) is not None:
+                self.rt.daylight[zone] = (lux, parsed)
 
     @callback
     def _save(self) -> None:
-        self.store.async_delay_save(lambda: {"holds": self.holds, "overrides": self.overrides}, 2)
+        self.store.async_delay_save(self._data, 2)
+
+    def _data(self) -> dict:
+        return {"holds": self.holds, "overrides": self.overrides,
+                "daylight": {z: (lux, when.isoformat()) for z, (lux, when) in self.rt.daylight.items()}}
+
+    @callback
+    def save_soon(self) -> None:
+        """Save within a minute (lux readings change often; no need to write each one)."""
+        self.store.async_delay_save(self._data, 60)
 
     @callback
     def restored(self, mode: str | None) -> None:
@@ -83,7 +96,7 @@ class Keeper:
 
     @callback
     def stop(self) -> None:
-        self.hass.data.setdefault(DOMAIN, {})["keeper_handover"] = {"holds": self.holds, "overrides": self.overrides}
+        self.hass.data.setdefault(DOMAIN, {})["keeper_handover"] = self._data()
         self._unwatch()
         for timers in (self._expiry, self._vacant):
             for unsub in timers.values():
