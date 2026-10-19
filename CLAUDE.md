@@ -96,6 +96,19 @@ card rebuilds once the tag exists. **SB Background's card has the same bug** (it
 add_extra_js_url too) — fix it the same way in that repo. Lovelace-resource cards (SB Watch,
 Scheduler) are unaffected.
 
+## 2026-10-19 changes (0.11.0)
+
+- Office `vacant_after_minutes` 0 → 2 (LWR02 drops out for seconds while occupied; Office Dim
+  flickered 11× 06:29–07:58).
+- `on_enter` (zone: {mode: targets}, once per real mode change). Morning: kitchen aux on
+  (cabinet on, recessed/sink 70%), dining sideboard on, living plants 40%. **automation.lights_morning
+  ("Lights - Whole House") DISABLED** (its overheads were undone by off-when-empty within minutes;
+  its overnight half dead since Aug). Delete after a week.
+- Schedule: + not-workday 08:00 Morning (user). Bedside wake on those days → 08:30 / 08:40.
+- light.living_room_floor_lamp_window deleted by the user; removed from the table.
+- Rules now: workday 06:00 morning · not-workday 08:00 morning · daily 09:00 day ·
+  daily sunset−01:00 evening · eve-of-workday 23:00 overnight · not-workday 00:30 overnight.
+
 ## Bug fixed 2026-10-18 (0.9.1)
 
 18:43:20 living room lamps switched on at the wall while the FP300 still read empty; SB Modes
