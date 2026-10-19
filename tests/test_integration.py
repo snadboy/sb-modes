@@ -892,3 +892,50 @@ async def test_follow_validation(hass, kitchen) -> None:
     t["zones"][0]["follow"] = {"leader": CEILING, "bands": [{"min_pct": 0, "targets": {CEILING: {"state": "on"}}}]}
     with pytest.raises(ServiceValidationError, match="cannot follow itself"):
         await _save(hass, t)
+
+
+# ── presence_lux all day: empty when it is light vs dark, judged on daylight ────
+
+PL2 = {"target_lux": 50, "occupied": {CEILING: {"brightness_pct": 95}},
+       "vacant": {SINK: {"brightness_pct": 40}, CEILING: {"state": "off"}},
+       "vacant_bright": {SINK: {"state": "off"}, CEILING: {"state": "off"}}, "vacant_after_minutes": 15}
+
+
+async def test_empty_when_light_uses_the_bright_setting(hass, kitchen, lights, freezer) -> None:
+    hass.states.async_set(LUX, "120")
+    await _setup(hass)
+    await _save(hass, _with("presence_lux", PL2))                         # all modes
+    hass.states.async_set(CEILING, "on", {"brightness": 242}, context=Context(user_id="u"))
+    hass.states.async_set(SINK, "on", {"brightness": 100}, context=Context(user_id="u"))
+    await _tick(hass, freezer, minutes=16)
+    assert sorted(c.data["entity_id"] for c in lights["off"]) == [CEILING, SINK]
+    assert lights["on"] == []                                             # no nightlight in daylight
+    assert "'empty, light'" in _zone(hass)["status"]
+
+
+async def test_empty_judged_on_daylight_not_our_own_light(hass, kitchen, lights, freezer) -> None:
+    hass.states.async_set(LUX, "8")                                       # dusk, lights off
+    await _setup(hass)
+    await _save(hass, _with("presence_lux", PL2))
+    hass.states.async_set(OCC, "on")
+    await hass.async_block_till_done()
+    assert lights["on"][-1].data == {"entity_id": CEILING, "brightness_pct": 95}
+    hass.states.async_set(CEILING, "on", {"brightness": 242})
+    hass.states.async_set(LUX, "150")                                     # the sensor now sees the ceiling
+    hass.states.async_set(OCC, "off")
+    await hass.async_block_till_done()
+    await _tick(hass, freezer, minutes=15, seconds=5)
+    assert (SINK, 40) in [(c.data["entity_id"], c.data.get("brightness_pct")) for c in lights["on"]]   # the dark setting
+    assert "'empty'" in _zone(hass)["status"] and "light" not in _zone(hass)["status"]
+
+
+async def test_bright_and_occupied_does_nothing_then_lights_when_dark(hass, kitchen, lights) -> None:
+    hass.states.async_set(LUX, "120")
+    await _setup(hass)
+    await _save(hass, _with("presence_lux", PL2))
+    hass.states.async_set(OCC, "on")
+    await hass.async_block_till_done()
+    assert lights["on"] == []
+    hass.states.async_set(LUX, "45")
+    await hass.async_block_till_done()
+    assert lights["on"][-1].data == {"entity_id": CEILING, "brightness_pct": 95}

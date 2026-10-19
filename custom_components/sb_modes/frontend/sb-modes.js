@@ -11,7 +11,7 @@
  *
  * Rows use the shared SB row style (window.SBKit, from the SB UI Kit integration).
  */
-const VERSION = "0.12.0";
+const VERSION = "0.13.0";
 const CARD = "sb-modes-card";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -151,6 +151,7 @@ const look = (behaviour, status) => {
   if (s === "nightlight") return { icon: "mdi:lightbulb-night-outline", tint: "run" };
   if (s === "occupied" || s.startsWith("occupied;")) return { icon: "mdi:account", tint: "run" };
   if (s === "on" || s.startsWith("on:")) return { icon: "mdi:lightbulb-on-outline", tint: "run" };
+  if (s.startsWith("vacant; 'empty, light' since")) return { icon: "mdi:lightbulb-off-outline", tint: "idle" };
   if (s.startsWith("vacant; 'empty' since")) return { icon: "mdi:lightbulb-night-outline", tint: "idle" };
   if (s.startsWith("next step")) return { icon: "mdi:weather-sunset-up", tint: "armed" };
   if (behaviour === "wake_sequence") return { icon: "mdi:alarm", tint: "idle" };
@@ -404,7 +405,9 @@ class SbModesCard extends HTMLElement {
     }
     if (beh === "presence_lux") {
       const vac = p.vacant && Object.keys(p.vacant).length ? this._targets(p.vacant) : "lights off";
-      return `Occupied and below ${p.target_lux} lx: ${this._targets(p.occupied)} · Empty ${p.vacant_after_minutes ?? 15} min: ${vac}`;
+      const bright = p.vacant_bright && Object.keys(p.vacant_bright).length ? this._targets(p.vacant_bright) : null;
+      return `Occupied and below ${p.target_lux} lx: ${this._targets(p.occupied)} · Empty ${p.vacant_after_minutes ?? 15} min: ${
+        bright ? `dark → ${vac}; light → ${bright}` : vac}`;
     }
     return beh;
   }

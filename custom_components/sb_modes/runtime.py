@@ -89,6 +89,7 @@ class Runtime:
         self.own_contexts: deque[str] = deque(maxlen=500)  # ids of the contexts of our own calls
         self._ctx_targets: dict[str, frozenset[str]] = {}  # our context id → the entities it set
         self._followers: dict[str, Follower] = {}
+        self.daylight: dict[str, float] = {}              # zone → last reading with its lights off
         self._behaviours: dict[str, Behaviour] = {}
         self.keeper = Keeper(self)
         self._listeners: list[Callable[[], None]] = []

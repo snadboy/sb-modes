@@ -67,6 +67,7 @@ BEHAVIOURS: dict[str, dict[str, dict[str, Any]]] = {
         "target_lux": {"type": "number", "min": 1, "max": 2000, "required": True},
         "occupied": {"type": "targets", "required": True},
         "vacant": {"type": "targets"},
+        "vacant_bright": {"type": "targets"},
         "vacant_after_minutes": {"type": "number", "min": 1, "max": 240, "default": 15},
     },
 }

@@ -360,10 +360,13 @@ class OccupiedVacant(_Occupancy):
 
 class PresenceLux(_Occupancy):
     """Someone in the zone and the light reading below `target_lux` → the `occupied` targets;
-    vacant `vacant_after_minutes` → the `vacant` targets (default: the occupied ones off).
+    vacant `vacant_after_minutes` → the `vacant` targets when it is dark (default: the occupied
+    ones off), or `vacant_bright` when it is light (default: the same as `vacant`).
 
     The reading only ever turns lights UP while the zone is occupied (sunset); it never
-    dims them — the zone's own lights would fool it. Lit stays lit until the zone empties."""
+    dims them — the zone's own lights would fool it. Lit stays lit until the zone empties.
+    "Dark or light" for the empty setting is judged on DAYLIGHT: the last reading taken while
+    none of the zone's occupied-target lights were on (a kitchen sensor sees its ceiling)."""
     name = "presence_lux"
 
     def __init__(self, *args) -> None:
@@ -386,15 +389,36 @@ class PresenceLux(_Occupancy):
                 continue
         return sum(vals) / len(vals) if vals else None
 
-    def _vacant_targets(self) -> dict:
-        vacant = self.params.get("vacant")
-        if vacant:
-            return vacant
-        return {e: {"state": STATE_OFF} for e in self.params.get("occupied") or {}}
+    def _lights_on(self) -> bool:
+        return any(self.hass.states.is_state(e, STATE_ON) for e in self.params.get("occupied") or {}
+                   if e.startswith(("light.", "switch.")))
+
+    def _note_daylight(self) -> None:
+        """Remember the zone's reading while none of its lights are on (kept by the runtime,
+        so it survives this behaviour being restarted)."""
+        if not self._lights_on() and (lux := self._lux()) is not None:
+            self.rt.daylight[self.zone["id"]] = lux
+
+    def _is_dark(self) -> bool:
+        """For the empty setting: is the DAYLIGHT below target? With our lights off, the
+        reading now; with them on, the last reading taken with them off; with none known
+        yet (just after a start), the sun: below the horizon counts as dark."""
+        lux = self._lux() if not self._lights_on() else self.rt.daylight.get(self.zone["id"])
+        if lux is None:
+            return not self.hass.states.is_state("sun.sun", "above_horizon")
+        return lux < self.params.get("target_lux")
+
+    def _vacant_targets(self) -> tuple[dict, str]:
+        dark = self.params.get("vacant") or {e: {"state": STATE_OFF} for e in self.params.get("occupied") or {}}
+        if self._is_dark():
+            return dark, "'empty'"
+        return self.params.get("vacant_bright") or dark, "'empty, light'"
 
     @callback
     def start(self) -> None:
-        self._unsubs.append(async_track_state_change_event(self.hass, self._sensors + self._lux_sensors, self._changed))
+        lights = [e for e in self.params.get("occupied") or {} if e.startswith(("light.", "switch."))]
+        self._unsubs.append(async_track_state_change_event(self.hass, self._sensors + self._lux_sensors + lights, self._changed))
+        self._note_daylight()
         self._evaluate()
 
     @callback
@@ -409,7 +433,10 @@ class PresenceLux(_Occupancy):
             self._timer = None
 
     @callback
-    def _changed(self, _event) -> None:
+    def _changed(self, event) -> None:
+        self._note_daylight()
+        if event.data["entity_id"] in (self.params.get("occupied") or {}):
+            return                     # our lights only matter to the daylight memory
         self._evaluate()
 
     @callback
@@ -440,7 +467,8 @@ class PresenceLux(_Occupancy):
             self._lit = False
             self._vacant_done = True
             self.rt.keeper.release_overrides(self.zone["id"], vacant_since=since)
-            self._apply(self._vacant_targets(), "vacant; 'empty' since " + dt_util.as_local(now).strftime("%H:%M"))
+            targets, which = self._vacant_targets()
+            self._apply(targets, f"vacant; {which} since " + dt_util.as_local(now).strftime("%H:%M"))
             return
         self._timer = async_call_later(self.hass, (due - now).total_seconds(), HassJob(self._timer_done, cancel_on_shutdown=True))
         self._set_status("vacant; at " + dt_util.as_local(due).strftime("%H:%M") + " switches to 'empty'")
