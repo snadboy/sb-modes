@@ -170,7 +170,7 @@ class NightlightThenDark(Behaviour):
             self._go_dark()
             return
         self._timer = async_call_later(self.hass, left, HassJob(self._timer_done, cancel_on_shutdown=True))
-        self._set_status("vacant; dark at " + dt_util.as_local(dt_util.utcnow() + timedelta(seconds=left)).strftime("%H:%M"))
+        self._set_status("vacant; goes dark at " + dt_util.as_local(dt_util.utcnow() + timedelta(seconds=left)).strftime("%H:%M"))
 
     @callback
     def _disarm(self) -> None:
@@ -286,7 +286,7 @@ class VacancyOff(_Occupancy):
         nxt = min(dues.values())
         self._timer = async_call_later(self.hass, max(1, (nxt - now).total_seconds()),
                                        HassJob(self._timer_done, cancel_on_shutdown=True))
-        self._set_status("vacant; off at " + dt_util.as_local(nxt).strftime("%H:%M:%S"))
+        self._set_status("vacant; lights off at " + dt_util.as_local(nxt).strftime("%H:%M"))
 
     @callback
     def _timer_done(self, _now) -> None:
@@ -347,10 +347,10 @@ class OccupiedVacant(_Occupancy):
         if due <= now:
             self._vacant_done = True
             self.rt.keeper.release_overrides(self.zone["id"], vacant_since=since)
-            self._apply(self.params.get("vacant") or {}, "vacant")
+            self._apply(self.params.get("vacant") or {}, "vacant; 'empty' since " + dt_util.as_local(now).strftime("%H:%M"))
             return
         self._timer = async_call_later(self.hass, (due - now).total_seconds(), HassJob(self._timer_done, cancel_on_shutdown=True))
-        self._set_status("vacant; switching at " + dt_util.as_local(due).strftime("%H:%M"))
+        self._set_status("vacant; at " + dt_util.as_local(due).strftime("%H:%M") + " switches to 'empty'")
 
     @callback
     def _timer_done(self, _now) -> None:
@@ -440,10 +440,10 @@ class PresenceLux(_Occupancy):
             self._lit = False
             self._vacant_done = True
             self.rt.keeper.release_overrides(self.zone["id"], vacant_since=since)
-            self._apply(self._vacant_targets(), "empty")
+            self._apply(self._vacant_targets(), "vacant; 'empty' since " + dt_util.as_local(now).strftime("%H:%M"))
             return
         self._timer = async_call_later(self.hass, (due - now).total_seconds(), HassJob(self._timer_done, cancel_on_shutdown=True))
-        self._set_status("vacant; empty setting at " + dt_util.as_local(due).strftime("%H:%M"))
+        self._set_status("vacant; at " + dt_util.as_local(due).strftime("%H:%M") + " switches to 'empty'")
 
     @callback
     def _timer_done(self, _now) -> None:

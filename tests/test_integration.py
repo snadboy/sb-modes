@@ -202,7 +202,7 @@ async def test_vacancy_goes_dark_after_the_delay_once(hass, kitchen, lights, fre
     hass.states.async_set(CEILING, "on")
     hass.states.async_set(OCC, "off")
     await hass.async_block_till_done()
-    assert hass.states.get(ZONE).attributes["status"].startswith("vacant; dark at")
+    assert hass.states.get(ZONE).attributes["status"].startswith("vacant; goes dark at")
     freezer.tick(timedelta(minutes=9))
     async_fire_time_changed(hass)
     await hass.async_block_till_done()

@@ -11,7 +11,7 @@
  *
  * Rows use the shared SB row style (window.SBKit, from the SB UI Kit integration).
  */
-const VERSION = "0.10.1";
+const VERSION = "0.10.2";
 const CARD = "sb-modes-card";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -37,7 +37,7 @@ const hhmm = (iso) => {
     return clock(Number(parts.find((p) => p.type === "hour").value), Number(parts.find((p) => p.type === "minute").value));
   } catch (e) { return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); }
 };
-/** Clock times SB Modes writes into statuses ("dark at 23:14", "off at 18:23:05") in the user's format. */
+/** Clock times SB Modes writes into statuses ("goes dark at 23:14", "at 22:10 switches to 'empty'") in the user's format. */
 const fmtTimes = (text) => String(text || "").replace(/\b([01]\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?\b/g, (_, h, m) => clock(Number(h), Number(m)));
 const ago = (iso, now = Date.now()) => {
   if (!iso) return "";
@@ -151,7 +151,7 @@ const look = (behaviour, status) => {
   if (s === "nightlight") return { icon: "mdi:lightbulb-night-outline", tint: "run" };
   if (s === "occupied" || s.startsWith("occupied;")) return { icon: "mdi:account", tint: "run" };
   if (s === "on" || s.startsWith("on:")) return { icon: "mdi:lightbulb-on-outline", tint: "run" };
-  if (s === "empty") return { icon: "mdi:lightbulb-night-outline", tint: "idle" };
+  if (s.startsWith("vacant; 'empty' since")) return { icon: "mdi:lightbulb-night-outline", tint: "idle" };
   if (s.startsWith("next step")) return { icon: "mdi:weather-sunset-up", tint: "armed" };
   if (behaviour === "wake_sequence") return { icon: "mdi:alarm", tint: "idle" };
   if (s === "vacant; lights off") return { icon: "mdi:lightbulb-off-outline", tint: "idle" };
