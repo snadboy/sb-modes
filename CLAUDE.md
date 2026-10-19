@@ -119,6 +119,12 @@ kitchen aux / sideboard / reading lamp). Dark/light judged on daylight memory (p
 runtime); below target with lights on = dark; no memory → sun. Delays: living 15, kitchen 3,
 dining 5 min. Evening-only overrides removed (the "*" covers Evening).
 
+**0.13.2–0.13.3 (2026-10-19 16:29 regression):** walking into the kitchen didn't light it — it
+read 56 lx because its dim aux lights were on (29 with all off). Arrival now uses the same daylight
+rule as leaving, over ALL zone lights; lights-off memory expires after 1 h (then the sun) and is
+saved with the bookkeeping so restarts keep it. Statuses name the reading used ("… (with the
+lights off)", "by the sun").
+
 ## Kitchen & dining evening (0.12.0, 2026-10-19)
 
 - Kitchen `follow`: ceiling leads the aux lights in EVERY mode (≥79 % → recessed/sink 100,
