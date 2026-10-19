@@ -389,31 +389,54 @@ class PresenceLux(_Occupancy):
                 continue
         return sum(vals) / len(vals) if vals else None
 
+    DAYLIGHT_MAX_AGE = 3600            # seconds a lights-off reading stays usable
+
+    def _own_lights(self) -> list[str]:
+        """Every light that can add to this zone's reading: the zone's lights plus our targets."""
+        own = set(self.entities.get("lights", []))
+        for key in ("occupied", "vacant", "vacant_bright"):
+            own |= {e for e in self.params.get(key) or {} if e.startswith(("light.", "switch."))}
+        return sorted(own)
+
     def _lights_on(self) -> bool:
-        return any(self.hass.states.is_state(e, STATE_ON) for e in self.params.get("occupied") or {}
-                   if e.startswith(("light.", "switch.")))
+        return any(self.hass.states.is_state(e, STATE_ON) for e in self._own_lights())
 
     def _note_daylight(self) -> None:
         """Remember the zone's reading while none of its lights are on (kept by the runtime,
         so it survives this behaviour being restarted)."""
         if not self._lights_on() and (lux := self._lux()) is not None:
-            self.rt.daylight[self.zone["id"]] = lux
+            self.rt.daylight[self.zone["id"]] = (lux, dt_util.utcnow())
 
-    def _is_dark(self) -> bool:
-        """For the empty setting: is the DAYLIGHT below target? With our lights off, the
-        reading now; with them on, below target still means dark (they only add light), else
-        the last reading taken with them off; with none known yet (just after a start), the
-        sun: below the horizon counts as dark."""
+    def _memory(self) -> float | None:
+        mem = self.rt.daylight.get(self.zone["id"])
+        if mem and (dt_util.utcnow() - mem[1]).total_seconds() <= self.DAYLIGHT_MAX_AGE:
+            return mem[0]
+        return None
+
+    def _daylight(self) -> tuple[float | None, str]:
+        """(the reading to judge daylight by, where it came from): 'now' with the zone's lights
+        off, or even with them on when it is below target (lights only add light); else the
+        last lights-off reading within the hour ('earlier'); else (None, 'sun')."""
         target = self.params.get("target_lux")
         now = self._lux()
-        if not self._lights_on():
-            return now is None or now < target
-        if now is not None and now < target:
-            return True                  # our lights only ADD light: below target even with them on = dark
-        lux = self.rt.daylight.get(self.zone["id"])
+        if not self._lights_on() or (now is not None and now < target):
+            return now, "now"
+        mem = self._memory()
+        return (mem, "earlier") if mem is not None else (None, "sun")
+
+    def _is_dark(self) -> bool:
+        """For both decisions: is the DAYLIGHT below target? With nothing to go on, the sun:
+        below the horizon counts as dark (a missing reading with lights off counts as dark)."""
+        lux, src = self._daylight()
         if lux is None:
-            return not self.hass.states.is_state("sun.sun", "above_horizon")
-        return lux < target
+            return src == "now" or not self.hass.states.is_state("sun.sun", "above_horizon")
+        return lux < self.params.get("target_lux")
+
+    def _reading_txt(self) -> str:
+        lux, src = self._daylight()
+        if lux is None:
+            return "no reading" if src == "now" else "by the sun"
+        return f"{lux:.0f} lx" + (" (with the lights off)" if src == "earlier" else "")
 
     def _vacant_targets(self) -> tuple[dict, str]:
         dark = self.params.get("vacant") or {e: {"state": STATE_OFF} for e in self.params.get("occupied") or {}}
@@ -423,8 +446,7 @@ class PresenceLux(_Occupancy):
 
     @callback
     def start(self) -> None:
-        lights = [e for e in self.params.get("occupied") or {} if e.startswith(("light.", "switch."))]
-        self._unsubs.append(async_track_state_change_event(self.hass, self._sensors + self._lux_sensors + lights, self._changed))
+        self._unsubs.append(async_track_state_change_event(self.hass, self._sensors + self._lux_sensors + self._own_lights(), self._changed))
         self._note_daylight()
         self._evaluate()
 
@@ -442,8 +464,8 @@ class PresenceLux(_Occupancy):
     @callback
     def _changed(self, event) -> None:
         self._note_daylight()
-        if event.data["entity_id"] in (self.params.get("occupied") or {}):
-            return                     # our lights only matter to the daylight memory
+        if event.data["entity_id"] in self._own_lights():
+            return                     # the zone's lights only matter to the daylight memory
         self._evaluate()
 
     @callback
@@ -453,14 +475,14 @@ class PresenceLux(_Occupancy):
         if self._occupied():
             self._vacant_done = False
             lux = self._lux()
-            dark = lux is None or lux < target
+            dark = self._is_dark()     # daylight, not our own lights (the kitchen sensor sees its aux)
             if not self._lit and dark:
                 self._lit = True
-                self._apply(self.params.get("occupied") or {}, f"on: {'no reading' if lux is None else f'{lux:.0f} lx'} < {target} lx")
+                self._apply(self.params.get("occupied") or {}, f"on: {self._reading_txt()} < {target} lx")
             elif self._lit:
                 self._set_status("on")
             else:
-                self._set_status(f"occupied; light enough ({lux:.0f} ≥ {target} lx)")
+                self._set_status(f"occupied; light enough ({self._reading_txt()} ≥ {target} lx)")
             return
         if self._vacant_done:
             return                      # already set for this vacancy: a lux change or a hand change must not redo it

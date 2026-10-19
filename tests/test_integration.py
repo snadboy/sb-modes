@@ -949,3 +949,33 @@ async def test_dark_even_with_our_lights_on_and_no_memory(hass, kitchen, lights,
     await _save(hass, _with("presence_lux", PL2))
     await _tick(hass, freezer, minutes=15, seconds=5)
     assert (SINK, 40) in [(c.data["entity_id"], c.data.get("brightness_pct")) for c in lights["on"]]
+
+
+# ── regression 2026-10-19 16:29: the kitchen sensor saw its own dim aux lights ──────
+
+async def test_arrival_judged_on_daylight_when_aux_lights_are_on(hass, kitchen, lights, freezer) -> None:
+    await _setup(hass)
+    await _save(hass, _with("presence_lux", PL2))
+    hass.states.async_set(LUX, "29")                                      # all off: real daylight
+    await hass.async_block_till_done()
+    hass.states.async_set(SINK, "on", {"brightness": 25})                 # aux on dim (follow)
+    hass.states.async_set(LUX, "56")                                      # the sensor sees it
+    await hass.async_block_till_done()
+    hass.states.async_set(OCC, "on")
+    await hass.async_block_till_done()
+    assert (CEILING, 95) in [(c.data["entity_id"], c.data.get("brightness_pct")) for c in lights["on"]]
+    assert "with the lights off" in _zone(hass)["status"]
+
+
+async def test_stale_daylight_memory_falls_back_to_the_sun(hass, kitchen, lights, freezer) -> None:
+    hass.states.async_set("sun.sun", "above_horizon")
+    await _setup(hass)
+    await _save(hass, _with("presence_lux", PL2))
+    hass.states.async_set(LUX, "20")                                      # dark, lights off (e.g. before dawn)
+    await hass.async_block_till_done()
+    hass.states.async_set(SINK, "on", {"brightness": 178})
+    hass.states.async_set(LUX, "140")
+    await _tick(hass, freezer, hours=2)                                   # the memory is now stale
+    hass.states.async_set(OCC, "on")
+    await hass.async_block_till_done()
+    assert CEILING not in [c.data["entity_id"] for c in lights["on"]]    # sun up + high reading: light
