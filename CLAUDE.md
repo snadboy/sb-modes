@@ -109,6 +109,16 @@ Scheduler) are unaffected.
 - Rules now: workday 06:00 morning · not-workday 08:00 morning · daily 09:00 day ·
   daily sunset−01:00 evening · eve-of-workday 23:00 overnight · not-workday 00:30 overnight.
 
+## All-day presence + light (0.13.x, 2026-10-19)
+
+User: Day needs the same presence/lux trigger as Evening; no nightlight in daylight. Living room,
+kitchen, dining now `"*"` presence_lux (Morning/Day/Evening; Overnight keeps nightlight_then_dark),
+target **50 lx** (33 lx felt too dark). Empty: dark → `vacant` (living plants 40 % + others off;
+kitchen ceiling off → aux follow dim; dining sideboard on), light → `vacant_bright` (all off incl.
+kitchen aux / sideboard / reading lamp). Dark/light judged on daylight memory (per zone, in the
+runtime); below target with lights on = dark; no memory → sun. Delays: living 15, kitchen 3,
+dining 5 min. Evening-only overrides removed (the "*" covers Evening).
+
 ## Kitchen & dining evening (0.12.0, 2026-10-19)
 
 - Kitchen `follow`: ceiling leads the aux lights in EVERY mode (≥79 % → recessed/sink 100,
