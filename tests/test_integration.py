@@ -939,3 +939,13 @@ async def test_bright_and_occupied_does_nothing_then_lights_when_dark(hass, kitc
     hass.states.async_set(LUX, "45")
     await hass.async_block_till_done()
     assert lights["on"][-1].data == {"entity_id": CEILING, "brightness_pct": 95}
+
+
+async def test_dark_even_with_our_lights_on_and_no_memory(hass, kitchen, lights, freezer) -> None:
+    hass.states.async_set("sun.sun", "above_horizon")
+    hass.states.async_set(CEILING, "on", {"brightness": 66})
+    hass.states.async_set(LUX, "27")                                      # lamps on, still below 50
+    await _setup(hass)
+    await _save(hass, _with("presence_lux", PL2))
+    await _tick(hass, freezer, minutes=15, seconds=5)
+    assert (SINK, 40) in [(c.data["entity_id"], c.data.get("brightness_pct")) for c in lights["on"]]

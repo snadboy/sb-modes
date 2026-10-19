@@ -401,12 +401,19 @@ class PresenceLux(_Occupancy):
 
     def _is_dark(self) -> bool:
         """For the empty setting: is the DAYLIGHT below target? With our lights off, the
-        reading now; with them on, the last reading taken with them off; with none known
-        yet (just after a start), the sun: below the horizon counts as dark."""
-        lux = self._lux() if not self._lights_on() else self.rt.daylight.get(self.zone["id"])
+        reading now; with them on, below target still means dark (they only add light), else
+        the last reading taken with them off; with none known yet (just after a start), the
+        sun: below the horizon counts as dark."""
+        target = self.params.get("target_lux")
+        now = self._lux()
+        if not self._lights_on():
+            return now is None or now < target
+        if now is not None and now < target:
+            return True                  # our lights only ADD light: below target even with them on = dark
+        lux = self.rt.daylight.get(self.zone["id"])
         if lux is None:
             return not self.hass.states.is_state("sun.sun", "above_horizon")
-        return lux < self.params.get("target_lux")
+        return lux < target
 
     def _vacant_targets(self) -> tuple[dict, str]:
         dark = self.params.get("vacant") or {e: {"state": STATE_OFF} for e in self.params.get("occupied") or {}}
