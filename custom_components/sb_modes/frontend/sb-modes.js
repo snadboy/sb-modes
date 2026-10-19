@@ -11,7 +11,7 @@
  *
  * Rows use the shared SB row style (window.SBKit, from the SB UI Kit integration).
  */
-const VERSION = "0.10.0";
+const VERSION = "0.10.1";
 const CARD = "sb-modes-card";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -416,9 +416,9 @@ class SbModesCard extends HTMLElement {
     const what = this._describe(beh, pick.params);
     const held = !previewing && String(a.status || "").startsWith("held");
     // live: "Vacant since 12:12 PM · lights off" — occupancy first, then what the behaviour is doing
-    const occ = a.occupancy === "occupied" ? `Occupied since ${hhmm(a.occupancy_since)}`
-      : a.occupancy === "vacant" ? `Vacant since ${hhmm(a.occupancy_since)}`
-      : a.occupancy === "unknown" ? "Occupancy unknown (sensor unavailable)" : "";
+    const occ = a.occupancy_state === "occupied" ? `Occupied since ${hhmm(a.occupancy_since)}`
+      : a.occupancy_state === "vacant" ? `Vacant since ${hhmm(a.occupancy_since)}`
+      : a.occupancy_state === "unknown" ? "Occupancy unknown (sensor unavailable)" : "";
     const rest = held ? a.status : beh === "hands_off" ? `not controlled in ${modeName}`
       : String(a.status || "").replace(/^(vacant|occupied)(;\s*|$)/, "");
     const doing = previewing ? what : [occ, fmtTimes(rest)].filter(Boolean).join(" · ");

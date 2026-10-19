@@ -102,7 +102,7 @@ class ZoneSensor(ModesEntity, SensorEntity):
             "source": st.get("source"),
             "params": st.get("params", {}),
             "status": st.get("status"),
-            "occupancy": st.get("occupancy"),
+            "occupancy_state": st.get("occupancy"),
             "occupancy_since": st.get("occupancy_since"),
             "control": self._rt.zone_control(self._zone_id),
             "hold": st.get("hold"),
