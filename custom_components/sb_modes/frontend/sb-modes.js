@@ -11,7 +11,7 @@
  *
  * Rows use the shared SB row style (window.SBKit, from the SB UI Kit integration).
  */
-const VERSION = "0.9.1";
+const VERSION = "0.9.2";
 const CARD = "sb-modes-card";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -415,7 +415,13 @@ class SbModesCard extends HTMLElement {
     // live view only: lights changed by hand, and the hold / release menu
     const ov = previewing ? {} : (a.overrides || {});
     const ovNames = Object.keys(ov).map((e) => this._hass.states[e]?.attributes.friendly_name || e);
-    const third = ovNames.length ? `<span class="sbk-m warn">Changed by hand: ${esc(ovNames.join(", "))} · left alone until ${esc(z.name)} is empty ${esc(String((pick.params || {}).delay ?? (pick.params || {}).off_delay ?? 10))} min or the mode changes</span>` : "";
+    // the same delay SB Modes uses (bookkeeping.release_delay): delay / vacant_after / off-when-empty (capped)
+    const pp = pick.params || {};
+    let rel = pp.delay ?? pp.vacant_after_minutes;
+    if (rel == null && pp.off_after_seconds != null) rel = Math.min(pp.off_after_seconds / 60, pp.max_on_minutes || Infinity);
+    rel = rel ?? 10;
+    const relTxt = rel < 1 ? `${Math.round(rel * 60)} s` : `${Math.round(rel * 10) / 10} min`;
+    const third = ovNames.length ? `<span class="sbk-m warn">Changed by hand: ${esc(ovNames.join(", "))} · left alone until ${esc(z.name)} has been empty ${esc(relTxt)} or the mode changes</span>` : "";
     const key = `z:${z.id}`;
     const menu = !previewing && this._menu === key ? kit().menu(`${z.name} actions`, [
       { act: "hold:15", icon: "mdi:hand-back-right-outline", label: "Hold 15 min" },
