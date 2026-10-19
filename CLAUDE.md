@@ -109,6 +109,17 @@ Scheduler) are unaffected.
 - Rules now: workday 06:00 morning · not-workday 08:00 morning · daily 09:00 day ·
   daily sunset−01:00 evening · eve-of-workday 23:00 overnight · not-workday 00:30 overnight.
 
+## Kitchen & dining evening (0.12.0, 2026-10-19)
+
+- Kitchen `follow`: ceiling leads the aux lights in EVERY mode (≥79 % → recessed/sink 100,
+  ≥21 % → 70, else 10; cabinet on) — stands aside when our own command set the aux too
+  (Overnight dark). **automation.ambience_kitchen DISABLED** (delete after a week; its
+  overnight-condition patch is moot).
+- Evening (presence_lux, 25 lx): kitchen occupied ceiling 100 % (aux follow → 100), empty 3 min
+  → ceiling off (aux follow → 10 % = "aux on"); dining occupied chandelier 30 %, empty 5 min →
+  chandelier off + sideboard on. automation.ambience_dining_room (chandelier on → sideboard on)
+  left running: no conflict.
+
 ## Bug fixed 2026-10-18 (0.9.1)
 
 18:43:20 living room lamps switched on at the wall while the FP300 still read empty; SB Modes
