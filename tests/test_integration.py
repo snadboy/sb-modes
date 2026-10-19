@@ -817,3 +817,78 @@ async def test_on_enter_validation(hass, kitchen) -> None:
     t["zones"][0]["on_enter"] = {"brunch": {SINK: {"state": "on"}}}
     with pytest.raises(ServiceValidationError, match="on_enter names mode “brunch”"):
         await _save(hass, t)
+
+
+# ── follow: the aux lights track the ceiling, in every mode ─────────────────
+
+FOLLOW = {"leader": CEILING, "bands": [{"min_pct": 79, "targets": {SINK: {"brightness_pct": 100}}},
+                                      {"min_pct": 21, "targets": {SINK: {"brightness_pct": 70}}},
+                                      {"min_pct": 0, "targets": {SINK: {"brightness_pct": 10}}}]}
+
+
+async def _follow_setup(hass):
+    await _setup(hass)
+    t = _table()
+    t["zones"][0]["follow"] = FOLLOW
+    await _save(hass, t)
+    return t
+
+
+async def test_follow_bands_by_hand_in_any_mode(hass, kitchen, lights) -> None:
+    await _follow_setup(hass)
+    for mode in ("day", "overnight"):
+        await _mode(hass, mode)
+        lights["on"].clear()
+        hass.states.async_set(CEILING, "on", {"brightness": 255}, context=Context(user_id="u"))
+        await hass.async_block_till_done()
+        hass.states.async_set(CEILING, "on", {"brightness": 128}, context=Context(user_id="u"))
+        await hass.async_block_till_done()
+        hass.states.async_set(CEILING, "off", context=Context(user_id="u"))
+        await hass.async_block_till_done()
+        assert [c.data.get("brightness_pct") for c in lights["on"] if c.data["entity_id"] == SINK] == [100, 70, 10], mode
+
+
+async def test_follow_stands_aside_when_we_set_the_followers(hass, kitchen, lights) -> None:
+    await _follow_setup(hass)
+    hass.states.async_set(CEILING, "on", {"brightness": 255})
+    await hass.async_block_till_done()
+    lights["on"].clear()
+    rt = _rt(hass)
+    rt.apply({CEILING: {"state": "off"}, SINK: {"state": "off"}}, "dark", "kitchen")   # Overnight's dark
+    await hass.async_block_till_done()
+    ctx = lights["off"][-1].context
+    hass.states.async_set(CEILING, "off", context=ctx)                    # the leader goes off under OUR context
+    await hass.async_block_till_done()
+    assert lights["on"] == []                                             # no dim aux undoing the dark
+
+
+async def test_follow_after_our_leader_only_command(hass, kitchen, lights) -> None:
+    await _follow_setup(hass)
+    rt = _rt(hass)
+    rt.apply({CEILING: {"brightness_pct": 100}}, "evening on", "kitchen")
+    await hass.async_block_till_done()
+    ctx = lights["on"][-1].context
+    hass.states.async_set(CEILING, "on", {"brightness": 255}, context=ctx)
+    await hass.async_block_till_done()
+    assert lights["on"][-1].data == {"entity_id": SINK, "brightness_pct": 100}
+
+
+async def test_follow_ignores_unavailable_and_held(hass, kitchen, lights) -> None:
+    await _follow_setup(hass)
+    hass.states.async_set(CEILING, "unavailable")
+    await hass.async_block_till_done()
+    hass.states.async_set(CEILING, "off")
+    await hass.async_block_till_done()
+    assert lights["on"] == []
+    await hass.services.async_call(DOMAIN, "hold_zone", {"zone": "kitchen", "hold": "paused"}, blocking=True)
+    hass.states.async_set(CEILING, "on", {"brightness": 255}, context=Context(user_id="u"))
+    await hass.async_block_till_done()
+    assert lights["on"] == []
+
+
+async def test_follow_validation(hass, kitchen) -> None:
+    await _setup(hass)
+    t = _table()
+    t["zones"][0]["follow"] = {"leader": CEILING, "bands": [{"min_pct": 0, "targets": {CEILING: {"state": "on"}}}]}
+    with pytest.raises(ServiceValidationError, match="cannot follow itself"):
+        await _save(hass, t)

@@ -60,6 +60,13 @@ The mode-changed event carries `source`: manual, schedule, resume, hold_ended or
   hand changes; the zone's behaviour starts again for the current mode.
 - Both are saved (`.storage/sb_modes.state`) and survive restarts and table reloads.
 
+## Following a leader light (0.12.0)
+
+A zone's `follow: {leader, bands: [{min_pct, targets}, …]}` sets its follower lights from the
+leader's brightness (off = 0 %, highest band first) whenever the leader changes — by hand or
+by SB Modes, in every mode. It stands aside when SB Modes' own command that changed the leader
+also set a follower (e.g. Overnight's dark), and skips held zones and followers changed by hand.
+
 ## When a mode begins (0.11.0)
 
 A zone's `on_enter: {mode: targets}` is set once when that mode begins — a real mode change,

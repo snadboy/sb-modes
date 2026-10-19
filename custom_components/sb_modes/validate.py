@@ -104,6 +104,20 @@ def check_config(
                 errors.append(f"{where}: overrides mode “{mode_id}”, which is not defined.")
                 continue
             _check_choice(choice, f"{where}, {names.get(mode_id, mode_id)}", state_of, errors, warnings, ids)
+        follow = zone.get("follow")
+        if follow is not None:
+            if not isinstance(follow, dict) or not follow.get("leader") or not isinstance(follow.get("bands"), list) or not follow["bands"]:
+                errors.append(f"{where}: follow needs a leader light and a list of bands {{min_pct, targets}}.")
+            else:
+                _check_entity(follow["leader"], ["light", "switch"], f"{where}, follow leader", state_of, errors, warnings)
+                for n, band in enumerate(follow["bands"], 1):
+                    mp = band.get("min_pct") if isinstance(band, dict) else None
+                    if isinstance(mp, bool) or not isinstance(mp, (int, float)) or not 0 <= mp <= 100:
+                        errors.append(f"{where}, follow band {n}: min_pct must be 0–100.")
+                        continue
+                    _check_param(band.get("targets"), {"type": "targets"}, f"{where}, follow band {n}", state_of, errors, warnings)
+                    if follow["leader"] in (band.get("targets") or {}):
+                        errors.append(f"{where}, follow band {n}: the leader cannot follow itself.")
         enter = zone.get("on_enter")
         if enter is not None:
             if not isinstance(enter, dict):

@@ -34,6 +34,7 @@ from homeassistant.util import dt as dt_util
 from . import driver
 from .behaviours import KINDS, Behaviour, HandsOff, Held
 from .bookkeeping import Keeper, describe_hold, release_delay
+from .follow import Follower
 from .const import (
     ALERT_GRACE_SECONDS, CHECK_SECONDS, DOMAIN, EVENT_MODE_CHANGED, ISSUE_ID, STARTUP_SETTLE_SECONDS, STORE_KEY,
     STORE_VERSION,
@@ -86,6 +87,8 @@ class Runtime:
         self.warnings: list[str] = []
         self.ready = False                                # behaviours may run
         self.own_contexts: deque[str] = deque(maxlen=500)  # ids of the contexts of our own calls
+        self._ctx_targets: dict[str, frozenset[str]] = {}  # our context id → the entities it set
+        self._followers: dict[str, Follower] = {}
         self._behaviours: dict[str, Behaviour] = {}
         self.keeper = Keeper(self)
         self._listeners: list[Callable[[], None]] = []
@@ -208,6 +211,9 @@ class Runtime:
                 setattr(self, name, None)
         self._cancel_grace()
         self._stop_behaviours()
+        for f in self._followers.values():
+            f.stop()
+        self._followers.clear()
         self.keeper.stop()
 
     # ── the table ────────────────────────────────────────────────────────────
@@ -452,6 +458,8 @@ class Runtime:
         if self.ready and self.mode:
             for zone in self.zones():
                 self._start_zone(zone)
+        if self.ready and not self._followers:
+            self._restart_followers()
         self._rewatch()
         self.notify()
 
@@ -493,6 +501,23 @@ class Runtime:
                           "delay": release_delay(picked.get("behaviour"), picked.get("params") or {})}
         self.keeper.watch(watch)
 
+    def targets_of(self, ctx_id: str | None) -> frozenset[str]:
+        """The entities one of our own commands set (empty for anyone else's context)."""
+        return self._ctx_targets.get(ctx_id or "", frozenset())
+
+    @callback
+    def _restart_followers(self) -> None:
+        for f in self._followers.values():
+            f.stop()
+        self._followers.clear()
+        if not self.ready:
+            return
+        for zone in self.zones():
+            if zone.get("follow"):
+                f = Follower(self, zone, zone["follow"])
+                self._followers[zone["id"]] = f
+                f.start()
+
     @callback
     def _occupancy_changed(self, _event) -> None:
         self.notify()
@@ -517,6 +542,10 @@ class Runtime:
         self.keeper.commanded(targets)
         ctx = Context()
         self.own_contexts.append(ctx.id)
+        self._ctx_targets[ctx.id] = frozenset(targets)
+        if len(self._ctx_targets) > 500:                 # keep it as bounded as own_contexts
+            for old in list(self._ctx_targets)[:-500]:
+                self._ctx_targets.pop(old, None)
         _LOGGER.debug("SB Modes: %s → %s", why, targets)
         self.hass.async_create_task(driver.apply(self.hass, targets, ctx), f"sb_modes apply {why}")
 

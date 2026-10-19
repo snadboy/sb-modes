@@ -11,7 +11,7 @@
  *
  * Rows use the shared SB row style (window.SBKit, from the SB UI Kit integration).
  */
-const VERSION = "0.11.0";
+const VERSION = "0.12.0";
 const CARD = "sb-modes-card";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -437,6 +437,8 @@ class SbModesCard extends HTMLElement {
     const detail = open ? `<div class="detail">
         <div><b>In ${esc(modeName)}</b> ${esc(what)} <span class="src">(${esc(src)})</span></div>
         <div><b>Areas</b> ${esc((a.areas || []).join(", "))}</div>
+        ${a.follow ? `<div><b>Follows ${esc(this._name(a.follow.leader))}</b> (every mode) ${[...a.follow.bands].sort((x, y) => (y.min_pct || 0) - (x.min_pct || 0))
+            .map((b) => `${b.min_pct ? `≥${b.min_pct}%` : "off / low"} → ${esc(this._targets(b.targets))}`).join(" · ")}</div>` : ""}
         ${(a.occupancy || []).length ? `<div><b>Occupancy</b> ${a.occupancy.map((e) => ent(e, "occ")).join("")}</div>` : ""}
         ${(a.lights || []).length ? `<div><b>Lights</b> ${a.lights.map((e) => ent(e, "light")).join("")}</div>` : ""}
       </div>` : "";
