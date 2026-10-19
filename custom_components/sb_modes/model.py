@@ -17,6 +17,10 @@ The CONFIG is the one definition everything else is derived from:
       ],
     }
 
+A zone may also set `on_enter`: {mode id: targets} — set ONCE when that mode begins (a real
+mode change, scheduled or by hand; not a restart or a table reload), alongside its behaviour.
+E.g. "when Morning begins: the kitchen aux lights on".
+
 A mode exists only because it has a default. A zone without an override for a mode
 inherits that mode's default, so every (mode, zone) pair resolves to exactly one
 behaviour and its parameters.

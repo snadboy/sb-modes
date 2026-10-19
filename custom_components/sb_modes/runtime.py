@@ -379,7 +379,20 @@ class Runtime:
         self.hass.bus.async_fire(EVENT_MODE_CHANGED, {"from": old, "to": mode_id, "source": source})
         if restart:
             self._restart_behaviours()
+        self._apply_on_enter(mode_id)
         return True
+
+    @callback
+    def _apply_on_enter(self, mode_id: str) -> None:
+        """Each zone's `on_enter` targets for the mode that just began — once, on the change
+        itself (never on a restart or reload). Held zones are skipped; hand changes have just
+        ended with the mode change, as they always do."""
+        if not self.ready:
+            return
+        for zone in self.zones():
+            targets = (zone.get("on_enter") or {}).get(mode_id)
+            if targets:
+                self.apply(targets, f"{zone['id']}: {self.mode_name(mode_id)} begins", zone["id"])
 
     @callback
     def _catch_up(self, source: str = "schedule", restart: bool = True) -> bool:

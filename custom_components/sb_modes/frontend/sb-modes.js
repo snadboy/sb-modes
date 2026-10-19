@@ -11,7 +11,7 @@
  *
  * Rows use the shared SB row style (window.SBKit, from the SB UI Kit integration).
  */
-const VERSION = "0.10.3";
+const VERSION = "0.11.0";
 const CARD = "sb-modes-card";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -413,7 +413,8 @@ class SbModesCard extends HTMLElement {
     const a = z.attr;
     const pick = (a.by_mode || {})[viewed] || { behaviour: z.state, params: a.params, source: a.source };
     const beh = pick.behaviour;
-    const what = this._describe(beh, pick.params);
+    const enter = (a.on_enter || {})[viewed];
+    const what = this._describe(beh, pick.params) + (enter ? ` · when ${modeName} begins: ${this._targets(enter)}` : "");
     const held = !previewing && String(a.status || "").startsWith("held");
     // live: "Vacant since 12:12 PM · lights off" — occupancy first, then what the behaviour is doing
     const occ = a.occupancy_state === "occupied" ? `Occupied since ${hhmm(a.occupancy_since)}`

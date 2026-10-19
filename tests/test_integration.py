@@ -782,3 +782,38 @@ async def test_zone_occupancy_and_since(hass, kitchen, lights, freezer) -> None:
     hass.states.async_set(OCC, "unavailable")
     await hass.async_block_till_done()
     assert _zone(hass)["occupancy_state"] == "unknown"
+
+
+# ── on_enter: targets set once when a mode begins ───────────────────────────
+
+async def test_on_enter_once_per_mode_change(hass, kitchen, lights) -> None:
+    await _setup(hass)
+    t = _table()
+    t["zones"][0]["on_enter"] = {"evening": {SINK: {"brightness_pct": 70}, CEILING: {"state": "on"}}}
+    await _save(hass, t)
+    await _mode(hass, "evening")
+    assert sorted((c.data["entity_id"], c.data.get("brightness_pct")) for c in lights["on"]) == [(CEILING, None), (SINK, 70)]
+    await _save(hass, t)                                                  # a reload is not a mode change
+    assert len(lights["on"]) == 2
+    await _mode(hass, "day")
+    hass.states.async_set(CEILING, "off", context=Context(user_id="someone"))   # off by hand… then the mode changes
+    await hass.async_block_till_done()
+    assert len(lights["on"]) == 2
+
+
+async def test_on_enter_skips_held_zones(hass, kitchen, lights) -> None:
+    await _setup(hass)
+    t = _table()
+    t["zones"][0]["on_enter"] = {"evening": {SINK: {"brightness_pct": 70}}}
+    await _save(hass, t)
+    await hass.services.async_call(DOMAIN, "hold_zone", {"zone": "kitchen", "hold": "paused"}, blocking=True)
+    await _mode(hass, "evening")
+    assert lights["on"] == []
+
+
+async def test_on_enter_validation(hass, kitchen) -> None:
+    await _setup(hass)
+    t = _table()
+    t["zones"][0]["on_enter"] = {"brunch": {SINK: {"state": "on"}}}
+    with pytest.raises(ServiceValidationError, match="on_enter names mode “brunch”"):
+        await _save(hass, t)

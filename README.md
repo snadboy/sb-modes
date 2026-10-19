@@ -60,6 +60,11 @@ The mode-changed event carries `source`: manual, schedule, resume, hold_ended or
   hand changes; the zone's behaviour starts again for the current mode.
 - Both are saved (`.storage/sb_modes.state`) and survive restarts and table reloads.
 
+## When a mode begins (0.11.0)
+
+A zone's `on_enter: {mode: targets}` is set once when that mode begins — a real mode change,
+scheduled or by hand; never a restart or a table reload. Held zones are skipped.
+
 ## Reporting (0.9.0)
 
 | Entity | State | Attributes |

@@ -104,6 +104,17 @@ def check_config(
                 errors.append(f"{where}: overrides mode “{mode_id}”, which is not defined.")
                 continue
             _check_choice(choice, f"{where}, {names.get(mode_id, mode_id)}", state_of, errors, warnings, ids)
+        enter = zone.get("on_enter")
+        if enter is not None:
+            if not isinstance(enter, dict):
+                errors.append(f"{where}: on_enter must map a mode id to targets.")
+            else:
+                for mode_id, targets in enter.items():
+                    if mode_id not in ids:
+                        errors.append(f"{where}: on_enter names mode “{mode_id}”, which is not defined.")
+                        continue
+                    _check_param(targets, {"type": "targets"}, f"{where}, when {names.get(mode_id, mode_id)} begins",
+                                 state_of, errors, warnings)
         own = zone.get("lights")
         if own is not None:
             if not isinstance(own, list) or not own:

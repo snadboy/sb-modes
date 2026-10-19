@@ -108,5 +108,6 @@ class ZoneSensor(ModesEntity, SensorEntity):
             "hold": st.get("hold"),
             "overrides": st.get("overrides") or {},
             "by_mode": self._rt.zone_by_mode(self._zone_id),
+            "on_enter": zone.get("on_enter") or {},
             **{k: v for k, v in (st.get("entities") or {}).items()},
         }
