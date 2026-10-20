@@ -109,6 +109,15 @@ Scheduler) are unaffected.
 - Rules now: workday 06:00 morning · not-workday 08:00 morning · daily 09:00 day ·
   daily sunset−01:00 evening · eve-of-workday 23:00 overnight · not-workday 00:30 overnight.
 
+## Kitchen & dining aux always on (2026-10-20)
+
+User: outside Overnight the kitchen and dining aux lights are always on. Table changes (no code):
+kitchen `vacant` = ceiling off + recessed/sink 10 % + cabinet on (explicit, so it also lights
+them when the ceiling was already off), `vacant_bright` removed (= vacant); dining `occupied`
++= sideboard on, `vacant` = chandelier off + sideboard on, `vacant_bright` removed;
+`on_enter` day/evening: kitchen cabinet on + recessed/sink ≥10 %, dining sideboard on (Morning
+already had them). Overnight unchanged (nightlight then dark, aux off). Applied at once 16:5x.
+
 ## Living Room sensors redone (0.18.0, 2026-10-20)
 
 User replaced the Living Room FP300 with two GL LWR02s (Matter/Thread sleepy end devices):
