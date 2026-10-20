@@ -498,7 +498,8 @@ class Runtime:
             kind = Overlaid
         else:
             kind = KINDS.get(picked.get("behaviour") or "", HandsOff)
-        entities = zone_entities(self.hass, zone.get("areas") or [], zone.get("lights"))
+        entities = zone_entities(self.hass, zone.get("areas") or [], zone.get("lights"),
+                                 zone.get("occupancy"), zone.get("illuminance"))
         if (spec := zone.get("overlay")) and spec.get("presence", True) and spec.get("entity"):
             entities["occupancy"] = [*entities["occupancy"], spec["entity"]]   # the TV on = someone watching
         b = kind(self, zone, picked.get("params") or {}, entities)

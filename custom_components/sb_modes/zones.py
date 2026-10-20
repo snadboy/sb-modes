@@ -21,8 +21,10 @@ from homeassistant.helpers import entity_registry as er
 OCCUPANCY_CLASSES = ("occupancy", "presence")
 
 
-def zone_entities(hass: HomeAssistant, areas: list[str], lights: list[str] | None = None) -> dict[str, list[str]]:
-    """The zone's entities; `lights` (the zone's own list) replaces the areas' lights."""
+def zone_entities(hass: HomeAssistant, areas: list[str], lights: list[str] | None = None,
+                  occupancy: list[str] | None = None, illuminance: list[str] | None = None) -> dict[str, list[str]]:
+    """The zone's entities; the zone's own `lights` / `occupancy` / `illuminance` list replaces
+    what the areas hold (a sensor being replaced, or one that doesn't belong)."""
     ent_reg = er.async_get(hass)
     dev_reg = dr.async_get(hass)
     wanted = set(areas or [])
@@ -42,6 +44,7 @@ def zone_entities(hass: HomeAssistant, areas: list[str], lights: list[str] | Non
             out["occupancy"].append(entry.entity_id)
         elif entry.domain == "sensor" and dclass == "illuminance":
             out["illuminance"].append(entry.entity_id)
-    if lights:
-        out["lights"] = list(lights)
+    for key, own in (("lights", lights), ("occupancy", occupancy), ("illuminance", illuminance)):
+        if own:
+            out[key] = list(own)
     return {k: sorted(v) for k, v in out.items()}

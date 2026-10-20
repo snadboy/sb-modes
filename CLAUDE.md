@@ -109,6 +109,21 @@ Scheduler) are unaffected.
 - Rules now: workday 06:00 morning · not-workday 08:00 morning · daily 09:00 day ·
   daily sunset−01:00 evening · eve-of-workday 23:00 overnight · not-workday 00:30 overnight.
 
+## Living Room sensors redone (0.18.0, 2026-10-20)
+
+User replaced the Living Room FP300 with two GL LWR02s (Matter/Thread sleepy end devices):
+"Living Room Clock LWR02" (binary_sensor.lwr02_occupancy_2 — entity id not yet renamed) and
+"Living Room Shelves LWR02" (binary_sensor.main_floor_living_room_living_room_shelves_lwr02_*).
+New zone keys `occupancy` / `illuminance` (own lists, like `lights`). living_room: occupancy =
+both LWR02s; illuminance = Shelves LWR02 only (user's choice); target_lux 50 → **125**
+provisional (Shelves read ~2.5× the FP300 around noon: 208 vs 73–87) — tune from dusk data.
+All FP300 uses removed: SB Modes table; Monitor dashboard Environment view (temp/humidity →
+Shelves LWR02; before-copy in that session's scratchpad); the disabled SB Background "Living
+Room Nightlight" instance (occupancy → both LWR02s, still disabled). Clock LWR02 dropped off
+Thread 11:26–~11:55 right after pairing (address expired), came back by itself.
+If the Clock's entity id gets renamed, update the living_room `occupancy` list (validation
+will flag it as missing).
+
 ## Presence fixes (0.17.0, 2026-10-20)
 
 From the overnight review (2026-10-19/20): the Family Room TV-area FP300

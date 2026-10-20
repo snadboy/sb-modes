@@ -192,10 +192,22 @@ def check_config(
             else:
                 for eid in own:
                     _check_entity(eid, ["light", "switch"], f"{where}, lights", state_of, errors, warnings)
+        own_sensors = {}
+        for key, domain in (("occupancy", "binary_sensor"), ("illuminance", "sensor")):
+            lst = zone.get(key)
+            if lst is None:
+                continue
+            if not isinstance(lst, list) or not lst:
+                errors.append(f"{where}: {key} must be a list of {domain} entity ids (or left out to use the areas' sensors).")
+                continue
+            for eid in lst:
+                _check_entity(eid, [domain], f"{where}, {key}", state_of, errors, warnings, driven=False)
+            own_sensors[key] = list(lst)
         if areas_ok and zone_entities is not None and isinstance(zone.get("id"), str):
             found = dict(zone_entities(areas))
             if own:
                 found["lights"] = list(own)
+            found.update(own_sensors)
             _check_needs(config, zone, ids, names, found, where, errors)
             for light in found.get("lights", []):
                 other = claimed.get(light)
@@ -365,7 +377,8 @@ def _check_param(value: Any, spec: dict, where: str, state_of, errors: list[str]
                 errors.append(f"{where}, {eid}: min_brightness_pct goes alone (it means: on, at least that bright).")
 
 
-def _check_entity(eid: Any, domains: list[str] | None, where: str, state_of, errors: list[str], warnings: list[str]) -> None:
+def _check_entity(eid: Any, domains: list[str] | None, where: str, state_of, errors: list[str], warnings: list[str],
+                  driven: bool = True) -> None:
     if not isinstance(eid, str) or "." not in eid:
         errors.append(f"{where}: {eid!r} is not an entity id.")
         return
@@ -373,7 +386,7 @@ def _check_entity(eid: Any, domains: list[str] | None, where: str, state_of, err
     if domains and domain not in domains:
         errors.append(f"{where}: {eid} is not a {' / '.join(domains)} entity.")
         return
-    if domain not in DRIVER_DOMAINS:
+    if driven and domain not in DRIVER_DOMAINS:
         errors.append(f"{where}: no driver controls {domain} entities ({eid}).")
         return
     st = state_of(eid)

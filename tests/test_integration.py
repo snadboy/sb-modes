@@ -1300,3 +1300,22 @@ async def test_off_by_hand_survives_a_sensor_dropout(hass, kitchen, lights, free
     lights["on"].clear()
     await hass.async_block_till_done()
     assert SINK not in [c.data["entity_id"] for c in lights["on"]]
+
+
+async def test_zone_own_occupancy_and_illuminance_lists(hass, kitchen, lights, freezer) -> None:
+    """A zone's own occupancy list replaces the area's sensors (a sensor being retired)."""
+    hass.states.async_set("binary_sensor.new_occ", "off", {"device_class": "occupancy"})
+    await _setup(hass)
+    t = _with("vacancy_off", {"lights": [SINK], "off_after_seconds": 60})
+    t["zones"][0]["occupancy"] = ["binary_sensor.new_occ"]
+    t["zones"][0]["illuminance"] = [LUX]
+    await _save(hass, t)
+    assert _zone(hass)["occupancy"] == ["binary_sensor.new_occ"]
+    hass.states.async_set(SINK, "on", {"brightness": 200})
+    hass.states.async_set(OCC, "on")                       # the old sensor no longer counts
+    await _tick(hass, freezer, seconds=90)
+    assert SINK in [c.data["entity_id"] for c in lights["off"]]
+    bad = _table()
+    bad["zones"][0]["occupancy"] = ["light.sink"]
+    with pytest.raises(ServiceValidationError, match="not a binary_sensor"):
+        await _save(hass, bad)

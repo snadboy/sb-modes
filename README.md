@@ -83,7 +83,8 @@ Targets may carry `transition` (seconds, lights).
 A zone is occupied when any of its occupancy sensors is on, or its overlay's media player is
 being watched (playing / paused / idle; `overlay.presence: false` turns that off); vacant when
 every sensor is off and nothing is being watched. Group entities in the zone's areas are left
-out (their members are already there). A light turned **off** by hand stays off through the
+out (their members are already there). A zone's own `occupancy: [...]` / `illuminance: [...]`
+lists replace the areas' sensors (like `lights`). A light turned **off** by hand stays off through the
 vacancy and ends when someone comes back after the zone has been empty its delay (or the mode
 changes); other hand changes end after the vacancy delay as before.
 
