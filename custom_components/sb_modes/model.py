@@ -84,7 +84,7 @@ NEEDS: dict[str, tuple[str, ...]] = {
 # Domains a driver can control. An entity outside these is an error, not skipped.
 DRIVER_DOMAINS = ("light", "switch", "number")
 
-TARGET_KEYS = {"state", "brightness_pct", "color_temp_kelvin", "hs_color", "effect", "value", "transition"}
+TARGET_KEYS = {"state", "brightness_pct", "min_brightness_pct", "color_temp_kelvin", "hs_color", "effect", "value", "transition"}
 
 ALL_MODES = "*"     # a zone override that applies in every mode the zone does not set itself
 

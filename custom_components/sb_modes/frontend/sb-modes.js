@@ -11,7 +11,7 @@
  *
  * Rows use the shared SB row style (window.SBKit, from the SB UI Kit integration).
  */
-const VERSION = "0.15.1";
+const VERSION = "0.16.0";
 const CARD = "sb-modes-card";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -388,7 +388,7 @@ class SbModesCard extends HTMLElement {
 
   _targets(targets) {
     return Object.entries(targets || {}).map(([e, t]) => `${this._name(e)} ${
-      t.value != null ? t.value : t.state === "off" ? "off" : t.brightness_pct != null ? `${t.brightness_pct}%` : "on"}${t.effect ? ` (${t.effect})` : ""}`).join(", ");
+      t.value != null ? t.value : t.state === "off" ? "off" : t.min_brightness_pct != null ? `≥${t.min_brightness_pct}%` : t.brightness_pct != null ? `${t.brightness_pct}%` : "on"}${t.effect ? ` (${t.effect})` : ""}`).join(", ");
   }
 
   /** What a behaviour does with these parameters, in words. */

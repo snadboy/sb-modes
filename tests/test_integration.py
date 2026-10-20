@@ -1215,3 +1215,20 @@ async def test_reload_after_boot_logs_no_listener_error(hass, kitchen, caplog) -
     assert await hass.config_entries.async_reload(entry.entry_id)
     await hass.async_block_till_done()
     assert "Unable to remove unknown job listener" not in caplog.text
+
+
+async def test_on_enter_at_least(hass, kitchen, lights) -> None:
+    """min_brightness_pct: an off (or dimmer) light comes on at the floor; a brighter one is left alone."""
+    await _setup(hass)
+    t = _table()
+    t["zones"][0]["on_enter"] = {"evening": {SINK: {"min_brightness_pct": 1}, CEILING: {"min_brightness_pct": 1}}}
+    await _save(hass, t)
+    hass.states.async_set(SINK, "off")
+    hass.states.async_set(CEILING, "on", {"brightness": 10})          # 4 %: already above 1 %
+    await hass.async_block_till_done()
+    await _mode(hass, "evening")
+    assert [c.data for c in lights["on"]] == [{"entity_id": SINK, "brightness_pct": 1}]
+    bad = _table()
+    bad["zones"][0]["on_enter"] = {"evening": {SINK: {"min_brightness_pct": 1, "brightness_pct": 5}}}
+    with pytest.raises(ServiceValidationError, match="min_brightness_pct goes alone"):
+        await _save(hass, bad)

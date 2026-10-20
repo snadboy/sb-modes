@@ -1,7 +1,8 @@
 """Drivers: make devices match targets, sending only what differs.
 
 A target is {"state": "on"|"off", "brightness_pct": 0-100, "color_temp_kelvin": K,
-"hs_color": [h, s], "effect": name} for lights and switches — any light setting without a
+"hs_color": [h, s], "effect": name} for lights and switches ({"min_brightness_pct": n} = on and at
+least n %: a brighter light is left alone) — any light setting without a
 state means on — or {"value": n} for a number entity (number.set_value). An entity that is
 unavailable or missing is skipped (validation reports it). Every call carries a
 Context the caller keeps, so later steps can tell SB Modes' own changes from a
@@ -40,6 +41,12 @@ def plan(state: State | None, target: dict) -> tuple[str, dict] | None:
             return None
         tr = target.get("transition")
         return ("turn_off", {"transition": tr} if domain == "light" and tr is not None else {})
+    if domain == "light" and (floor := target.get("min_brightness_pct")) is not None:
+        # "at least": a light already on at or above the floor is left as it is
+        b = state.attributes.get("brightness")
+        if state.state == STATE_ON and (b is None or round(b * 100 / 255) >= floor):
+            return None
+        return ("turn_on", {"brightness_pct": floor})
     data: dict = {}
     if domain == "light":
         if (pct := target.get("brightness_pct")) is not None:

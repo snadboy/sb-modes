@@ -109,6 +109,16 @@ Scheduler) are unaffected.
 - Rules now: workday 06:00 morning · not-workday 08:00 morning · daily 09:00 day ·
   daily sunset−01:00 evening · eve-of-workday 23:00 overnight · not-workday 00:30 overnight.
 
+## Bedside 1 % floor (0.16.0, 2026-10-19)
+
+User: outside Overnight the bedside bulbs should be on at least 1 %. Chosen (of two): a check
+at the START of Day and Evening only — bedside `on_enter` day/evening `{min_brightness_pct: 1}`
+(new target key: on and at least n %, a brighter light is left alone). Not Morning: the wake
+sequence lights them at +30 min and a 1 % at 06:00 would pre-empt it. Not continuous: they are
+switched off at bedtime (~22:10) while still in Evening, and a floor would turn them back on.
+Trade-off accepted: an accidental off mid-mode stays off until the next mode change. Old dead
+"Family Room Light Hold BILRESA" device removed (and its orphaned Battery Notes sub-entry).
+
 ## Evening check 2026-10-19 (0.15.1)
 
 Evening ran as designed: arrivals lit within ~1 s (kitchen 38 lx, dining 6–21, living 9),
@@ -134,8 +144,7 @@ dark that evening. Zone `buttons` in family_room: big press → flash once, hold
 (zone restarts: TV levels if playing/paused, else the TV's current-state levels, then vacancy_off).
 Presses are acted on 2 s later (a newer one replaces it: Matter replay bursts collapse) and
 to/from unavailable is ignored. The flash is made (Lutron has no flash): on lights go off, off
-lights come on (50 %), 0.7 s, back. The dead old "Family Room Light Hold BILRESA" device was NOT
-removed: the permission check refused ha_remove_device, so the user removes it in the UI.
+lights come on (50 %), 0.7 s, back. The dead old "Family Room Light Hold BILRESA" device was removed later (0.16.0 notes).
 
 ## TV overlay (0.14.0, 2026-10-19)
 

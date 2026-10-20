@@ -355,9 +355,12 @@ def _check_param(value: Any, spec: dict, where: str, state_of, errors: list[str]
             hs = target.get("hs_color")
             if hs is not None and not (isinstance(hs, list) and len(hs) == 2 and all(isinstance(x, (int, float)) for x in hs)):
                 errors.append(f"{where}, {eid}: hs_color must be [hue, saturation].")
-            pct = target.get("brightness_pct")
-            if pct is not None and (isinstance(pct, bool) or not isinstance(pct, (int, float)) or not 0 <= pct <= 100):
-                errors.append(f"{where}, {eid}: brightness_pct must be 0–100.")
+            for key in ("brightness_pct", "min_brightness_pct"):
+                pct = target.get(key)
+                if pct is not None and (isinstance(pct, bool) or not isinstance(pct, (int, float)) or not 0 <= pct <= 100):
+                    errors.append(f"{where}, {eid}: {key} must be 0–100.")
+            if "min_brightness_pct" in target and ({"brightness_pct", "state"} & set(target)):
+                errors.append(f"{where}, {eid}: min_brightness_pct goes alone (it means: on, at least that bright).")
 
 
 def _check_entity(eid: Any, domains: list[str] | None, where: str, state_of, errors: list[str], warnings: list[str]) -> None:
