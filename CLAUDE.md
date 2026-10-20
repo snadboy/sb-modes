@@ -124,6 +124,12 @@ Room Nightlight" instance (occupancy → both LWR02s, still disabled). Clock LWR
 Thread 11:26–~11:55 right after pairing (address expired), came back by itself.
 125 lx looked high already at 12:4x: the Shelves read 75 lx and the lamps came on at midday.
 
+**Dining Room Driveway LWR02** (2026-10-20, serial b759b3c1a5463ad2, labels " MTR (setup code in SB Device Notes)"
++ Presence; entities `*.main_floor_dining_room_dining_room_driveway_lwr02_*`). The HA app's
+add failed half-way (left on the phone's fabric, ECM window); shared from the phone. dining_room:
+occupancy = FP300 + Driveway LWR02 (alongside — user didn't pick), illuminance = FP300 only
+(an explicit list, so the LWR02's lux — 673 lx at 16:xx — does not join the mean).
+
 ## Presence fixes (0.17.0, 2026-10-20)
 
 From the overnight review (2026-10-19/20): the Family Room TV-area FP300
