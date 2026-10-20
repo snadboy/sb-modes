@@ -80,6 +80,21 @@ class HandsOff(Behaviour):
     name = "hands_off"
 
 
+class Overlaid(Behaviour):
+    """A zone an overlay holds (the TV playing or paused): the overlay's setting for that state
+    instead of the zone's behaviour. Re-applied whenever the zone restarts under it — after a
+    hold or a hand change ends, or a mode change — so it goes back to the TV levels."""
+    name = "overlay"
+
+    @callback
+    def start(self) -> None:
+        ov = self.rt.overlay_of(self.zone["id"])
+        st = self.hass.states.get(ov.entity) if ov else None
+        self._set_status(f"overlay: {st.name if st else 'overlay'} {ov.state if ov else ''}".strip())
+        if ov is not None:
+            ov.apply_current()
+
+
 class Held(Behaviour):
     """A zone a person holds: nothing is sent; the status says until when."""
     name = "held"

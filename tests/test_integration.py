@@ -989,3 +989,104 @@ async def test_daylight_memory_survives_a_reload(hass, kitchen, lights) -> None:
     assert _rt(hass).daylight["kitchen"][0] == 29.0
     await _save(hass, _with("presence_lux", PL2))                         # reload
     assert _rt(hass).daylight["kitchen"][0] == 29.0
+
+
+# ── overlays: the TV sets the lights while playing / paused ──────────────────
+
+TV = "media_player.tv"
+OVERLAY = {"entity": TV, "debounce_seconds": 5, "unavailable_cooldown_seconds": 60,
+           "states": {"playing": {"targets": {SINK: {"brightness_pct": 5, "transition": 3}}, "holds": True},
+                      "paused": {"targets": {SINK: {"brightness_pct": 20, "transition": 3}}, "holds": True},
+                      "off": {"targets": {SINK: {"brightness_pct": 30, "transition": 3}}}}}
+
+
+async def _tv(hass, freezer, state, wait=6):
+    hass.states.async_set(TV, state)
+    await hass.async_block_till_done()
+    if wait:
+        await _tick(hass, freezer, seconds=wait)
+
+
+async def _overlay_setup(hass, behaviour="vacancy_off", params=None):
+    hass.states.async_set(TV, "off")
+    await _setup(hass)
+    t = _with(behaviour, params if params is not None else {"lights": [SINK], "off_after_seconds": 60})
+    t["zones"][0]["overlay"] = OVERLAY
+    await _save(hass, t)
+
+
+def _sink_calls(lights):
+    return [(s, c.data.get("brightness_pct"), c.data.get("transition")) for s in ("on", "off")
+            for c in lights[s] if c.data["entity_id"] == SINK]
+
+
+async def test_overlay_debounce_holds_and_hands_back(hass, kitchen, lights, freezer) -> None:
+    await _overlay_setup(hass)
+    await _tv(hass, freezer, "playing", wait=3)
+    assert lights["on"] == []                                 # not 5 s yet
+    await _tick(hass, freezer, seconds=3)
+    assert _sink_calls(lights) == [("on", 5, 3)]
+    assert hass.states.get(ZONE).attributes["status"].startswith("overlay:")
+    # the zone's own vacancy_off is stopped while the TV plays: no off after 60 s vacant
+    hass.states.async_set(SINK, "on", {"brightness": 13})
+    await _tick(hass, freezer, seconds=120)
+    assert lights["off"] == []
+    await _tv(hass, freezer, "paused")
+    assert _sink_calls(lights)[-1] == ("on", 20, 3)
+    hass.states.async_set(OCC, "on")                          # someone gets up and turns it off
+    await _tv(hass, freezer, "off")
+    assert _sink_calls(lights)[-1] == ("on", 30, 3)
+    assert lights["off"] == []
+    assert not hass.states.get(ZONE).attributes["status"].startswith("overlay:")   # vacancy_off again
+    hass.states.async_set(OCC, "off")
+    await _tick(hass, freezer, seconds=65)
+    assert _sink_calls(lights)[-1] == ("off", None, None)
+
+
+async def test_overlay_flicker_and_unavailable(hass, kitchen, lights, freezer) -> None:
+    await _overlay_setup(hass)
+    await _tv(hass, freezer, "playing", wait=2)
+    await _tv(hass, freezer, "paused", wait=2)                # neither lasted 5 s
+    hass.states.async_set(TV, "playing")
+    await _tick(hass, freezer, seconds=3)
+    hass.states.async_set(TV, "playing", {"media_position": 3})   # attribute updates don't restart the wait
+    await _tick(hass, freezer, seconds=3)
+    assert _sink_calls(lights) == [("on", 5, 3)]
+    lights["on"].clear()
+    await _tv(hass, freezer, "unavailable", wait=0)
+    await _tv(hass, freezer, "off", wait=10)                  # back from unavailable, inside the cool-down
+    assert lights["on"] == []
+    await _tick(hass, freezer, seconds=60)
+    await _tv(hass, freezer, "paused")                        # after the cool-down: counts again
+    assert _sink_calls(lights) == [("on", 20, 3)]
+
+
+async def test_overlay_yields_to_hold_and_hand_changes(hass, kitchen, lights, freezer) -> None:
+    await _overlay_setup(hass)
+    await _tv(hass, freezer, "playing")
+    lights["on"].clear()
+    # folding laundry: the lamp turned up by hand stays up when the TV pauses
+    hass.states.async_set(SINK, "on", {"brightness": 255}, context=Context(user_id="u"))
+    await hass.async_block_till_done()
+    await _tv(hass, freezer, "paused")
+    assert lights["on"] == []
+    # a hold beats the overlay; releasing it goes back to the TV's setting
+    await hass.services.async_call(DOMAIN, "hold_zone", {"zone": "kitchen", "hold": "paused"}, blocking=True)
+    await hass.async_block_till_done()
+    await _tv(hass, freezer, "playing")
+    assert lights["on"] == []
+    await hass.services.async_call(DOMAIN, "release_zone", {"zone": "kitchen"}, blocking=True)
+    await hass.async_block_till_done()
+    assert _sink_calls(lights) == [("on", 5, 3)]
+
+
+async def test_overlay_validation(hass, kitchen) -> None:
+    hass.states.async_set(TV, "off")
+    await _setup(hass)
+    t = _table()
+    t["zones"][0]["overlay"] = {"entity": "media_player.nope", "states": {"playing": {"targets": {SINK: {"brightness_pct": 5}}}}}
+    with pytest.raises(ServiceValidationError, match="does not exist"):
+        await _save(hass, t)
+    t["zones"][0]["overlay"] = {"entity": TV, "states": {"playing": {"holds": "yes"}}}
+    with pytest.raises(ServiceValidationError, match="holds must be"):
+        await _save(hass, t)

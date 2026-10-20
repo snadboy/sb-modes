@@ -36,7 +36,10 @@ def plan(state: State | None, target: dict) -> tuple[str, dict] | None:
             pass
         return ("set_value", {"value": value})
     if target.get("state") == STATE_OFF:
-        return None if state.state == STATE_OFF else ("turn_off", {})
+        if state.state == STATE_OFF:
+            return None
+        tr = target.get("transition")
+        return ("turn_off", {"transition": tr} if domain == "light" and tr is not None else {})
     data: dict = {}
     if domain == "light":
         if (pct := target.get("brightness_pct")) is not None:
@@ -49,6 +52,8 @@ def plan(state: State | None, target: dict) -> tuple[str, dict] | None:
             data["effect"] = effect
     if state.state == STATE_ON and _matches(state, data):
         return None
+    if domain == "light" and (tr := target.get("transition")) is not None:
+        data["transition"] = tr
     return ("turn_on", data)
 
 

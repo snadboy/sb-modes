@@ -32,9 +32,10 @@ from homeassistant.helpers.sun import get_astral_event_date
 from homeassistant.util import dt as dt_util
 
 from . import driver
-from .behaviours import KINDS, Behaviour, HandsOff, Held
+from .behaviours import KINDS, Behaviour, HandsOff, Held, Overlaid
 from .bookkeeping import Keeper, describe_hold, release_delay
 from .follow import Follower
+from .overlay import Overlay
 from .const import (
     ALERT_GRACE_SECONDS, CHECK_SECONDS, DOMAIN, EVENT_MODE_CHANGED, ISSUE_ID, STARTUP_SETTLE_SECONDS, STORE_KEY,
     STORE_VERSION,
@@ -89,6 +90,7 @@ class Runtime:
         self.own_contexts: deque[str] = deque(maxlen=500)  # ids of the contexts of our own calls
         self._ctx_targets: dict[str, frozenset[str]] = {}  # our context id → the entities it set
         self._followers: dict[str, Follower] = {}
+        self._overlays: dict[str, Overlay] = {}
         self.daylight: dict[str, tuple] = {}              # zone → (last reading with its lights off, when)
         self._behaviours: dict[str, Behaviour] = {}
         self.keeper = Keeper(self)
@@ -212,9 +214,10 @@ class Runtime:
                 setattr(self, name, None)
         self._cancel_grace()
         self._stop_behaviours()
-        for f in self._followers.values():
+        for f in [*self._followers.values(), *self._overlays.values()]:
             f.stop()
         self._followers.clear()
+        self._overlays.clear()
         self.keeper.stop()
 
     # ── the table ────────────────────────────────────────────────────────────
@@ -315,6 +318,8 @@ class Runtime:
         picked["status"] = b.status if b else "waiting for start-up"
         picked["entities"] = b.entities if b else {}
         picked["occupancy"], picked["occupancy_since"] = self._occupancy(b.entities.get("occupancy", []) if b else [])
+        ov = self._overlays.get(zone_id)
+        picked["overlay"] = {"entity": ov.entity, "state": ov.state, "holding": ov.holding} if ov else None
         picked["hold"] = self.keeper.held(zone_id)
         picked["overrides"] = self.keeper.overridden(zone_id)
         return picked
@@ -456,18 +461,24 @@ class Runtime:
     @callback
     def _restart_behaviours(self) -> None:
         self._stop_behaviours()
+        if self.ready and not self._followers and not self._overlays:
+            self._restart_followers()
         if self.ready and self.mode:
             for zone in self.zones():
                 self._start_zone(zone)
-        if self.ready and not self._followers:
-            self._restart_followers()
         self._rewatch()
         self.notify()
 
     @callback
     def _start_zone(self, zone: dict) -> None:
         picked = resolve(self.config, self.mode, zone["id"]) or {}
-        kind = Held if self.keeper.held(zone["id"]) else KINDS.get(picked.get("behaviour") or "", HandsOff)
+        ov = self._overlays.get(zone["id"])
+        if self.keeper.held(zone["id"]):
+            kind = Held
+        elif ov is not None and ov.holding:
+            kind = Overlaid
+        else:
+            kind = KINDS.get(picked.get("behaviour") or "", HandsOff)
         b = kind(self, zone, picked.get("params") or {}, zone_entities(self.hass, zone.get("areas") or [], zone.get("lights")))
         self._behaviours[zone["id"]] = b
         b.start()
@@ -496,7 +507,7 @@ class Runtime:
         watch = {}
         for zid, b in self._behaviours.items():
             if b.name in ("hands_off", "held"):
-                continue
+                continue                                 # (an overlay-held zone IS watched)
             picked = resolve(self.config, self.mode, zid) or {}
             watch[zid] = {"lights": b.entities.get("lights", []), "occupancy": b.entities.get("occupancy", []),
                           "delay": release_delay(picked.get("behaviour"), picked.get("params") or {})}
@@ -506,13 +517,25 @@ class Runtime:
         """The entities one of our own commands set (empty for anyone else's context)."""
         return self._ctx_targets.get(ctx_id or "", frozenset())
 
+    def overlay_of(self, zone_id: str) -> Overlay | None:
+        return self._overlays.get(zone_id)
+
     @callback
     def _restart_followers(self) -> None:
+        """Followers and overlays: zone-level, independent of the mode's behaviour."""
         for f in self._followers.values():
             f.stop()
         self._followers.clear()
+        for o in self._overlays.values():
+            o.stop()
+        self._overlays.clear()
         if not self.ready:
             return
+        for zone in self.zones():
+            if zone.get("overlay"):
+                o = Overlay(self, zone, zone["overlay"])
+                self._overlays[zone["id"]] = o
+                o.start()
         for zone in self.zones():
             if zone.get("follow"):
                 f = Follower(self, zone, zone["follow"])

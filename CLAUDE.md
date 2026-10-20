@@ -109,6 +109,19 @@ Scheduler) are unaffected.
 - Rules now: workday 06:00 morning · not-workday 08:00 morning · daily 09:00 day ·
   daily sunset−01:00 evening · eve-of-workday 23:00 overnight · not-workday 00:30 overnight.
 
+## TV overlay (0.14.0, 2026-10-19)
+
+Family Room `overlay` on media_player.family_room_tv replaces **automation.tv_lighting** (TV
+Lighting blueprint; DISABLED, delete with the others ~25 Oct). Same levels, couch / TV light,
+3 s transition: playing 5/5, paused 20/20 (both HOLD the zone: vacancy_off is stopped), idle and
+off 30/20 (set once, then vacancy_off again: off 5 min after empty). A state must last 5 s
+(attribute-only updates ignored; buffering restarts the wait); for 60 s after the TV was
+unavailable/unknown nothing counts (it drops out to unavailable → unknown → off several times
+an evening). Precedence: zone hold > hand change > overlay > zone behaviour. When a hold or a
+hand change ends while the TV plays, the zone goes back to the TV levels (Overlaid re-applies on
+start). Not done: the "Family Room Light Hold" BILRESA button (still unavailable) as a hold
+trigger.
+
 ## All-day presence + light (0.13.x, 2026-10-19)
 
 User: Day needs the same presence/lux trigger as Evening; no nightlight in daylight. Living room,

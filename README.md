@@ -67,6 +67,17 @@ leader's brightness (off = 0 %, highest band first) whenever the leader changes 
 by SB Modes, in every mode. It stands aside when SB Modes' own command that changed the leader
 also set a follower (e.g. Overnight's dark), and skips held zones and followers changed by hand.
 
+## Overlays: the TV (0.14.0)
+
+A zone's `overlay: {entity, states: {state: {targets, holds}}, debounce_seconds: 5,
+unavailable_cooldown_seconds: 60}` sets the zone's lights from another entity's state, in every
+mode. A state counts once it has lasted `debounce_seconds`; for `unavailable_cooldown_seconds`
+after the entity was unavailable nothing counts, and a state reached straight from unavailable
+sets nothing. A state with `holds: true` (playing, paused) replaces the zone's behaviour until
+the entity leaves it; others are set once and the behaviour carries on. A zone hold and lights
+changed by hand beat the overlay; when they end, the overlay's current setting comes back.
+Targets may carry `transition` (seconds, lights).
+
 ## When a mode begins (0.11.0)
 
 A zone's `on_enter: {mode: targets}` is set once when that mode begins — a real mode change,

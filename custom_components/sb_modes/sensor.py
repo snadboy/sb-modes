@@ -110,5 +110,7 @@ class ZoneSensor(ModesEntity, SensorEntity):
             "by_mode": self._rt.zone_by_mode(self._zone_id),
             "on_enter": zone.get("on_enter") or {},
             "follow": zone.get("follow"),
+            "overlay": st.get("overlay"),
+            "overlay_config": zone.get("overlay"),
             **{k: v for k, v in (st.get("entities") or {}).items()},
         }

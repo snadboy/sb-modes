@@ -118,6 +118,26 @@ def check_config(
                     _check_param(band.get("targets"), {"type": "targets"}, f"{where}, follow band {n}", state_of, errors, warnings)
                     if follow["leader"] in (band.get("targets") or {}):
                         errors.append(f"{where}, follow band {n}: the leader cannot follow itself.")
+        overlay = zone.get("overlay")
+        if overlay is not None:
+            ent, sts = (overlay.get("entity"), overlay.get("states")) if isinstance(overlay, dict) else (None, None)
+            if not isinstance(ent, str) or "." not in ent or not isinstance(sts, dict) or not sts:
+                errors.append(f"{where}: overlay needs an entity and states {{state: {{targets, holds}}}}.")
+            else:
+                if state_of(ent) is None:
+                    errors.append(f"{where}, overlay: {ent} does not exist.")
+                for st_name, cfg in sts.items():
+                    if not isinstance(cfg, dict):
+                        errors.append(f"{where}, overlay {st_name}: must be {{targets, holds}}.")
+                        continue
+                    if "holds" in cfg and not isinstance(cfg["holds"], bool):
+                        errors.append(f"{where}, overlay {st_name}: holds must be true or false.")
+                    if cfg.get("targets") is not None:
+                        _check_param(cfg["targets"], {"type": "targets"}, f"{where}, overlay {st_name}", state_of, errors, warnings)
+                for key in ("debounce_seconds", "unavailable_cooldown_seconds"):
+                    v = overlay.get(key)
+                    if v is not None and (isinstance(v, bool) or not isinstance(v, (int, float)) or not 0 <= v <= 3600):
+                        errors.append(f"{where}, overlay: {key} must be 0–3600.")
         enter = zone.get("on_enter")
         if enter is not None:
             if not isinstance(enter, dict):

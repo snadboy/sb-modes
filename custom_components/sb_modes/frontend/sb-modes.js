@@ -11,7 +11,7 @@
  *
  * Rows use the shared SB row style (window.SBKit, from the SB UI Kit integration).
  */
-const VERSION = "0.13.3";
+const VERSION = "0.14.0";
 const CARD = "sb-modes-card";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -146,6 +146,7 @@ const BEHAVIOUR_NAMES = {
 const look = (behaviour, status) => {
   const s = String(status || "");
   if (s.startsWith("held")) return { icon: "mdi:hand-back-right-outline", tint: "warn" };
+  if (s.startsWith("overlay:")) return { icon: "mdi:television-play", tint: "run" };
   if (behaviour === "hands_off") return { icon: "mdi:hand-back-left-off-outline", tint: "idle" };
   if (s.startsWith("dark")) return { icon: "mdi:weather-night", tint: "idle" };
   if (s === "nightlight") return { icon: "mdi:lightbulb-night-outline", tint: "run" };
@@ -424,7 +425,7 @@ class SbModesCard extends HTMLElement {
       : a.occupancy_state === "vacant" ? `Vacant since ${hhmm(a.occupancy_since)}`
       : a.occupancy_state === "unknown" ? "Occupancy unknown (sensor unavailable)" : "";
     const rest = held ? a.status : beh === "hands_off" ? `not controlled in ${modeName}`
-      : String(a.status || "").replace(/^(vacant|occupied)(;\s*|$)/, "");
+      : String(a.status || "").replace(/^(vacant|occupied)(;\s*|$)/, "").replace(/^overlay:\s*/, "");
     const doing = previewing ? what : [occ, fmtTimes(rest)].filter(Boolean).join(" · ");
     const l = previewing ? { icon: look(beh, "").icon, tint: "idle" } : look(beh, a.status);
     const open = this._open.has(z.id);
@@ -442,6 +443,8 @@ class SbModesCard extends HTMLElement {
         <div><b>Areas</b> ${esc((a.areas || []).join(", "))}</div>
         ${a.follow ? `<div><b>Follows ${esc(this._name(a.follow.leader))}</b> (every mode) ${[...a.follow.bands].sort((x, y) => (y.min_pct || 0) - (x.min_pct || 0))
             .map((b) => `${b.min_pct ? `≥${b.min_pct}%` : "off / low"} → ${esc(this._targets(b.targets))}`).join(" · ")}</div>` : ""}
+        ${a.overlay_config ? `<div><b>${esc(this._name(a.overlay_config.entity))}</b> (every mode, once a state lasts ${esc(a.overlay_config.debounce_seconds ?? 5)} s) ${Object.entries(a.overlay_config.states || {})
+            .map(([st, c]) => `${esc(st)} → ${esc(this._targets(c.targets || {}) || "nothing")}${c.holds ? " (holds the zone)" : ""}`).join(" · ")}</div>` : ""}
         ${(a.occupancy || []).length ? `<div><b>Occupancy</b> ${a.occupancy.map((e) => ent(e, "occ")).join("")}</div>` : ""}
         ${(a.lights || []).length ? `<div><b>Lights</b> ${a.lights.map((e) => ent(e, "light")).join("")}</div>` : ""}
       </div>` : "";
