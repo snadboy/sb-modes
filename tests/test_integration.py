@@ -1201,3 +1201,17 @@ async def test_button_flash_hold_targets_and_release_restores(hass, kitchen, lig
             if c.data["entity_id"] == SINK][-1] == (30, 3)    # the TV off levels back
     # flashes are ours, not hand changes
     assert _rt(hass).keeper.overridden("kitchen") == {}
+
+
+async def test_reload_after_boot_logs_no_listener_error(hass, kitchen, caplog) -> None:
+    """Loaded before HA started, then reloaded: the fired 'started' listener isn't removed twice."""
+    from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
+    from homeassistant.core import CoreState
+    hass.set_state(CoreState.not_running)
+    entry = await _setup(hass)
+    hass.set_state(CoreState.running)
+    hass.bus.async_fire(EVENT_HOMEASSISTANT_STARTED)
+    await hass.async_block_till_done()
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert "Unable to remove unknown job listener" not in caplog.text

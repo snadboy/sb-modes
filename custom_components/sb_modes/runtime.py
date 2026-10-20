@@ -98,6 +98,7 @@ class Runtime:
         self.keeper = Keeper(self)
         self._listeners: list[Callable[[], None]] = []
         self._unsubs: list[CALLBACK_TYPE] = []
+        self._started_unsub: CALLBACK_TYPE | None = None
         self._grace: CALLBACK_TYPE | None = None
         self._issue_raised = False
 
@@ -118,10 +119,13 @@ class Runtime:
         if self.hass.state is CoreState.running:
             self._set_ready()
         else:
-            self._unsubs.append(self.hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, self._started))
+            # kept apart from _unsubs: once fired, a listen_once must not be removed again
+            # (HA logs "Unable to remove unknown job listener" when the entry later unloads)
+            self._started_unsub = self.hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, self._started)
 
     @callback
     def _started(self, _event) -> None:
+        self._started_unsub = None
         self._unsubs.append(async_call_later(
             self.hass, STARTUP_SETTLE_SECONDS, HassJob(self._settled, cancel_on_shutdown=True)))
 
@@ -204,6 +208,9 @@ class Runtime:
 
     @callback
     def stop(self) -> None:
+        if self._started_unsub is not None:
+            self._started_unsub()
+            self._started_unsub = None
         for unsub in self._unsubs:
             try:
                 unsub()

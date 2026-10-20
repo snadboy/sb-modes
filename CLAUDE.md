@@ -109,6 +109,19 @@ Scheduler) are unaffected.
 - Rules now: workday 06:00 morning · not-workday 08:00 morning · daily 09:00 day ·
   daily sunset−01:00 evening · eve-of-workday 23:00 overnight · not-workday 00:30 overnight.
 
+## Evening check 2026-10-19 (0.15.1)
+
+Evening ran as designed: arrivals lit within ~1 s (kitchen 38 lx, dining 6–21, living 9),
+empties on time (kitchen 3, dining 5, living 15 min to the second), people leaving at 18:17
+switched kitchen/dining off by hand (released normally), no follow undid anything, Office
+LWR02 46-s dropout ridden out by the 2-min delay. **Unexplained once:** 19:32:05, the first
+kitchen arrival after a restart (19:31), the aux lights did not follow the ceiling to 100 %
+(no command, no error; every other change that evening followed in ~70 ms; the boot path
+follows fine in tests). Watch for a repeat; turn on debug logging for
+custom_components.sb_modes if it recurs. User confirmed the TV play/pause overlay and the
+hold button work. 0.15.1 fixes "Unable to remove unknown job listener" logged when the entry
+unloads after a restart (the fired listen_once was removed again).
+
 ## Hold button (0.15.0, 2026-10-19)
 
 The old Good Morning BILRESA (Matter, labels button + " MTR (setup code in SB Device Notes)") is now **Family
