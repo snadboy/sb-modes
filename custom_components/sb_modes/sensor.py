@@ -112,5 +112,6 @@ class ZoneSensor(ModesEntity, SensorEntity):
             "follow": zone.get("follow"),
             "overlay": st.get("overlay"),
             "overlay_config": zone.get("overlay"),
+            "buttons": zone.get("buttons"),
             **{k: v for k, v in (st.get("entities") or {}).items()},
         }

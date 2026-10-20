@@ -35,6 +35,7 @@ from . import driver
 from .behaviours import KINDS, Behaviour, HandsOff, Held, Overlaid
 from .bookkeeping import Keeper, describe_hold, release_delay
 from .follow import Follower
+from .buttons import Buttons
 from .overlay import Overlay
 from .const import (
     ALERT_GRACE_SECONDS, CHECK_SECONDS, DOMAIN, EVENT_MODE_CHANGED, ISSUE_ID, STARTUP_SETTLE_SECONDS, STORE_KEY,
@@ -91,6 +92,7 @@ class Runtime:
         self._ctx_targets: dict[str, frozenset[str]] = {}  # our context id → the entities it set
         self._followers: dict[str, Follower] = {}
         self._overlays: dict[str, Overlay] = {}
+        self._buttons: dict[str, Buttons] = {}
         self.daylight: dict[str, tuple] = {}              # zone → (last reading with its lights off, when)
         self._behaviours: dict[str, Behaviour] = {}
         self.keeper = Keeper(self)
@@ -214,10 +216,11 @@ class Runtime:
                 setattr(self, name, None)
         self._cancel_grace()
         self._stop_behaviours()
-        for f in [*self._followers.values(), *self._overlays.values()]:
+        for f in [*self._followers.values(), *self._overlays.values(), *self._buttons.values()]:
             f.stop()
         self._followers.clear()
         self._overlays.clear()
+        self._buttons.clear()
         self.keeper.stop()
 
     # ── the table ────────────────────────────────────────────────────────────
@@ -461,7 +464,7 @@ class Runtime:
     @callback
     def _restart_behaviours(self) -> None:
         self._stop_behaviours()
-        if self.ready and not self._followers and not self._overlays:
+        if self.ready and not (self._followers or self._overlays or self._buttons):
             self._restart_followers()
         if self.ready and self.mode:
             for zone in self.zones():
@@ -526,11 +529,17 @@ class Runtime:
         for f in self._followers.values():
             f.stop()
         self._followers.clear()
-        for o in self._overlays.values():
+        for o in [*self._overlays.values(), *self._buttons.values()]:
             o.stop()
         self._overlays.clear()
+        self._buttons.clear()
         if not self.ready:
             return
+        for zone in self.zones():
+            if zone.get("buttons"):
+                b = Buttons(self, zone, zone["buttons"])
+                self._buttons[zone["id"]] = b
+                b.start()
         for zone in self.zones():
             if zone.get("overlay"):
                 o = Overlay(self, zone, zone["overlay"])
@@ -561,8 +570,13 @@ class Runtime:
                 return
             skip = self.keeper.overridden(zone_id)
             targets = {e: t for e, t in targets.items() if e not in skip}
+        self.send(targets, why)
+
+    @callback
+    def send(self, targets: dict[str, dict], why: str) -> Context | None:
+        """apply() without the held / by-hand filter — for a person's own button press."""
         if not targets:
-            return
+            return None
         self.keeper.commanded(targets)
         ctx = Context()
         self.own_contexts.append(ctx.id)
@@ -572,6 +586,11 @@ class Runtime:
                 self._ctx_targets.pop(old, None)
         _LOGGER.debug("SB Modes: %s → %s", why, targets)
         self.hass.async_create_task(driver.apply(self.hass, targets, ctx), f"sb_modes apply {why}")
+        return ctx
+
+    def zone_lights(self, zone_id: str) -> list[str]:
+        b = self._behaviours.get(zone_id)
+        return list(b.entities.get("lights", [])) if b else []
 
     # ── problems ─────────────────────────────────────────────────────────────
     @callback

@@ -78,6 +78,14 @@ the entity leaves it; others are set once and the behaviour carries on. A zone h
 changed by hand beat the overlay; when they end, the overlay's current setting comes back.
 Targets may carry `transition` (seconds, lights).
 
+## Buttons (0.15.0)
+
+A zone's `buttons: {event entity: {event type: action}}`. An action is
+`{hold: minutes | "next" | "paused", flash: n, targets: {…}}` (hold the zone, flash its lights n
+times as a cue, then set the targets) or `{release: true, flash: n}` (flash, end the hold, the
+lights go back to what the zone and its overlay say). Presses act 2 s later and a newer press
+replaces a pending one; changes to or from unavailable are ignored (Matter replays).
+
 ## When a mode begins (0.11.0)
 
 A zone's `on_enter: {mode: targets}` is set once when that mode begins — a real mode change,

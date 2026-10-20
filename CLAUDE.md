@@ -109,6 +109,21 @@ Scheduler) are unaffected.
 - Rules now: workday 06:00 morning · not-workday 08:00 morning · daily 09:00 day ·
   daily sunset−01:00 evening · eve-of-workday 23:00 overnight · not-workday 00:30 overnight.
 
+## Hold button (0.15.0, 2026-10-19)
+
+The old Good Morning BILRESA (Matter, labels button + " MTR (setup code in SB Device Notes)") is now **Family
+Room Hold BILRESA** (area Family Room; entities `*.family_room_hold_bilresa_*`, Matter battery
+type = `sensor.family_room_hold_bilresa_battery_type_matter`). Its automation
+`good_morning_bilresa` was DELETED at the user's request (copy kept only in that session's
+scratchpad); its small press had turned the bedside lamps off at 19:21, which is why they were
+dark that evening. Zone `buttons` in family_room: big press → flash once, hold 60 min at couch/TV
+30 %; big double press → same, hold until the next mode; small press → flash twice, release
+(zone restarts: TV levels if playing/paused, else the TV's current-state levels, then vacancy_off).
+Presses are acted on 2 s later (a newer one replaces it: Matter replay bursts collapse) and
+to/from unavailable is ignored. The flash is made (Lutron has no flash): on lights go off, off
+lights come on (50 %), 0.7 s, back. The dead old "Family Room Light Hold BILRESA" device was NOT
+removed: the permission check refused ha_remove_device, so the user removes it in the UI.
+
 ## TV overlay (0.14.0, 2026-10-19)
 
 Family Room `overlay` on media_player.family_room_tv replaces **automation.tv_lighting** (TV

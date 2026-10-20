@@ -11,7 +11,7 @@
  *
  * Rows use the shared SB row style (window.SBKit, from the SB UI Kit integration).
  */
-const VERSION = "0.14.0";
+const VERSION = "0.15.0";
 const CARD = "sb-modes-card";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -143,6 +143,8 @@ const BEHAVIOUR_NAMES = {
 };
 
 /** A zone's live status → the row's icon, its tint and the words. */
+const PRESS = { multi_press_1: "press", multi_press_2: "double press", multi_press_3: "triple press", long_press: "hold", long_release: "hold (on release)" };
+
 const look = (behaviour, status) => {
   const s = String(status || "");
   if (s.startsWith("held")) return { icon: "mdi:hand-back-right-outline", tint: "warn" };
@@ -377,6 +379,13 @@ class SbModesCard extends HTMLElement {
 
   _name(e) { return this._hass.states[e]?.attributes.friendly_name || e; }
 
+  _buttonAct(act) {
+    const flash = act.flash ? `flash${act.flash > 1 ? ` ×${act.flash}` : ""}, ` : "";
+    if (act === "release" || act.release) return `${flash}release`;
+    const hold = act.hold === "paused" ? "hold until released" : act.hold === "next" ? "hold until the next mode" : `hold ${act.hold} min`;
+    return `${flash}${hold}${act.targets ? ` at ${this._targets(act.targets)}` : ""}`;
+  }
+
   _targets(targets) {
     return Object.entries(targets || {}).map(([e, t]) => `${this._name(e)} ${
       t.value != null ? t.value : t.state === "off" ? "off" : t.brightness_pct != null ? `${t.brightness_pct}%` : "on"}${t.effect ? ` (${t.effect})` : ""}`).join(", ");
@@ -445,6 +454,8 @@ class SbModesCard extends HTMLElement {
             .map((b) => `${b.min_pct ? `≥${b.min_pct}%` : "off / low"} → ${esc(this._targets(b.targets))}`).join(" · ")}</div>` : ""}
         ${a.overlay_config ? `<div><b>${esc(this._name(a.overlay_config.entity))}</b> (every mode, once a state lasts ${esc(a.overlay_config.debounce_seconds ?? 5)} s) ${Object.entries(a.overlay_config.states || {})
             .map(([st, c]) => `${esc(st)} → ${esc(this._targets(c.targets || {}) || "nothing")}${c.holds ? " (holds the zone)" : ""}`).join(" · ")}</div>` : ""}
+        ${a.buttons ? `<div><b>Buttons</b> ${Object.entries(a.buttons).map(([ent, acts]) => `${esc(this._name(ent))}: ${Object.entries(acts)
+            .map(([t, act]) => `${esc(PRESS[t] || t)} → ${esc(this._buttonAct(act))}`).join(", ")}`).join(" · ")}</div>` : ""}
         ${(a.occupancy || []).length ? `<div><b>Occupancy</b> ${a.occupancy.map((e) => ent(e, "occ")).join("")}</div>` : ""}
         ${(a.lights || []).length ? `<div><b>Lights</b> ${a.lights.map((e) => ent(e, "light")).join("")}</div>` : ""}
       </div>` : "";

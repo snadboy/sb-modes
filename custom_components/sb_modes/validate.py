@@ -138,6 +138,39 @@ def check_config(
                     v = overlay.get(key)
                     if v is not None and (isinstance(v, bool) or not isinstance(v, (int, float)) or not 0 <= v <= 3600):
                         errors.append(f"{where}, overlay: {key} must be 0–3600.")
+        buttons = zone.get("buttons")
+        if buttons is not None:
+            if not isinstance(buttons, dict) or not buttons:
+                errors.append(f"{where}: buttons must be {{event entity: {{event type: action}}}}.")
+            else:
+                for ent, acts in buttons.items():
+                    if not isinstance(ent, str) or not ent.startswith("event."):
+                        errors.append(f"{where}, buttons: {ent} is not an event entity.")
+                        continue
+                    if state_of(ent) is None:
+                        errors.append(f"{where}, buttons: {ent} does not exist.")
+                    if not isinstance(acts, dict) or not acts:
+                        errors.append(f"{where}, buttons {ent}: must be {{event type: action}}.")
+                        continue
+                    for etype, act in acts.items():
+                        at = f"{where}, buttons {ent} {etype}"
+                        if act == "release":
+                            continue
+                        hold = act.get("hold") if isinstance(act, dict) else None
+                        ok = isinstance(act, dict) and (
+                            (act.get("release") is True and "hold" not in act) or hold in ("next", "paused") or (
+                                isinstance(hold, int) and not isinstance(hold, bool) and 1 <= hold <= 1440))
+                        if not ok:
+                            errors.append(f"{at}: action must be {{release: true}} or {{hold: minutes | next | paused}}.")
+                            continue
+                        flash = act.get("flash")
+                        if flash is not None and (isinstance(flash, bool) or not isinstance(flash, int) or not 0 <= flash <= 5):
+                            errors.append(f"{at}: flash must be 0–5.")
+                        if act.get("targets") is not None:
+                            if "hold" not in act:
+                                errors.append(f"{at}: targets go with a hold.")
+                            else:
+                                _check_param(act["targets"], {"type": "targets"}, at, state_of, errors, warnings)
         enter = zone.get("on_enter")
         if enter is not None:
             if not isinstance(enter, dict):

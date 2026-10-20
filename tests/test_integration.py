@@ -1090,3 +1090,114 @@ async def test_overlay_validation(hass, kitchen) -> None:
     t["zones"][0]["overlay"] = {"entity": TV, "states": {"playing": {"holds": "yes"}}}
     with pytest.raises(ServiceValidationError, match="holds must be"):
         await _save(hass, t)
+
+
+# ── buttons: a press holds or releases the zone ─────────────────────────────
+
+BIG, SMALL = "event.hold_button_1", "event.hold_button_2"
+BUTTONS = {BIG: {"multi_press_1": {"hold": 60}, "multi_press_2": {"hold": "paused"}},
+           SMALL: {"multi_press_1": "release"}}
+
+
+_presses = iter(range(10**6))
+
+
+async def _press(hass, freezer, ent, etype, wait=3):
+    # an event entity's state is the press time; frozen time needs a unique one per press
+    hass.states.async_set(ent, f"2026-10-19T20:00:00.{next(_presses):06d}+00:00", {"event_type": etype})
+    await hass.async_block_till_done()
+    if wait:
+        await _tick(hass, freezer, seconds=wait)
+
+
+async def _buttons_setup(hass, overlay=False):
+    for e in (BIG, SMALL):
+        hass.states.async_set(e, "2026-10-01T00:00:00+00:00", {"event_type": "multi_press_1"})
+    hass.states.async_set(TV, "off")
+    await _setup(hass)
+    t = _with("vacancy_off", {"lights": [SINK], "off_after_seconds": 60})
+    t["zones"][0]["buttons"] = BUTTONS
+    if overlay:
+        t["zones"][0]["overlay"] = OVERLAY
+    await _save(hass, t)
+
+
+async def test_buttons_hold_and_release(hass, kitchen, lights, freezer) -> None:
+    await _buttons_setup(hass)
+    await _press(hass, freezer, BIG, "multi_press_1", wait=1)
+    assert _rt(hass).keeper.held("kitchen") is None          # waits out the settle
+    await _tick(hass, freezer, seconds=2)
+    assert _rt(hass).keeper.held("kitchen")["hold"] == "timed"
+    await _press(hass, freezer, BIG, "multi_press_2")
+    assert _rt(hass).keeper.held("kitchen")["hold"] == "paused"
+    await _press(hass, freezer, BIG, "long_release")          # not mapped: nothing
+    assert _rt(hass).keeper.held("kitchen")["hold"] == "paused"
+    await _press(hass, freezer, SMALL, "multi_press_1")
+    assert _rt(hass).keeper.held("kitchen") is None
+
+
+async def test_buttons_ignore_restores_and_collapse_bursts(hass, kitchen, lights, freezer) -> None:
+    await _buttons_setup(hass)
+    hass.states.async_set(BIG, "unavailable")
+    await hass.async_block_till_done()
+    await _press(hass, freezer, BIG, "multi_press_1")          # from unavailable: a restore, not a press
+    assert _rt(hass).keeper.held("kitchen") is None
+    # a replay burst: hold, hold, release within the settle → only the release counts
+    await _press(hass, freezer, BIG, "multi_press_1", wait=0)
+    await _press(hass, freezer, BIG, "multi_press_2", wait=0)
+    await _press(hass, freezer, SMALL, "multi_press_1", wait=3)
+    assert _rt(hass).keeper.held("kitchen") is None
+
+
+async def test_button_hold_beats_the_tv_and_release_returns_to_it(hass, kitchen, lights, freezer) -> None:
+    await _buttons_setup(hass, overlay=True)
+    await _press(hass, freezer, BIG, "multi_press_1")
+    await _tv(hass, freezer, "playing")
+    assert _sink_calls(lights) == []                          # held: the TV doesn't dim it
+    await _press(hass, freezer, SMALL, "multi_press_1")
+    assert _sink_calls(lights) == [("on", 5, 3)]
+
+
+async def test_buttons_validation(hass, kitchen) -> None:
+    hass.states.async_set(BIG, "x")
+    await _setup(hass)
+    t = _table()
+    t["zones"][0]["buttons"] = {"sensor.x": {"multi_press_1": "release"}}
+    with pytest.raises(ServiceValidationError, match="not an event entity"):
+        await _save(hass, t)
+    t["zones"][0]["buttons"] = {BIG: {"multi_press_1": {"hold": "forever"}}}
+    with pytest.raises(ServiceValidationError, match="action must be"):
+        await _save(hass, t)
+
+
+async def test_button_flash_hold_targets_and_release_restores(hass, kitchen, lights, freezer, monkeypatch) -> None:
+    from custom_components.sb_modes import buttons as btn
+    monkeypatch.setattr(btn, "FLASH_SECONDS", 0)
+    for e in (BIG, SMALL):
+        hass.states.async_set(e, "2026-10-01T00:00:00+00:00", {"event_type": "multi_press_1"})
+    hass.states.async_set(TV, "off")
+    hass.states.async_set(SINK, "on", {"brightness": 200})
+    await _setup(hass)
+    t = _with("vacancy_off", {"lights": [SINK], "off_after_seconds": 60})
+    t["zones"][0]["overlay"] = OVERLAY
+    t["zones"][0]["buttons"] = {BIG: {"multi_press_1": {"hold": 60, "flash": 1, "targets": {SINK: {"brightness_pct": 30}, CEILING: {"brightness_pct": 30}}}},
+                                SMALL: {"multi_press_1": {"release": True, "flash": 2}}}
+    await _save(hass, t)
+    hass.states.async_set(OCC, "on")
+    await hass.async_block_till_done()
+    lights["on"].clear(); lights["off"].clear()
+    await _press(hass, freezer, BIG, "multi_press_1")
+    seq = lambda: [(c.service, c.data["entity_id"]) for c in sorted(lights["on"] + lights["off"], key=lambda c: c.context.id)]
+    # one flash: the lit sink goes off and the dark ceiling comes on, then both back; then 30 %
+    assert [(c.data["entity_id"], c.data.get("brightness")) for c in lights["off"]] == [(SINK, None), (CEILING, None)]
+    assert [(c.data["entity_id"], c.data.get("brightness"), c.data.get("brightness_pct")) for c in lights["on"]] == [
+        (CEILING, 128, None), (SINK, 200, None), (SINK, None, 30), (CEILING, None, 30)]
+    assert _rt(hass).keeper.held("kitchen")["hold"] == "timed"
+    lights["on"].clear(); lights["off"].clear()
+    await _press(hass, freezer, SMALL, "multi_press_1")
+    assert len(lights["off"]) == 4                            # two flashes × two lights
+    assert _rt(hass).keeper.held("kitchen") is None
+    assert [(c.data.get("brightness_pct"), c.data.get("transition")) for c in lights["on"]
+            if c.data["entity_id"] == SINK][-1] == (30, 3)    # the TV off levels back
+    # flashes are ours, not hand changes
+    assert _rt(hass).keeper.overridden("kitchen") == {}
