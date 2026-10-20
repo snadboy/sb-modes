@@ -134,6 +134,8 @@ def check_config(
                         errors.append(f"{where}, overlay {st_name}: holds must be true or false.")
                     if cfg.get("targets") is not None:
                         _check_param(cfg["targets"], {"type": "targets"}, f"{where}, overlay {st_name}", state_of, errors, warnings)
+                if "presence" in overlay and not isinstance(overlay["presence"], bool):
+                    errors.append(f"{where}, overlay: presence must be true or false.")
                 for key in ("debounce_seconds", "unavailable_cooldown_seconds"):
                     v = overlay.get(key)
                     if v is not None and (isinstance(v, bool) or not isinstance(v, (int, float)) or not 0 <= v <= 3600):

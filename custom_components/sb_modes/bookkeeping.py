@@ -3,6 +3,9 @@
 OVERRIDES — a zone light changed by hand (see manual.py for what counts) is left alone by
 every behaviour until whichever comes first:
   - the zone has been vacant for its delay (the behaviour's `delay` / `off_delay`, else 10 min);
+    but a light turned OFF by hand stays off through the vacancy, until someone comes back
+    after the zone has been empty that long (an arrival, not the empty room, ends it: the
+    bedtime "off" must not be undone by the room's empty setting);
   - the mode changes;
   - someone releases the zone.
 
@@ -49,6 +52,7 @@ class Keeper:
         self._unsubs: list[CALLBACK_TYPE] = []
         self._expiry: dict[str, CALLBACK_TYPE] = {}      # zone → hold expiry timer
         self._vacant: dict[str, CALLBACK_TYPE] = {}      # zone → override release timer
+        self._empty_from: dict[str, Any] = {}            # zone → when it last emptied (for arrivals)
 
     # ── storage ──────────────────────────────────────────────────────────────
     async def async_load(self) -> None:
@@ -129,6 +133,8 @@ class Keeper:
         occ = sorted({s for info in zones.values() for s in info["occupancy"]})
         if occ:
             self._unsubs.append(async_track_state_change_event(self.hass, occ, self._occupancy_changed))
+        self._empty_from = {z: since for z, info in zones.items()
+                            if (since := self.rt.vacant_since(info["occupancy"])) is not None}
         for zone in list(self.overrides):
             self._arm_release(zone)
 
@@ -152,7 +158,8 @@ class Keeper:
                       None if last is None else time.monotonic() - last)
         if by is None:
             return
-        self.overrides.setdefault(zone, {})[light] = {"since": dt_util.utcnow().isoformat(), "by": by, "mode": self.rt.mode}
+        self.overrides.setdefault(zone, {})[light] = {"since": dt_util.utcnow().isoformat(), "by": by, "mode": self.rt.mode,
+                                                      "off": new.state == STATE_OFF}
         _LOGGER.debug("SB Modes: %s changed by hand (%s) in %s", light, by, zone)
         self._save()
         self._arm_release(zone)
@@ -161,30 +168,60 @@ class Keeper:
     # ── releasing overrides when the zone has been vacant for its delay ──────
     @callback
     def _occupancy_changed(self, _event) -> None:
+        for zone, info in self._watch.items():
+            if not info["occupancy"]:
+                continue
+            if self.rt.occupied(info["occupancy"]):
+                self._arrived(zone, info)
+            elif (since := self.rt.vacant_since(info["occupancy"])) is not None:
+                self._empty_from.setdefault(zone, since)
         for zone in list(self.overrides):
             self._arm_release(zone)
+
+    @callback
+    def _arrived(self, zone: str, info: dict) -> None:
+        """Someone came in: lights turned off by hand end if the zone had been empty its delay
+        since they were turned off (a sensor's brief drop-out with people there doesn't count)."""
+        emptied = self._empty_from.pop(zone, None)
+        offs = {e: o for e, o in self.overrides.get(zone, {}).items() if o.get("off")}
+        if emptied is None or not offs:
+            return
+        now = dt_util.utcnow()
+        done = [e for e, o in offs.items()
+                if now - max(emptied, dt_util.parse_datetime(o["since"])) >= timedelta(minutes=info["delay"])]
+        if not done:
+            return
+        for e in done:
+            self.overrides[zone].pop(e)
+        if not self.overrides[zone]:
+            self.overrides.pop(zone)
+        self._save()
+        self.rt.restart_zone(zone)                       # the arrival lights the zone as usual
 
     @callback
     def _arm_release(self, zone: str) -> None:
         if (unsub := self._vacant.pop(zone, None)) is not None:
             unsub()
         info = self._watch.get(zone)
-        if not self.overrides.get(zone) or not info or not info["occupancy"]:
+        ups = {e: o for e, o in self.overrides.get(zone, {}).items() if not o.get("off")}
+        if not ups or not info or not info["occupancy"]:
             return                                       # no sensors: held until the mode changes
-        states = [self.hass.states.get(s) for s in info["occupancy"]]
-        if not all(st is not None and st.state == STATE_OFF for st in states):
+        vacant = self.rt.vacant_since(info["occupancy"])
+        if vacant is None:
             return                                       # occupied (or a sensor unavailable)
         # counted from when the zone emptied or the latest hand change, whichever is later:
         # a light changed in an already-empty room is still respected for the full delay
-        since = max([st.last_changed for st in states] +
-                    [dt_util.parse_datetime(o["since"]) for o in self.overrides[zone].values()])
+        since = max([vacant] + [dt_util.parse_datetime(o["since"]) for o in ups.values()])
         left = (since + timedelta(minutes=info["delay"]) - dt_util.utcnow()).total_seconds()
         if left <= 0:
-            # empty long enough: the hand changes end, and the zone's behaviour runs again so
-            # its rule reaches those lights too (e.g. back to the empty setting)
-            if self.overrides.pop(zone, None) is not None:
-                self._save()
-                self.rt.restart_zone(zone)
+            # empty long enough: the hand changes end (not lights turned off by hand: see
+            # _arrived), and the zone's behaviour runs again so its rule reaches those lights
+            for e in ups:
+                self.overrides[zone].pop(e, None)
+            if not self.overrides[zone]:
+                self.overrides.pop(zone)
+            self._save()
+            self.rt.restart_zone(zone)
             return
         self._vacant[zone] = async_call_later(self.hass, left, HassJob(partial(self._release_due, zone), cancel_on_shutdown=True))
 
@@ -195,10 +232,12 @@ class Keeper:
 
     @callback
     def release_overrides(self, zone: str, vacant_since=None) -> None:
-        """End the zone's hand changes. With `vacant_since`, only those made before the
-        zone emptied: one made during the vacancy is kept for its own full delay."""
+        """End the zone's hand changes. With `vacant_since` (a behaviour reached its vacancy
+        delay), only those made before the zone emptied — one made during the vacancy is kept
+        for its own full delay — and never lights turned off by hand (they end on an arrival)."""
         if vacant_since is not None and self.overrides.get(zone):
-            keep = {e: o for e, o in self.overrides[zone].items() if dt_util.parse_datetime(o["since"]) > vacant_since}
+            keep = {e: o for e, o in self.overrides[zone].items()
+                    if o.get("off") or dt_util.parse_datetime(o["since"]) > vacant_since}
             if keep:
                 if len(keep) != len(self.overrides[zone]):
                     self.overrides[zone] = keep

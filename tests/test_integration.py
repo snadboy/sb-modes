@@ -1232,3 +1232,71 @@ async def test_on_enter_at_least(hass, kitchen, lights) -> None:
     bad["zones"][0]["on_enter"] = {"evening": {SINK: {"min_brightness_pct": 1, "brightness_pct": 5}}}
     with pytest.raises(ServiceValidationError, match="min_brightness_pct goes alone"):
         await _save(hass, bad)
+
+
+# ── groups are left out; the TV counts as presence; off by hand stays off ───
+
+async def test_groups_are_not_zone_members(hass, kitchen) -> None:
+    from custom_components.sb_modes.zones import zone_entities
+    reg = er.async_get(hass)
+    area = ar.async_get(hass).async_get_area_by_name("Kitchen")
+    for domain, uid, dclass in (("light", "kitchen_all", None), ("binary_sensor", "kitchen_any", "occupancy")):
+        e = reg.async_get_or_create(domain, "group", uid, suggested_object_id=uid, original_device_class=dclass)
+        reg.async_update_entity(e.entity_id, area_id=area.id)
+    z = zone_entities(hass, [area.id])
+    assert z["lights"] == [CEILING, SINK] and z["occupancy"] == [OCC]
+
+
+async def test_tv_counts_as_presence(hass, kitchen, lights, freezer) -> None:
+    await _overlay_setup(hass)                       # vacancy_off 60 s, overlay on TV
+    hass.states.async_set(SINK, "on", {"brightness": 200})
+    hass.states.async_set(OCC, "off")
+    await _tv(hass, freezer, "idle")                 # watching (idle between shows): occupied
+    await _tick(hass, freezer, seconds=300)
+    assert lights["off"] == [] and _zone(hass)["occupancy_state"] == "occupied"
+    await _tv(hass, freezer, "off", wait=1)          # turned off: the empty clock starts NOW
+    lights["on"].clear()
+    await _tick(hass, freezer, seconds=30)
+    # drop-outs while off don't restart that clock
+    await _tv(hass, freezer, "unavailable", wait=0)
+    await _tv(hass, freezer, "unknown", wait=0)
+    await _tv(hass, freezer, "off", wait=0)
+    await _tick(hass, freezer, seconds=25)
+    assert [c.data["entity_id"] for c in lights["off"]] == []
+    await _tick(hass, freezer, seconds=10)           # 66 s after the TV went off
+    assert SINK in [c.data["entity_id"] for c in lights["off"]]
+
+
+async def test_off_by_hand_stays_off_until_someone_returns(hass, kitchen, lights, freezer) -> None:
+    await _setup(hass)
+    hass.states.async_set(LUX, "5")
+    hass.states.async_set(SINK, "on", {"brightness": 102})
+    await _save(hass, _with("presence_lux", PL2))
+    # bedtime: the lamp switched off by hand in an "empty" room (the sensor never saw them)
+    hass.states.async_set(SINK, "off", context=Context(user_id="u"))
+    await hass.async_block_till_done()
+    lights["on"].clear()
+    await _tick(hass, freezer, minutes=20)           # past the 15-min empty delay
+    assert [c.data["entity_id"] for c in lights["on"]] == []          # not re-lit by 'empty'
+    assert SINK in _rt(hass).keeper.overridden("kitchen")
+    hass.states.async_set(OCC, "on")
+    await hass.async_block_till_done()
+    assert SINK not in _rt(hass).keeper.overridden("kitchen")         # someone came back: normal again
+
+
+async def test_off_by_hand_survives_a_sensor_dropout(hass, kitchen, lights, freezer) -> None:
+    await _setup(hass)
+    hass.states.async_set(LUX, "5")
+    hass.states.async_set(OCC, "on")
+    hass.states.async_set(SINK, "on", {"brightness": 102})
+    await _save(hass, _with("presence_lux", PL2))
+    hass.states.async_set(SINK, "off", context=Context(user_id="u"))  # off by hand, in the room
+    await hass.async_block_till_done()
+    hass.states.async_set(OCC, "off")
+    await _tick(hass, freezer, minutes=1)
+    hass.states.async_set(OCC, "on")                 # the sensor blinks: they never left
+    await hass.async_block_till_done()
+    assert SINK in _rt(hass).keeper.overridden("kitchen")
+    lights["on"].clear()
+    await hass.async_block_till_done()
+    assert SINK not in [c.data["entity_id"] for c in lights["on"]]

@@ -12,6 +12,9 @@ A zone's `overlay` = {
 States not listed (buffering…) are ignored, but still restart the debounce. A state reached straight from `unavailable` sets nothing (the
 entity coming back is not someone turning the TV off), but still ends a hold.
 
+While the entity is in a watching state (playing / paused / idle) it also counts as presence
+in the zone (presence.py) — unless the overlay says "presence": false.
+
 Precedence: a zone hold beats the overlay (Runtime.apply sends nothing to a held zone); the
 overlay beats the zone's behaviour while it holds (the behaviour is stopped, as for a hold);
 lights changed by hand stay as set (Runtime.apply skips them).
@@ -25,6 +28,8 @@ from typing import TYPE_CHECKING
 from homeassistant.core import CALLBACK_TYPE, Event, EventStateChangedData, HassJob, callback
 from homeassistant.helpers.event import async_call_later, async_track_state_change_event
 from homeassistant.util import dt as dt_util
+
+from .presence import MEDIA_WATCHING
 
 if TYPE_CHECKING:
     from .runtime import Runtime
@@ -78,6 +83,8 @@ class Overlay:
     @callback
     def _changed(self, event: Event[EventStateChangedData]) -> None:
         new, old = event.data["new_state"], event.data["old_state"]
+        if new is not None and old is not None and old.state in MEDIA_WATCHING and new.state not in MEDIA_WATCHING:
+            self.rt.media_left[self.entity] = new.last_changed    # stopped being watched (presence)
         if new is None or (old is not None and old.state == new.state):
             return                                       # attributes only (media position…): not a change
         self._cancel()

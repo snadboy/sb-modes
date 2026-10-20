@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 from collections import deque
 from collections.abc import Callable
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -37,6 +37,7 @@ from .bookkeeping import Keeper, describe_hold, release_delay
 from .follow import Follower
 from .buttons import Buttons
 from .overlay import Overlay
+from . import presence
 from .const import (
     ALERT_GRACE_SECONDS, CHECK_SECONDS, DOMAIN, EVENT_MODE_CHANGED, ISSUE_ID, STARTUP_SETTLE_SECONDS, STORE_KEY,
     STORE_VERSION,
@@ -93,6 +94,7 @@ class Runtime:
         self._followers: dict[str, Follower] = {}
         self._overlays: dict[str, Overlay] = {}
         self._buttons: dict[str, Buttons] = {}
+        self.media_left: dict[str, datetime] = {}          # media player → when it stopped being watched
         self.daylight: dict[str, tuple] = {}              # zone → (last reading with its lights off, when)
         self._behaviours: dict[str, Behaviour] = {}
         self.keeper = Keeper(self)
@@ -303,16 +305,23 @@ class Runtime:
             return "held"
         return "by_hand" if self.keeper.overridden(zone_id) else "auto"
 
+    def occupied(self, sources: list[str]) -> bool:
+        return presence.occupied(self.hass, sources)
+
+    def vacant_since(self, sources: list[str]):
+        return presence.vacant_since(self.hass, sources, self.media_left)
+
     def _occupancy(self, sensors: list[str]) -> tuple[str | None, str | None]:
         """("occupied" | "vacant" | "unknown", since when) from the zone's occupancy sensors.
         Occupied since the earliest sensor still on; vacant since the last one went off."""
         states = [self.hass.states.get(s) for s in sensors]
         if not states:
             return None, None
-        if any(st is not None and st.state == "on" for st in states):
-            return "occupied", min(st.last_changed for st in states if st is not None and st.state == "on").isoformat()
-        if all(st is not None and st.state == "off" for st in states):
-            return "vacant", max(st.last_changed for st in states).isoformat()
+        here = [st for st in states if presence.present(st) is True]
+        if here:
+            return "occupied", min(st.last_changed for st in here).isoformat()
+        if (since := self.vacant_since(sensors)) is not None:
+            return "vacant", since.isoformat()
         return "unknown", None
 
     def zone_by_mode(self, zone_id: str) -> dict[str, dict]:
@@ -489,7 +498,10 @@ class Runtime:
             kind = Overlaid
         else:
             kind = KINDS.get(picked.get("behaviour") or "", HandsOff)
-        b = kind(self, zone, picked.get("params") or {}, zone_entities(self.hass, zone.get("areas") or [], zone.get("lights")))
+        entities = zone_entities(self.hass, zone.get("areas") or [], zone.get("lights"))
+        if (spec := zone.get("overlay")) and spec.get("presence", True) and spec.get("entity"):
+            entities["occupancy"] = [*entities["occupancy"], spec["entity"]]   # the TV on = someone watching
+        b = kind(self, zone, picked.get("params") or {}, entities)
         self._behaviours[zone["id"]] = b
         b.start()
 

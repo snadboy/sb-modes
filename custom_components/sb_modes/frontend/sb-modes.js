@@ -11,7 +11,7 @@
  *
  * Rows use the shared SB row style (window.SBKit, from the SB UI Kit integration).
  */
-const VERSION = "0.16.0";
+const VERSION = "0.17.0";
 const CARD = "sb-modes-card";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -444,7 +444,8 @@ class SbModesCard extends HTMLElement {
       const name = st?.attributes.friendly_name || eid;
       const s = st?.state ?? "missing";
       const pct = s === "on" && st?.attributes.brightness != null ? ` ${Math.round(st.attributes.brightness * 100 / 255)}%` : "";
-      const cls = s === "on" ? (kind === "occ" ? "occ" : "on") : ["unavailable", "unknown", "missing"].includes(s) ? "na" : "";
+      const watching = eid.startsWith("media_player.") && ["playing", "paused", "idle", "buffering", "on"].includes(s);
+      const cls = s === "on" || watching ? (kind === "occ" ? "occ" : "on") : ["unavailable", "unknown", "missing"].includes(s) && !eid.startsWith("media_player.") ? "na" : "";
       return `<span class="ent ${cls}" title="${esc(eid)}"><i></i>${esc(name)}${esc(pct)}${cls === "na" ? ` (${esc(s)})` : ""}</span>`;
     };
     const detail = open ? `<div class="detail">
@@ -461,14 +462,19 @@ class SbModesCard extends HTMLElement {
       </div>` : "";
     // live view only: lights changed by hand, and the hold / release menu
     const ov = previewing ? {} : (a.overrides || {});
-    const ovNames = Object.keys(ov).map((e) => this._hass.states[e]?.attributes.friendly_name || e);
+    const ovName = (e) => this._hass.states[e]?.attributes.friendly_name || e;
+    const ovNames = Object.keys(ov).filter((e) => !ov[e].off).map(ovName);
+    const offNames = Object.keys(ov).filter((e) => ov[e].off).map(ovName);
     // the same delay SB Modes uses (bookkeeping.release_delay): delay / vacant_after / off-when-empty (capped)
     const pp = pick.params || {};
     let rel = pp.delay ?? pp.vacant_after_minutes;
     if (rel == null && pp.off_after_seconds != null) rel = Math.min(pp.off_after_seconds / 60, pp.max_on_minutes || Infinity);
     rel = rel ?? 10;
     const relTxt = rel < 1 ? `${Math.round(rel * 60)} s` : `${Math.round(rel * 10) / 10} min`;
-    const third = ovNames.length ? `<span class="sbk-m warn">Changed by hand: ${esc(ovNames.join(", "))} · left alone until ${esc(z.name)} has been empty ${esc(relTxt)} or the mode changes</span>` : "";
+    const third = [
+      ovNames.length ? `Changed by hand: ${ovNames.join(", ")} · left alone until ${z.name} has been empty ${relTxt} or the mode changes` : "",
+      offNames.length ? `Turned off by hand: ${offNames.join(", ")} · stays off until someone comes back after ${relTxt} empty, or the mode changes` : "",
+    ].filter(Boolean).map((t) => `<span class="sbk-m warn">${esc(t)}</span>`).join("");
     const key = `z:${z.id}`;
     const menu = !previewing && this._menu === key ? kit().menu(`${z.name} actions`, [
       { act: "hold:15", icon: "mdi:hand-back-right-outline", label: "Hold 15 min" },

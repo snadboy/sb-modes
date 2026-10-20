@@ -145,17 +145,14 @@ class NightlightThenDark(Behaviour):
         super().stop()
 
     def _occupied(self) -> bool:
-        return any(self.hass.states.is_state(s, STATE_ON) for s in self._sensors)
+        return self.rt.occupied(self._sensors)
 
     def _vacant(self) -> bool:
-        states = [self.hass.states.get(s) for s in self._sensors]
-        return bool(states) and all(st is not None and st.state == STATE_OFF for st in states)
+        return self._vacant_since() is not None
 
     def _vacant_since(self):
-        """When the last sensor went off (None unless every one is off)."""
-        if not self._vacant():
-            return None
-        return max(self.hass.states.get(s).last_changed for s in self._sensors)
+        """When the zone emptied (None unless every presence source says no one)."""
+        return self.rt.vacant_since(self._sensors)
 
     @callback
     def _sensor_changed(self, event: Event[EventStateChangedData]) -> None:
@@ -216,13 +213,10 @@ class _Occupancy(Behaviour):
         return self.entities.get("occupancy", [])
 
     def _occupied(self) -> bool:
-        return any(self.hass.states.is_state(s, STATE_ON) for s in self._sensors)
+        return self.rt.occupied(self._sensors)
 
     def _vacant_since(self):
-        states = [self.hass.states.get(s) for s in self._sensors]
-        if not states or not all(st is not None and st.state == STATE_OFF for st in states):
-            return None
-        return max(st.last_changed for st in states)
+        return self.rt.vacant_since(self._sensors)
 
 
 class VacancyOff(_Occupancy):

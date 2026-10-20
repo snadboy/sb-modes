@@ -109,6 +109,26 @@ Scheduler) are unaffected.
 - Rules now: workday 06:00 morning · not-workday 08:00 morning · daily 09:00 day ·
   daily sunset−01:00 evening · eve-of-workday 23:00 overnight · not-workday 00:30 overnight.
 
+## Presence fixes (0.17.0, 2026-10-20)
+
+From the overnight review (2026-10-19/20): the Family Room TV-area FP300
+(binary_sensor.basement_family_room_tv_fp300_occupancy) sees almost nothing — 10 detections
+since Oct 12, last 2026-10-19 07:44; alive (100 % battery) but reads 82.7 °F, likely on/behind
+the TV: user to check its placement. Consequences fixed in software:
+- **TV = presence** (presence.py): an overlay's media player playing/paused/idle/buffering/on
+  counts as occupied for its zone (`overlay.presence`, default true); off/unavailable/unknown
+  only mean "not watching". Empty-since for the TV = when it LEFT a watching state
+  (Runtime.media_left, set by the overlay), so its nightly drop-outs don't restart clocks.
+  TV idle never lasted > 10 min in 2 weeks (always → off), so idle is safe.
+- **Off by hand stays off**: an override now records `off`; those are not released by the
+  vacancy delay (nor by a behaviour's release_overrides) but by an ARRIVAL after the zone has
+  been empty its delay since the off (Keeper._arrived; brief sensor drop-outs don't count).
+  Fixes: living plants re-lit 22:46 after a bedtime off at 22:31; couch re-lit 21:57.
+- **Groups left out of zones** (zones.py: entity platform "group"): they were in Family Room
+  (occupancy group), Laundry Room (occupancy group), Living Room (light group incl. the
+  Christmas tree light). An explicit zone `lights` list can still name one.
+Card: the TV lights up as presence; "Turned off by hand: … stays off until someone comes back".
+
 ## Bedside 1 % floor (0.16.0, 2026-10-19)
 
 User: outside Overnight the bedside bulbs should be on at least 1 %. Chosen (of two): a check

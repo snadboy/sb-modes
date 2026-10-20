@@ -78,6 +78,15 @@ the entity leaves it; others are set once and the behaviour carries on. A zone h
 changed by hand beat the overlay; when they end, the overlay's current setting comes back.
 Targets may carry `transition` (seconds, lights).
 
+## Presence (0.17.0)
+
+A zone is occupied when any of its occupancy sensors is on, or its overlay's media player is
+being watched (playing / paused / idle; `overlay.presence: false` turns that off); vacant when
+every sensor is off and nothing is being watched. Group entities in the zone's areas are left
+out (their members are already there). A light turned **off** by hand stays off through the
+vacancy and ends when someone comes back after the zone has been empty its delay (or the mode
+changes); other hand changes end after the vacancy delay as before.
+
 ## Buttons (0.15.0)
 
 A zone's `buttons: {event entity: {event type: action}}`. An action is
