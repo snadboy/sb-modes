@@ -34,7 +34,7 @@ from .activity import short_name
 from .const import DOMAIN
 from datetime import timedelta
 
-from .model import ALL_MODES, BEHAVIOUR_INFO, BEHAVIOURS, DAYS, NEEDS, occurrences, rule_day_sets, scheduled_mode
+from .model import ALL_MODES, BEHAVIOUR_INFO, BEHAVIOURS, DAYS, NEEDS, day_type_of, occurrences, rule_day_sets, scheduled_mode
 from .runtime import Runtime, state_lookup
 from .validate import Issues, _check_param
 
@@ -315,4 +315,9 @@ async def ws_preview(hass, connection, msg) -> None:
             out.append({"at": at.isoformat(), "mode": mode})
             last = mode
     missing = sorted(rule_day_sets(config) - set(found))
-    connection.send_result(msg["id"], {"now": current, "changes": out, "missing_day_sets": missing})
+    types = {}
+    d = now.date()
+    while d <= end.date():                                   # each day's type, for the week view
+        types[d.isoformat()] = day_type_of(config, d, in_set)
+        d += timedelta(days=1)
+    connection.send_result(msg["id"], {"now": current, "changes": out, "missing_day_sets": missing, "day_types": types})

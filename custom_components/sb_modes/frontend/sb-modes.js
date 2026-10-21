@@ -11,7 +11,7 @@
  *
  * Rows use the shared SB row style (window.SBKit, from the SB UI Kit integration).
  */
-const VERSION = "0.22.2";
+const VERSION = "0.23.0";
 const CARD = "sb-modes-card";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -210,6 +210,9 @@ button.zt .cnt { text-transform: none; letter-spacing: 0; font-weight: 400; }
 button.zt.zones { border-top: none; }
 button.zt ha-icon { margin-left: auto; --mdc-icon-size: 20px; }
 .rules { padding: 0 16px 10px; }
+.dtype + .dtype { margin-top: 8px; }
+.dtn { font-size: 13px; font-weight: 500; padding: 4px 0 2px; display: flex; gap: 8px; align-items: baseline; }
+.dtn .d { color: var(--secondary-text-color); font-weight: 400; font-size: 12px; }
 .actf { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 0 8px; }
 .actf .sbk-chip { cursor: pointer; border: 1px solid var(--divider-color); background: none; color: inherit; font: inherit; font-size: 12px; }
 .actf .sbk-chip.on { background: var(--primary-color); color: var(--text-primary-color, #fff); border-color: var(--primary-color); }
@@ -470,13 +473,25 @@ class SbModesCard extends HTMLElement {
   }
 
   _scheduleHtml(sel, nm) {
-    const key = (r) => (/^\d\d:\d\d$/.test(r.at) ? r.at : /^sunrise/.test(r.at) ? "06:59" : "17:59");   // sun rules sort near when they fall
+    const key = (r) => (/^\d\d:\d\d$/.test(r.at) ? r.at : /^sunrise/.test(r.at) ? "06:59" : "17:59");   // sun times sort near when they fall
+    const ekey = (e) => (e.eve ? "00:00" : "") + key(e);                                                  // "the night before" first
     const rules = [...(sel.attributes.schedule || [])].sort((a, b) => key(a).localeCompare(key(b)));
+    const types = sel.attributes.day_types || [], times = sel.attributes.times || {};
     const open = this._open.has("__schedule");
-    const body = !rules.length ? `<div class="sbk-empty">No schedule — the mode changes only by hand.</div>`
-      : open ? rules.map((r) => `<div class="rule"><span class="t">${esc(ruleAt(r.at))}</span><ha-icon icon="${esc(modeIcon(r.mode))}"></ha-icon><span class="m">${esc(nm(r.mode))}</span><span class="d">${esc(ruleDays(r))}</span></div>`).join("") : "";
-    return `<button class="zh zt" data-x="__schedule" aria-expanded="${open}">Schedule <span class="cnt">${rules.length} rule${rules.length === 1 ? "" : "s"}</span>
-        <ha-icon icon="${open ? "mdi:chevron-down" : "mdi:chevron-right"}"></ha-icon></button>${rules.length && !open ? "" : `<div class="rules">${body}</div>`}`;
+    const typeRows = types.map((t) => {
+      const list = [...(times[t.id] || [])].sort((a, b) => ekey(a).localeCompare(ekey(b)));
+      return `<div class="dtype"><div class="dtn">${esc(t.name || t.id)}<span class="d">${esc(t.day_set ? pretty(t.day_set) : "every other day")}</span></div>${
+        list.map((e) => `<div class="rule"><span class="t">${esc(ruleAt(e.at))}</span><ha-icon icon="${esc(modeIcon(e.mode))}"></ha-icon><span class="m">${esc(nm(e.mode))}</span><span class="d">${e.eve ? "the night before" : ""}</span></div>`).join("")
+        || `<div class="sbk-empty">No mode changes.</div>`}</div>`;
+    }).join("");
+    const ruleRows = rules.map((r) => `<div class="rule"><span class="t">${esc(ruleAt(r.at))}</span><ha-icon icon="${esc(modeIcon(r.mode))}"></ha-icon><span class="m">${esc(nm(r.mode))}</span><span class="d">${esc(ruleDays(r))}</span></div>`).join("");
+    const count = types.length ? `${types.length} day type${types.length === 1 ? "" : "s"}${rules.length ? ` · ${rules.length} other rule${rules.length === 1 ? "" : "s"}` : ""}`
+      : `${rules.length} rule${rules.length === 1 ? "" : "s"}`;
+    const any = types.length || rules.length;
+    const body = !any ? `<div class="sbk-empty">No schedule — the mode changes only by hand.</div>`
+      : open ? `${typeRows}${ruleRows ? `${types.length ? `<div class="dtype"><div class="dtn">Other rules</div>` : "<div>"}${ruleRows}</div>` : ""}` : "";
+    return `<button class="zh zt" data-x="__schedule" aria-expanded="${open}">Schedule <span class="cnt">${esc(count)}</span>
+        <ha-icon icon="${open ? "mdi:chevron-down" : "mdi:chevron-right"}"></ha-icon></button>${any && !open ? "" : `<div class="rules">${body}</div>`}`;
   }
 
   _name(e) { return this._hass.states[e]?.attributes.friendly_name || e; }

@@ -52,6 +52,8 @@ class ModeSelect(ModesEntity, RestoreEntity, SelectEntity):
             "sb_modes": True,
             "mode_names": {m: self._rt.mode_name(m) for m in self._rt.mode_ids},
             "mode_icons": {m["id"]: m["icon"] for m in self._rt.config.get("modes") or [] if m.get("icon")},
+            "day_types": self._rt.config.get("day_types") or [],
+            "times": self._rt.config.get("times") or {},
             "fallback_mode": self._rt.fallback,
             "since": self._rt.mode_since,
             "previous_mode": self._rt.prev_mode,

@@ -434,6 +434,111 @@ def test_changes_in_words():
     assert "Kitchen · All modes: Presence + light level (Dark below 50 lx) → Off when empty" in lines, lines
 
 
+LIVE_RULES = [
+    {"day_set": "workday", "at": "06:00", "mode": "morning"},
+    {"day_set": "workday", "not": True, "at": "08:00", "mode": "morning"},
+    {"days": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"], "at": "09:00", "mode": "day"},
+    {"days": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"], "at": "sunset-01:00", "mode": "evening"},
+    {"day_set": "workday", "eve": True, "at": "23:00", "mode": "overnight"},
+    {"day_set": "workday", "not": True, "at": "00:30", "mode": "overnight"},
+]
+AS_DAY_TYPES = {
+    "day_types": [{"id": "vacation", "name": "Vacation", "day_set": "vacation"},
+                  {"id": "workday", "name": "Workdays", "day_set": "workday"},
+                  {"id": "day_off", "name": "Days off"}],
+    "times": {
+        "workday": [{"mode": "morning", "at": "06:00"}, {"mode": "day", "at": "09:00"},
+                    {"mode": "evening", "at": "sunset-01:00"}, {"mode": "overnight", "at": "23:00", "eve": True}],
+        "day_off": [{"mode": "overnight", "at": "00:30"}, {"mode": "morning", "at": "08:00"},
+                    {"mode": "day", "at": "09:00"}, {"mode": "evening", "at": "sunset-01:00"}],
+        "vacation": [{"mode": "overnight", "at": "01:00"}, {"mode": "morning", "at": "09:30"},
+                     {"mode": "evening", "at": "sunset-01:00"}],
+    },
+}
+
+
+def _week_sets(vacation=()):
+    import datetime as D
+    holiday = {D.date(2026, 11, 26)}                       # Thanksgiving, a Thursday
+    def in_set(ds, d):
+        if ds == "workday":
+            return d.weekday() < 5 and d not in holiday
+        if ds == "vacation":
+            return d in set(vacation)
+        return None
+    return in_set
+
+
+def _sun(event, d):
+    import datetime as D
+    return D.datetime(d.year, d.month, d.day, 23, 4, tzinfo=D.timezone.utc)   # 18:04 local (UTC-5)
+
+
+def test_day_types_reproduce_the_live_rules():
+    import datetime as D
+    tz = D.timezone(D.timedelta(hours=-5))
+    start, end = D.datetime(2026, 10, 21, 0, 0, tzinfo=tz), D.datetime(2026, 12, 20, 0, 0, tzinfo=tz)
+    rules = {"schedule": LIVE_RULES}
+    types = {k: v for k, v in AS_DAY_TYPES.items()}
+    a = M.occurrences(rules, start, end, _week_sets(), _sun)
+    b = M.occurrences(types, start, end, _week_sets(), _sun)
+    assert [(t.isoformat(), m) for t, m in a] == [(t.isoformat(), m) for t, m in b]
+    assert len(a) > 200
+    assert M.rule_day_sets(types) == {"vacation", "workday"}
+
+
+def test_vacation_outranks_workdays():
+    import datetime as D
+    tz = D.timezone(D.timedelta(hours=-5))
+    vac = [D.date(2026, 10, 26), D.date(2026, 10, 27)]     # Mon, Tue
+    got = M.occurrences(AS_DAY_TYPES, D.datetime(2026, 10, 25, 12, 0, tzinfo=tz), D.datetime(2026, 10, 28, 12, 0, tzinfo=tz),
+                        _week_sets(vac), _sun)
+    seq = [(t.strftime("%a %H:%M"), m) for t, m in got]
+    # Sunday night: Monday is vacation, not a workday, so no 23:00 Overnight; vacation times on Mon/Tue;
+    # Tuesday night: Wednesday is a workday again → 23:00 Overnight
+    assert ("Sun 23:00", "overnight") not in seq, seq
+    assert ("Mon 01:00", "overnight") in seq and ("Mon 09:30", "morning") in seq and ("Mon 06:00", "morning") not in seq, seq
+    assert ("Tue 23:00", "overnight") in seq and ("Wed 06:00", "morning") in seq, seq
+    assert M.day_type_of(AS_DAY_TYPES, D.date(2026, 10, 26), _week_sets(vac)) == "vacation"
+    assert M.day_type_of(AS_DAY_TYPES, D.date(2026, 10, 25), _week_sets(vac)) == "day_off"
+    assert M.day_type_of(AS_DAY_TYPES, D.date(2026, 10, 25), lambda ds, d: None) is None    # calendars not read yet
+
+
+def test_day_types_validate():
+    cfg = copy.deepcopy(GOOD)
+    cfg["modes"] += [{"id": m, "name": m.title(), "default": {"behaviour": "hands_off"}} for m in ("morning", "evening")]
+    cfg.update(copy.deepcopy(AS_DAY_TYPES))
+    cfg["times"]["workday"][3]["mode"] = "overnight"
+    sets = {"workday", "vacation"}
+    e, _ = V.check_config(cfg, state_of, area_exists, None, sets.__contains__)
+    assert e == [], e
+    bad = copy.deepcopy(cfg)
+    bad["day_types"][2]["day_set"] = "weekend"                  # the last must take every other day
+    bad["day_types"][1].pop("day_set")                          # and only the last may
+    bad["times"]["workday"][0]["at"] = "25:00"
+    bad["times"]["holiday"] = []
+    bad["times"]["day_off"].append({"mode": "day", "at": "08:00"})   # Morning is at 08:00 too
+    e, _ = V.check_config(bad, state_of, area_exists, None, sets.__contains__)
+    got = {(tuple(d["path"]), d["message"].split(": ", 1)[-1][:30]) for d in e.detailed()}
+    paths = {p for p, _ in got}
+    assert ("day_types", 2) in paths and ("day_types", 1) in paths, got
+    assert ("times", "workday", 0) in paths and ("times", "holiday") in paths and ("times", "day_off", 4) in paths, got
+
+
+def test_day_type_changes_in_words():
+    a = copy.deepcopy(GOOD)
+    a["modes"] += [{"id": m, "name": m.title(), "default": {"behaviour": "hands_off"}} for m in ("morning", "evening")]
+    a.update(copy.deepcopy(AS_DAY_TYPES))
+    b = copy.deepcopy(a)
+    b["times"]["workday"][0]["at"] = "06:30"
+    b["day_types"][0]["name"] = "Holidays away"
+    b["times"]["vacation"].append({"mode": "day", "at": "11:00"})
+    lines = CH.describe(a, b)
+    assert "Workdays: Morning at 06:00 → Morning at 06:30" in lines, lines
+    assert "Day type Vacation renamed Holidays away" in lines, lines
+    assert "Holidays away · added: Day at 11:00" in lines, lines
+
+
 if __name__ == "__main__":
     n = 0
     for name, fn in list(globals().items()):

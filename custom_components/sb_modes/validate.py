@@ -289,7 +289,74 @@ def _check_config(config, state_of, area_exists, zone_entities, day_set_exists) 
     _check_unique([z.get("id") for z in zones if isinstance(z, dict)], "Zone", errors)
     _here("schedule")
     _check_schedule(config.get("schedule"), ids, names, errors, day_set_exists)
+    _check_day_types(config, ids, names, errors, day_set_exists)
     return errors, warnings
+
+
+def _check_day_types(config: dict, ids: list[str], names: dict, errors, day_set_exists=None) -> None:
+    """Day types: an ordered list, each but the last on an SB Scheduler calendar; their times
+    name real modes and valid times, and never two modes at one moment of one day type."""
+    types, times = config.get("day_types"), config.get("times")
+    _here("day_types")
+    if types is None:
+        if times:
+            _here("times")
+            errors.append("Times are set per day type: define the day types first.")
+        return
+    if not isinstance(types, list) or not types:
+        errors.append("Day types must be a list with at least one entry (the last takes every other day).")
+        return
+    tnames = {}
+    for i, t in enumerate(types):
+        _here("day_types", i)
+        if not isinstance(t, dict):
+            errors.append(f"Day type {i + 1} must be an object.")
+            continue
+        where = f"Day type {t.get('name') or t.get('id') or i + 1}"
+        _check_id(t.get("id"), where, errors)
+        tnames[t.get("id")] = t.get("name") or t.get("id")
+        if not t.get("name"):
+            errors.append(f"{where}: give it a name.")
+        ds, last = t.get("day_set"), i == len(types) - 1
+        if last and ds:
+            errors.append(f"{where}: the last day type takes every other day — it has no calendar.")
+        elif not last and not ds:
+            errors.append(f"{where}: only the last day type can be “every other day”; choose its calendar.")
+        elif ds and (not isinstance(ds, str) or (day_set_exists is not None and not day_set_exists(ds))):
+            errors.append(f"{where}: calendar {ds!r} is not published by SB Scheduler.")
+    _here("day_types")
+    _check_unique([t.get("id") for t in types if isinstance(t, dict)], "Day type", errors)
+    if times is None:
+        return
+    _here("times")
+    if not isinstance(times, dict):
+        errors.append("Times must map a day type to its list of mode changes.")
+        return
+    for tid, entries in times.items():
+        _here("times", tid)
+        if tid not in tnames:
+            errors.append(f"Times are set for day type “{tid}”, which is not defined.")
+            continue
+        if not isinstance(entries, list):
+            errors.append(f"{tnames[tid]}: times must be a list.")
+            continue
+        seen: dict = {}
+        for j, e in enumerate(entries):
+            _here("times", tid, j)
+            where = f"{tnames[tid]}, time {j + 1}"
+            if not isinstance(e, dict):
+                errors.append(f"{where} must be an object.")
+                continue
+            if e.get("mode") not in ids:
+                errors.append(f"{where}: mode “{e.get('mode')}” is not defined.")
+            if parse_when(e.get("at")) is None:
+                errors.append(f"{where}: time {e.get('at')!r} must be HH:MM (24-hour), sunrise or sunset, optionally ±HH:MM.")
+            if "eve" in e and not isinstance(e["eve"], bool):
+                errors.append(f"{where}: “the night before” must be true or false.")
+            key = (e.get("at"), bool(e.get("eve")))
+            if key in seen and seen[key] != e.get("mode"):
+                errors.append(f"{where}: {names.get(seen[key], seen[key])} and {names.get(e.get('mode'), e.get('mode'))} both start at {e.get('at')}.")
+            seen[key] = e.get("mode")
 
 
 def _check_schedule(schedule: Any, ids: list[str], names: dict, errors: list[str], day_set_exists=None) -> None:

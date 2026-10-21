@@ -58,20 +58,58 @@ def describe(old: dict, new: dict, name_of: Callable[[str], str] = lambda e: e) 
     if [z for z in nz if z in oz] != [z for z in oz if z in nz]:
         out.append("Zone order changed")
 
-    # ── schedule ────────────────────────────────────────────────────────────
+    # ── day types and their times ───────────────────────────────────────────
+    ot, nt = _by_id(old.get("day_types")), _by_id(new.get("day_types"))
+    tname = lambda tid: _n(nt.get(tid) or ot.get(tid) or {"id": tid})  # noqa: E731
+    for tid, t in nt.items():
+        if tid not in ot:
+            out.append(f"Day type {_n(t)} added ({_calendar(t)})")
+    for tid, t in ot.items():
+        if tid not in nt:
+            out.append(f"Day type {_n(t)} removed")
+    for tid in [t for t in nt if t in ot]:
+        a, b = ot[tid], nt[tid]
+        if _n(a) != _n(b):
+            out.append(f"Day type {_n(a)} renamed {_n(b)}")
+        if a.get("day_set") != b.get("day_set"):
+            out.append(f"Day type {_n(b)}: {_calendar(a)} → {_calendar(b)}")
+    if [t for t in nt if t in ot] != [t for t in ot if t in nt]:
+        out.append("Day type order: " + ", ".join(tname(t) for t in ot if t in nt) + " → " + ", ".join(tname(t) for t in nt if t in ot))
+    otimes, ntimes = old.get("times") or {}, new.get("times") or {}
+    for tid in _keys(otimes, ntimes):
+        out += _paired(f"{tname(tid)}", [_entry(e, mode_name) for e in otimes.get(tid) or []],
+                       [_entry(e, mode_name) for e in ntimes.get(tid) or []])
+
+    # ── other rules ─────────────────────────────────────────────────────────
     orules = [_rule(r, mode_name) for r in old.get("schedule") or []]
     nrules = [_rule(r, mode_name) for r in new.get("schedule") or []]
-    gone, came = list(orules), []
-    for r in nrules:
+    out += _paired("Schedule", orules, nrules)
+    return out
+
+
+def _paired(where: str, old: list[str], new: list[str]) -> list[str]:
+    """Two lists of described items: unchanged ones (wherever they sit) say nothing, an edited one
+    pairs with the leftover it replaced ("A → B"), the rest are added / removed."""
+    gone, came = list(old), []
+    for r in new:
         if r in gone:
-            gone.remove(r)                            # unchanged (wherever it sits)
+            gone.remove(r)
         else:
             came.append(r)
-    for a, b in zip(gone, came):                      # an edited rule: the leftovers, in order
-        out.append(f"Schedule: {a} → {b}")
-    out += [f"Schedule · added: {r}" for r in came[len(gone):]]
-    out += [f"Schedule · removed: {r}" for r in gone[len(came):]]
+    out = [f"{where}: {a} → {b}" for a, b in zip(gone, came)]
+    out += [f"{where} · added: {r}" for r in came[len(gone):]]
+    out += [f"{where} · removed: {r}" for r in gone[len(came):]]
     return out
+
+
+def _entry(e: dict, mode_name) -> str:
+    if not isinstance(e, dict):
+        return str(e)
+    return f"{mode_name(e.get('mode'))} at {_at(e.get('at'))}" + (" the night before" if e.get("eve") else "")
+
+
+def _calendar(t: dict) -> str:
+    return f"calendar {t['day_set']}" if t.get("day_set") else "every other day"
 
 
 # ── zones ───────────────────────────────────────────────────────────────────

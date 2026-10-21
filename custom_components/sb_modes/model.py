@@ -210,7 +210,57 @@ def parse_when(at: Any):
 
 
 def rule_day_sets(config: dict) -> set[str]:
-    return {r["day_set"] for r in config.get("schedule") or [] if isinstance(r, dict) and r.get("day_set")}
+    """Every SB Scheduler day set the schedule needs: other rules' and the day types'."""
+    sets = {r["day_set"] for r in config.get("schedule") or [] if isinstance(r, dict) and r.get("day_set")}
+    sets |= {t["day_set"] for t in config.get("day_types") or [] if isinstance(t, dict) and t.get("day_set")}
+    return sets
+
+
+# ── day types ───────────────────────────────────────────────────────────────
+# The table's `day_types` is an ordered list [{"id", "name", "day_set"?}, …]: a date has the type
+# of the FIRST one whose SB Scheduler day set holds it; the last has no day set and takes every
+# other day. `times` = {day type id: [{"mode", "at", "eve"?}, …]} — the mode changes on a day of
+# that type; an entry with "eve": true happens on the evening BEFORE such a day (Overnight at
+# 23:00 before a workday). The `schedule` list stays for other rules (one weekday, another
+# calendar) and adds its occurrences to these.
+
+def day_type_of(config: dict, day, in_set) -> str | None:
+    """The id of the day type `day` has; None when a day set that decides it is not known."""
+    for t in config.get("day_types") or []:
+        if not isinstance(t, dict):
+            continue
+        ds = t.get("day_set")
+        if not ds:
+            return t.get("id")
+        if in_set is None:
+            return None
+        m = in_set(ds, day)
+        if m is None:
+            return None
+        if m:
+            return t.get("id")
+    return None
+
+
+def _when_on(day, when, tz, sun):
+    """The datetime a parsed `at` (parse_when) falls at on `day`; None when the sun time is unknown."""
+    from datetime import datetime, timedelta
+    if when[0] == "clock":
+        return datetime(day.year, day.month, day.day, when[1], when[2], tzinfo=tz)
+    base = sun(when[1], day) if sun else None
+    return None if base is None else base.astimezone(tz) + timedelta(minutes=when[2])
+
+
+def _day_entries(config: dict, day, in_set) -> list[dict]:
+    """The day-type time entries that happen on `day`: its own type's, and the next day's 'eve' ones."""
+    from datetime import timedelta
+    if not config.get("day_types"):
+        return []
+    times = config.get("times") or {}
+    today, tomorrow = day_type_of(config, day, in_set), day_type_of(config, day + timedelta(days=1), in_set)
+    out = [e for e in times.get(today) or [] if isinstance(e, dict) and not e.get("eve")] if today else []
+    out += [e for e in times.get(tomorrow) or [] if isinstance(e, dict) and e.get("eve")] if tomorrow else []
+    return out
 
 
 def _matches(rule: dict, day, in_set):
@@ -234,19 +284,13 @@ def occurrences(config: dict, start, end, in_set=None, sun=None):
     tz = start.tzinfo
     day = start.date() - timedelta(days=1)
     while day <= end.date():
-        for rule in config.get("schedule") or []:
-            when = parse_when(rule.get("at"))
-            if not when or not _matches(rule, day, in_set):
-                continue
-            if when[0] == "clock":
-                at = datetime(day.year, day.month, day.day, when[1], when[2], tzinfo=tz)
-            else:
-                base = sun(when[1], day) if sun else None
-                if base is None:
-                    continue
-                at = base.astimezone(tz) + timedelta(minutes=when[2])
-            if start <= at < end:
-                out.append((at, rule.get("mode")))
+        firing = [r for r in config.get("schedule") or [] if isinstance(r, dict) and _matches(r, day, in_set)]
+        firing += _day_entries(config, day, in_set)
+        for item in firing:
+            when = parse_when(item.get("at"))
+            at = _when_on(day, when, tz, sun) if when else None
+            if at is not None and start <= at < end:
+                out.append((at, item.get("mode")))
         day += timedelta(days=1)
     return sorted(out, key=lambda o: o[0])
 
