@@ -154,6 +154,11 @@ Thread 11:26–~11:55 right after pairing (address expired), came back by itself
 add failed half-way (left on the phone's fabric, ECM window); shared from the phone. dining_room:
 occupancy = FP300 + Driveway LWR02 (alongside — user didn't pick), illuminance = FP300 only
 (an explicit list, so the LWR02's lux — 673 lx at 16:xx — does not join the mean).
+Later the same day: FP300 being removed → occupancy = Driveway + **Dining Room Pantry LWR02**
+(" MTR (setup code in SB Device Notes)", `*.main_floor_dining_room_dining_room_pantry_lwr02_*`), illuminance =
+Driveway LWR02 at 50 lx (read ~1.0–1.2× the FP300 in daylight 16:20–16:54; it does see the
+chandelier after dark: 26 lx at 30 %). Pantry read 1 lx after dark — check its daylight before
+ever using it for lux. No FP300 (dining or living) uses remain anywhere in HA config.
 
 ## Presence fixes (0.17.0, 2026-10-20)
 
