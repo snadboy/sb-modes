@@ -109,6 +109,20 @@ Scheduler) are unaffected.
 - Rules now: workday 06:00 morning · not-workday 08:00 morning · daily 09:00 day ·
   daily sunset−01:00 evening · eve-of-workday 23:00 overnight · not-workday 00:30 overnight.
 
+## Cleanup 2026-10-21
+
+Removed (restore point on HA: /config/cleanup-2026-10-21/ — automations/scripts/scenes yaml,
+core.config_entries, sb_scheduler store, plus each item's own JSON in cleanup/):
+12 automations (8 "Lights/Scene - Occupancy - …", SB Modes - Schedule (interim), Lights - Whole
+House, Ambience - Kitchen, Ambience - TV), the 3 SB Background nightlight instances,
+script.area_nightlight, 17 scenes only those used (ambience_kitchen_*, ambience_tv_*,
+*_overnight_dark/_nightlight, early_morning_scene, overnight_scene, night_light_office,
+office_normal), SB Scheduler "Bedside Lamps - Wakeup"/"Get Up". Living Room and Dining Room
+FP300s removed from HA/Matter (nodes 0x97, 0x99) with their Battery Notes entries; their MTR
+labels ((setup code in SB Device Notes), (setup code in SB Device Notes)) left in place, unused. Still on: "Ambience - Dining Room"
+(chandelier on → sideboard on) — redundant now, awaiting the user's OK.
+Correction: the Family Room TV-area FP300 is fine — it sits in a low-traffic spot (user).
+
 ## Activity log (0.19.0, 2026-10-20)
 
 User wanted to see what SB Modes did through the day. activity.py: Runtime.log() fires
@@ -163,9 +177,8 @@ ever using it for lux. No FP300 (dining or living) uses remain anywhere in HA co
 ## Presence fixes (0.17.0, 2026-10-20)
 
 From the overnight review (2026-10-19/20): the Family Room TV-area FP300
-(binary_sensor.basement_family_room_tv_fp300_occupancy) sees almost nothing — 10 detections
-since Oct 12, last 2026-10-19 07:44; alive (100 % battery) but reads 82.7 °F, likely on/behind
-the TV: user to check its placement. Consequences fixed in software:
+(binary_sensor.basement_family_room_tv_fp300_occupancy) detects rarely — it is in a low-traffic
+spot and working as expected (user, 2026-10-21); seated TV viewers are covered by the TV. Consequences fixed in software:
 - **TV = presence** (presence.py): an overlay's media player playing/paused/idle/buffering/on
   counts as occupied for its zone (`overlay.presence`, default true); off/unavailable/unknown
   only mean "not watching". Empty-since for the TV = when it LEFT a watching state
