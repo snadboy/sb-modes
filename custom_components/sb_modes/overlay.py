@@ -65,7 +65,8 @@ class Overlay:
         """Set the current state's targets (the zone's Overlaid behaviour calls this on start)."""
         cfg = self.states.get(self.state) or {}
         if cfg.get("targets") and not self._quiet:
-            self.rt.apply(cfg["targets"], f"{self.zone_id}: {self.entity} {self.state}", self.zone_id)
+            st = self.rt.hass.states.get(self.entity)
+            self.rt.apply(cfg["targets"], f"{st.name if st else self.entity} {self.state}", self.zone_id)
 
     @callback
     def stop(self) -> None:
@@ -101,9 +102,11 @@ class Overlay:
         current = self.rt.hass.states.get(self.entity)
         if current is None or current.state != state:
             return                                       # it did not last the debounce
-        if self._last_unavailable and (dt_util.utcnow() - self._last_unavailable).total_seconds() < self.cooldown:
-            return                                       # still in the cool-down after a drop-out
         cfg = self.states.get(state)
+        if self._last_unavailable and (dt_util.utcnow() - self._last_unavailable).total_seconds() < self.cooldown:
+            if cfg is not None:                          # still in the cool-down after a drop-out
+                self.rt.log("skipped", self.zone_id, f"{current.name} {state} — ignored: under {self.cooldown:g} s since it dropped out")
+            return
         if cfg is None:
             return
         self.state = state
@@ -118,7 +121,7 @@ class Overlay:
                 self._quiet = False
             return
         if cfg.get("targets") and not from_unavailable:
-            self.rt.apply(cfg["targets"], f"{self.zone_id}: {self.entity} {state}", self.zone_id)
+            self.rt.apply(cfg["targets"], f"{current.name} {state}", self.zone_id)
         if was:
             self.rt.restart_zone(self.zone_id)           # back to the zone's own behaviour
         else:

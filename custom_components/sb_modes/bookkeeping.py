@@ -107,6 +107,13 @@ class Keeper:
                 unsub()
             timers.clear()
 
+    def _name(self, light: str, zone: str) -> str:
+        from .activity import short_name
+        return short_name(self.hass, light, self.rt._zone_name(zone))
+
+    def _names(self, lights, zone: str) -> str:
+        return ", ".join(self._name(e, zone) for e in lights)
+
     # ── queries ──────────────────────────────────────────────────────────────
     def held(self, zone: str) -> dict | None:
         return self.holds.get(zone)
@@ -161,6 +168,11 @@ class Keeper:
         self.overrides.setdefault(zone, {})[light] = {"since": dt_util.utcnow().isoformat(), "by": by, "mode": self.rt.mode,
                                                       "off": new.state == STATE_OFF}
         _LOGGER.debug("SB Modes: %s changed by hand (%s) in %s", light, by, zone)
+        what = "off" if new.state == STATE_OFF else (
+            f"{round(new.attributes['brightness'] * 100 / 255)}%" if new.attributes.get("brightness") is not None else "on")
+        until = "stays off until someone comes back" if new.state == STATE_OFF else "left alone until the zone is empty"
+        self.rt.log("hand", zone, f"{self._name(light, zone)} {what} by hand"
+                    f"{' (at the device)' if by == 'device' else ''} — {until}", [light])
         self._save()
         self._arm_release(zone)
         self.rt.notify()
@@ -196,6 +208,7 @@ class Keeper:
         if not self.overrides[zone]:
             self.overrides.pop(zone)
         self._save()
+        self.rt.log("hand_end", zone, f"someone came back: {self._names(done, zone)} back to normal", done)
         self.rt.restart_zone(zone)                       # the arrival lights the zone as usual
 
     @callback
@@ -221,6 +234,7 @@ class Keeper:
             if not self.overrides[zone]:
                 self.overrides.pop(zone)
             self._save()
+            self.rt.log("hand_end", zone, f"empty {_minutes(info['delay'])}: hand changes end ({self._names(ups, zone)})", list(ups))
             self.rt.restart_zone(zone)
             return
         self._vacant[zone] = async_call_later(self.hass, left, HassJob(partial(self._release_due, zone), cancel_on_shutdown=True))
@@ -240,10 +254,14 @@ class Keeper:
                     if o.get("off") or dt_util.parse_datetime(o["since"]) > vacant_since}
             if keep:
                 if len(keep) != len(self.overrides[zone]):
+                    gone = [e for e in self.overrides[zone] if e not in keep]
                     self.overrides[zone] = keep
                     self._save()
+                    self.rt.log("hand_end", zone, f"empty long enough: hand changes end ({self._names(gone, zone)})", gone)
                     self.rt.notify()
                 return
+        if (gone := self.overrides.get(zone)) and vacant_since is not None:
+            self.rt.log("hand_end", zone, f"empty long enough: hand changes end ({self._names(gone, zone)})", list(gone))
         if self.overrides.pop(zone, None) is not None:
             if (unsub := self._vacant.pop(zone, None)) is not None:
                 unsub()
@@ -252,7 +270,7 @@ class Keeper:
 
     # ── holds ────────────────────────────────────────────────────────────────
     @callback
-    def hold(self, zone: str, hold: str | int) -> None:
+    def hold(self, zone: str, hold: str | int, by: str = "by hand") -> None:
         now = dt_util.utcnow()
         if isinstance(hold, int) and not isinstance(hold, bool):
             self.holds[zone] = {"hold": "timed", "since": now.isoformat(),
@@ -264,11 +282,14 @@ class Keeper:
         self.overrides.pop(zone, None)
         self._arm_expiry(zone)
         self._save()
+        self.rt.log("hold", zone, f"held {_hold_words(hold)} ({by})")
         self.rt.restart_zone(zone)
 
     @callback
-    def release(self, zone: str) -> None:
+    def release(self, zone: str, by: str = "by hand") -> None:
         """End the zone's hold and overrides; its behaviour starts again for the current mode."""
+        if zone in self.holds or self.overrides.get(zone):
+            self.rt.log("release", zone, f"released ({by}): back to its setting for {self.rt.mode_name(self.rt.mode) or 'this mode'}")
         self.holds.pop(zone, None)
         self.overrides.pop(zone, None)
         for timers in (self._expiry, self._vacant):
@@ -289,11 +310,16 @@ class Keeper:
     @callback
     def _expired(self, zone: str, _now=None) -> None:
         self._expiry.pop(zone, None)
-        self.release(zone)
+        self.release(zone, by="time up")
 
     @callback
-    def mode_changed(self) -> None:
-        """A new mode: overrides end, and so do holds 'until the next mode change'."""
+    def mode_changed(self) -> str | None:
+        """A new mode: overrides end, and so do holds 'until the next mode change'. Returns
+        what ended, in words (for the activity line), or None."""
+        ended = []
+        if self.overrides:
+            ended.append("hand changes end in " + ", ".join(self.rt._zone_name(z) or z for z in self.overrides))
+        ended += [f"{self.rt._zone_name(z) or z} hold ends" for z, h in self.holds.items() if h["hold"] == "next"]
         changed = bool(self.overrides)
         self.overrides.clear()
         for unsub in self._vacant.values():
@@ -307,6 +333,19 @@ class Keeper:
                 changed = True
         if changed:
             self._save()
+        return "; ".join(ended) or None
+
+
+def _minutes(m: float) -> str:
+    return f"{round(m * 60)} s" if m < 1 else f"{m:g} min"
+
+
+def _hold_words(hold) -> str:
+    if hold == "next":
+        return "until the next mode change"
+    if hold == "paused":
+        return "until released"
+    return f"{hold} min"
 
 
 def describe_hold(h: dict | None) -> str | None:

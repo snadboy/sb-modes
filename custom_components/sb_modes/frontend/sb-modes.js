@@ -11,7 +11,7 @@
  *
  * Rows use the shared SB row style (window.SBKit, from the SB UI Kit integration).
  */
-const VERSION = "0.18.0";
+const VERSION = "0.19.0";
 const CARD = "sb-modes-card";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -36,6 +36,12 @@ const hhmm = (iso) => {
     const parts = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: TIME.tz }).formatToParts(new Date(iso));
     return clock(Number(parts.find((p) => p.type === "hour").value), Number(parts.find((p) => p.type === "minute").value));
   } catch (e) { return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); }
+};
+const dayKey = (d) => { try { return new Intl.DateTimeFormat("en-CA", { timeZone: TIME.tz }).format(d); } catch (e) { return d.toDateString(); } };
+/** A Logbook time (epoch seconds) as the user's clock time, "yesterday" when it was. */
+const actTime = (when) => {
+  const d = new Date(when * 1000);
+  return `${dayKey(d) === dayKey(new Date()) ? "" : "yest. "}${hhmm(d.toISOString())}`;
 };
 /** Clock times SB Modes writes into statuses ("goes dark at 23:14", "at 22:10 switches to 'empty'") in the user's format. */
 const fmtTimes = (text) => String(text || "").replace(/\b([01]\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?\b/g, (_, h, m) => clock(Number(h), Number(m)));
@@ -198,6 +204,14 @@ button.zt { display: flex; align-items: center; gap: 6px; width: 100%; border: n
 button.zt .cnt { text-transform: none; letter-spacing: 0; font-weight: 400; }
 button.zt ha-icon { margin-left: auto; --mdc-icon-size: 20px; }
 .rules { padding: 0 16px 10px; }
+.actf { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 0 8px; }
+.actf .sbk-chip { cursor: pointer; border: 1px solid var(--divider-color); background: none; color: inherit; font: inherit; font-size: 12px; }
+.actf .sbk-chip.on { background: var(--primary-color); color: var(--text-primary-color, #fff); border-color: var(--primary-color); }
+.act { display: grid; grid-template-columns: 74px 20px 1fr; align-items: start; gap: 6px; font-size: 13px; padding: 3px 0; --mdc-icon-size: 16px; line-height: 1.4; }
+.act .t { font-variant-numeric: tabular-nums; color: var(--secondary-text-color); white-space: nowrap; }
+.act ha-icon { color: var(--secondary-text-color); margin-top: 1px; }
+.act b { font-weight: 500; }
+.detail .act { grid-template-columns: 74px 20px 1fr; }
 .rule { display: grid; grid-template-columns: 104px 22px 100px 1fr; align-items: center; gap: 6px; font-size: 14px; padding: 4px 0; --mdc-icon-size: 18px; }
 .rule .t { font-variant-numeric: tabular-nums; font-weight: 500; }
 .rule .d { color: var(--secondary-text-color); }
@@ -363,8 +377,62 @@ class SbModesCard extends HTMLElement {
       <div class="zh">Zones${previewing ? ` in ${esc(nm(viewed))} <span class="pvtag">preview</span>` : ""}</div>
       ${rows || `<div class="sbk-empty">No zones yet. Add them to the table with the <code>sb_modes.save_config</code> action.</div>`}
       ${this._scheduleHtml(sel, nm)}
+      ${this._activityHtml()}
       ${this._msg ? `<div class="sbk-note">${esc(this._msg)}</div>` : ""}`;
     this._wire();
+    if (this._open.has("__activity") || zones.some((z) => this._open.has(z.id))) this._fetchActivity();
+  }
+
+  /** The last 24 h of SB Modes' Logbook entries (activity.py), refreshed every 30 s while shown. */
+  async _fetchActivity(force = false) {
+    if (this._actBusy || !this._hass) return;
+    if (!force && this._act && Date.now() - this._act.at < 30000) return;
+    this._actBusy = true;
+    const ids = [...this._zones().map((z) => z.entity), this._select()?.entity_id].filter(Boolean);
+    const end = new Date(), start = new Date(end.getTime() - 24 * 3600e3);
+    try {
+      const res = await this._hass.callWS({ type: "logbook/get_events", start_time: start.toISOString(), end_time: end.toISOString(), entity_ids: ids });
+      const entries = (res || []).filter((e) => e.domain === "sb_modes" && e.message).sort((a, b) => b.when - a.when);
+      this._act = { at: Date.now(), entries, err: null };
+    } catch (e) {
+      this._act = { at: Date.now(), entries: this._act?.entries || [], err: e?.message || String(e) };
+    }
+    this._actBusy = false;
+    this._render();
+  }
+
+  _actRow(e, zoneName) {
+    return `<div class="act"><span class="t">${esc(actTime(e.when))}</span><ha-icon icon="${esc(e.icon || "mdi:texture-box")}"></ha-icon>
+      <span class="m">${zoneName ? `<b>${esc(zoneName)}</b> · ` : ""}${esc(fmtTimes(e.message))}</span></div>`;
+  }
+
+  _recentHtml(z) {
+    if (!this._act) return `<div><b>Recent</b> loading…</div>`;
+    const mine = this._act.entries.filter((e) => e.entity_id === z.entity);
+    if (!mine.length) return `<div><b>Recent</b> nothing in the last 24 h</div>`;
+    return `<div><b>Recent</b>${mine.length > 5 ? ` <span class="src">(last 5 of ${mine.length} — all in Activity below)</span>` : ""}</div>${
+      mine.slice(0, 5).map((e) => this._actRow(e, null)).join("")}`;
+  }
+
+  _activityHtml() {
+    const open = this._open.has("__activity");
+    const all = this._act?.entries || [];
+    const zones = this._zones();
+    const zoneOf = Object.fromEntries(zones.map((z) => [z.entity, z]));
+    const f = this._actZone || "all";
+    const pick = (e) => f === "all" || (f === "__mode" ? !zoneOf[e.entity_id] : zoneOf[e.entity_id]?.id === f);
+    const list = all.filter(pick).slice(0, 150);
+    const filters = [["all", "All"], ...(all.some((e) => !zoneOf[e.entity_id]) ? [["__mode", "Mode"]] : []),
+      ...zones.filter((z) => all.some((e) => e.entity_id === z.entity)).map((z) => [z.id, z.name])];
+    const chips = `<div class="actf" role="group" aria-label="Show activity for">${filters.map(([k, n]) =>
+      `<button class="sbk-chip actc ${k === f ? "on" : ""}" data-f="${esc(k)}" aria-pressed="${k === f}">${esc(n)}</button>`).join("")}</div>`;
+    const rows = list.map((e) => this._actRow(e, f === "all" ? (zoneOf[e.entity_id]?.name || "Mode") : null)).join("");
+    const cnt = this._act ? `${all.length} in the last 24 h` : "last 24 h";
+    const inner = !this._act ? `<div class="sbk-empty">Loading…</div>`
+      : `${this._act.err ? `<div class="sbk-note">Could not read the Logbook: ${esc(this._act.err)}</div>` : ""}${all.length ? chips : ""}${
+        rows || `<div class="sbk-empty">Nothing in the last 24 hours.</div>`}`;
+    return `<button class="zh zt" data-x="__activity" aria-expanded="${open}">Activity <span class="cnt">${esc(cnt)}</span>
+        <ha-icon icon="${open ? "mdi:chevron-down" : "mdi:chevron-right"}"></ha-icon></button>${open ? `<div class="rules">${inner}</div>` : ""}`;
   }
 
   _scheduleHtml(sel, nm) {
@@ -459,6 +527,7 @@ class SbModesCard extends HTMLElement {
             .map(([t, act]) => `${esc(PRESS[t] || t)} → ${esc(this._buttonAct(act))}`).join(", ")}`).join(" · ")}</div>` : ""}
         ${(a.occupancy || []).length ? `<div><b>Occupancy</b> ${a.occupancy.map((e) => ent(e, "occ")).join("")}</div>` : ""}
         ${(a.lights || []).length ? `<div><b>Lights</b> ${a.lights.map((e) => ent(e, "light")).join("")}</div>` : ""}
+        ${previewing ? "" : this._recentHtml(z)}
       </div>` : "";
     // live view only: lights changed by hand, and the hold / release menu
     const ov = previewing ? {} : (a.overrides || {});
@@ -520,9 +589,10 @@ class SbModesCard extends HTMLElement {
       catch (e) { this._msg = `Could not resume the schedule: ${e?.message || e}`; }
       this._sig = ""; this._render();
     });
-    root.querySelector("button.zt")?.addEventListener("click", (e) => {
+    root.querySelectorAll("button.zt").forEach((b) => b.addEventListener("click", (e) => {
       const k = e.currentTarget.dataset.x; if (this._open.has(k)) this._open.delete(k); else this._open.add(k); this._render();
-    });
+    }));
+    root.querySelectorAll(".actf .actc").forEach((b) => b.addEventListener("click", () => { this._actZone = b.dataset.f; this._render(); }));
     root.querySelector(".ask .go")?.addEventListener("click", async () => {
       const target = this._view, h = this._hold || "next";
       this._ask = false; this._busy = true; this._render();

@@ -109,6 +109,22 @@ Scheduler) are unaffected.
 - Rules now: workday 06:00 morning · not-workday 08:00 morning · daily 09:00 day ·
   daily sunset−01:00 evening · eve-of-workday 23:00 overnight · not-workday 00:30 overnight.
 
+## Activity log (0.19.0, 2026-10-20)
+
+User wanted to see what SB Modes did through the day. activity.py: Runtime.log() fires
+`sb_modes_activity` {kind, zone, zone_name, message, entities, entity_id}; logbook.py describes
+it for HA's Logbook (name "SB Modes · <zone>", icon per kind, filed under the zone sensor, or
+select.sb_modes_mode for mode lines). A command's event has the SAME Context as its light
+calls → the Logbook shows those light changes "triggered by" it (verified live 18:59).
+Logged: commands (only what actually changes — Runtime.send filters by driver.plan, but
+`_ctx_targets` keeps the FULL command so follow's stand-aside still works), skips (held zone,
+left alone as changed by hand, follow stood aside, TV change in its cool-down), hand changes and
+their end (vacancy / arrival / mode change), holds and releases (by hand / button / time up),
+mode changes (with how, and what ended). Status lines reworded via activity.PHRASES.
+Card: an "Activity" section (last 24 h from logbook/get_events filtered to the zone sensors +
+the mode select, refreshed every 30 s while shown, filter chips per zone) and "Recent" (last 5)
+in each zone's detail. Fixed: only the first section header (Schedule) was wired to open.
+
 ## Kitchen & dining aux always on (2026-10-20)
 
 User: outside Overnight the kitchen and dining aux lights are always on. Table changes (no code):

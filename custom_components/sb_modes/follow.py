@@ -70,8 +70,11 @@ class Follower:
             return                                       # to or from unavailable: not a real change
         if pct == was and (old.state == new.state):
             return
+        leader = new.name or self.leader
         if self.followers & self.rt.targets_of(new.context.id):
-            return                                       # our own command already set the followers
+            # our own command already set the followers
+            self.rt.log("skipped", self.zone_id, f"{leader} {pct}% — following stands aside: the same command set the followers")
+            return
         i = band_for(self.bands, pct)
         if i is not None:
-            self.rt.apply(self.bands[i].get("targets") or {}, f"{self.zone_id}: follows {self.leader} ({pct}%)", self.zone_id)
+            self.rt.apply(self.bands[i].get("targets") or {}, f"follows {leader} at {pct}%", self.zone_id)

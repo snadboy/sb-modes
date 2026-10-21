@@ -86,7 +86,7 @@ class Buttons:
         if self._task and not self._task.done():
             self._task.cancel()                          # a newer press wins over a flash in progress
         if "hold" in action:
-            self.rt.keeper.hold(self.zone_id, action["hold"])   # first: nothing else sends meanwhile
+            self.rt.keeper.hold(self.zone_id, action["hold"], by="button")   # first: nothing else sends meanwhile
         self._task = self.rt.hass.async_create_task(self._run(action), f"sb_modes button {self.zone_id}")
 
     async def _run(self, action: dict) -> None:
@@ -94,9 +94,9 @@ class Buttons:
             await self._flash(self.rt.zone_lights(self.zone_id), action["flash"])
         if "hold" in action:
             if action.get("targets"):
-                self.rt.send(action["targets"], f"{self.zone_id}: held by button")
+                self.rt.send(action["targets"], "held by button", self.zone_id)
             return
-        self.rt.keeper.release(self.zone_id)
+        self.rt.keeper.release(self.zone_id, by="button")
         if (ov := self.rt.overlay_of(self.zone_id)) is not None and not ov.holding:
             ov.apply_current()                           # holding: the zone's restart already did
 

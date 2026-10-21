@@ -31,7 +31,7 @@ from homeassistant.helpers.storage import Store
 from homeassistant.helpers.sun import get_astral_event_date
 from homeassistant.util import dt as dt_util
 
-from . import driver
+from . import activity, driver
 from .behaviours import KINDS, Behaviour, HandsOff, Held, Overlaid
 from .bookkeeping import Keeper, describe_hold, release_delay
 from .follow import Follower
@@ -406,8 +406,12 @@ class Runtime:
         old, self.mode = self.mode, mode_id
         self.prev_mode = old
         self.mode_since = dt_util.utcnow().isoformat()
-        self.keeper.mode_changed()
+        ended = self.keeper.mode_changed()
         self.hass.bus.async_fire(EVENT_MODE_CHANGED, {"from": old, "to": mode_id, "source": source})
+        how = {"manual": "by hand", "schedule": "on schedule", "startup": "catching up at start-up",
+               "resume": "back on schedule", "hold_ended": "the hand-set mode's time is up"}.get(source, source)
+        self.log("mode", None, f"{self.mode_name(old) or old or '—'} → {self.mode_name(mode_id)} ({how})"
+                 + (f"; {ended}" if ended else ""))
         if restart:
             self._restart_behaviours()
         self._apply_on_enter(mode_id)
@@ -585,28 +589,64 @@ class Runtime:
     def apply(self, targets: dict[str, dict], why: str, zone_id: str | None = None) -> None:
         """Send targets through the driver, under a context remembered as our own. Lights
         changed by hand in the zone are left out."""
+        left: dict[str, dict] = {}
         if zone_id is not None:
             if self.keeper.held(zone_id):
+                if changing := self._changing(targets):
+                    self.log("skipped", zone_id, f"{activity.strip_zone(why, zone_id)} — held, nothing sent "
+                             f"({activity.summary(self.hass, changing, self._zone_name(zone_id))})", changing)
                 return
             skip = self.keeper.overridden(zone_id)
+            left = {e: t for e, t in targets.items() if e in skip}
             targets = {e: t for e, t in targets.items() if e not in skip}
-        self.send(targets, why)
+        note = None
+        if left_changing := self._changing(left):
+            note = "left alone, changed by hand: " + ", ".join(
+                activity.short_name(self.hass, e, self._zone_name(zone_id)) for e in left_changing)
+        self.send(targets, why, zone_id, note)
+
+    def _changing(self, targets: dict[str, dict]) -> dict[str, dict]:
+        """The targets that would actually change something (the driver's plan)."""
+        return {e: t for e, t in targets.items() if driver.plan(self.hass.states.get(e), t or {}) is not None}
 
     @callback
-    def send(self, targets: dict[str, dict], why: str) -> Context | None:
+    def send(self, targets: dict[str, dict], why: str, zone_id: str | None = None, note: str | None = None) -> Context | None:
         """apply() without the held / by-hand filter — for a person's own button press."""
-        if not targets:
+        changing = self._changing(targets)
+        if not changing:
+            if note:
+                self.log("skipped", zone_id, f"{activity.strip_zone(why, zone_id)} — {note}")
             return None
         self.keeper.commanded(targets)
         ctx = Context()
         self.own_contexts.append(ctx.id)
+        # the whole command, not just what changes: following stands aside when our command set
+        # its followers, even ones already there (Overnight's dark)
         self._ctx_targets[ctx.id] = frozenset(targets)
         if len(self._ctx_targets) > 500:                 # keep it as bounded as own_contexts
             for old in list(self._ctx_targets)[:-500]:
                 self._ctx_targets.pop(old, None)
+        text = f"{activity.strip_zone(why, zone_id)} → {activity.summary(self.hass, changing, self._zone_name(zone_id))}"
+        self.log("command", zone_id, text + (f" ({note})" if note else ""), changing, ctx)
         _LOGGER.debug("SB Modes: %s → %s", why, targets)
-        self.hass.async_create_task(driver.apply(self.hass, targets, ctx), f"sb_modes apply {why}")
+        self.hass.async_create_task(driver.apply(self.hass, changing, ctx), f"sb_modes apply {why}")
         return ctx
+
+    # ── activity ─────────────────────────────────────────────────────────────
+    @callback
+    def log(self, kind: str, zone_id: str | None, text: str, entities=(), context: Context | None = None) -> None:
+        """One line of activity (activity.py): to the Logbook and the card's Activity section."""
+        activity.fire(self, kind, zone_id, text, entities, context)
+
+    def _zone_name(self, zone_id: str | None) -> str | None:
+        z = next((z for z in self.zones() if z["id"] == zone_id), None) if zone_id else None
+        return (z.get("name") or zone_id) if z else None
+
+    def zone_entity_id(self, zone_id: str) -> str | None:
+        return er.async_get(self.hass).async_get_entity_id("sensor", DOMAIN, f"{self.entry.entry_id}_zone_{zone_id}")
+
+    def mode_entity_id(self) -> str | None:
+        return er.async_get(self.hass).async_get_entity_id("select", DOMAIN, f"{self.entry.entry_id}_mode")
 
     def zone_lights(self, zone_id: str) -> list[str]:
         b = self._behaviours.get(zone_id)

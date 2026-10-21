@@ -78,6 +78,15 @@ the entity leaves it; others are set once and the behaviour carries on. A zone h
 changed by hand beat the overlay; when they end, the overlay's current setting comes back.
 Targets may carry `transition` (seconds, lights).
 
+## Activity (0.19.0)
+
+Every decision SB Modes makes is an `sb_modes_activity` event, shown in HA's Logbook as
+"SB Modes · <zone>: <what and why>" and in the card's **Activity** section (last 24 h, by zone;
+each zone's detail shows its last five). Lights SB Modes changes appear in the Logbook as
+triggered by the matching entry. Logged: commands that change something, decisions that
+deliberately sent nothing, lights changed by hand and when that ends, holds and releases, mode
+changes. Kept as long as the recorder keeps events.
+
 ## Presence (0.17.0)
 
 A zone is occupied when any of its occupancy sensors is on, or its overlay's media player is

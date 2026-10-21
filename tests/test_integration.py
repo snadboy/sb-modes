@@ -1319,3 +1319,65 @@ async def test_zone_own_occupancy_and_illuminance_lists(hass, kitchen, lights, f
     bad["zones"][0]["occupancy"] = ["light.sink"]
     with pytest.raises(ServiceValidationError, match="not a binary_sensor"):
         await _save(hass, bad)
+
+
+# ── activity: what SB Modes did, and why ─────────────────────────────────────
+
+def _acts(hass):
+    from custom_components.sb_modes.activity import EVENT_ACTIVITY
+    return async_capture_events(hass, EVENT_ACTIVITY)
+
+
+async def test_activity_commands_and_noops(hass, kitchen, lights, freezer) -> None:
+    await _setup(hass)
+    hass.states.async_set(LUX, "5")
+    await _save(hass, _with("presence_lux", PL2))
+    acts = _acts(hass)
+    hass.states.async_set(OCC, "on")
+    await hass.async_block_till_done()
+    cmd = [a.data for a in acts if a.data["kind"] == "command"]
+    assert cmd and cmd[0]["zone"] == "kitchen" and cmd[0]["zone_name"] == "Kitchen"
+    assert cmd[0]["message"].startswith("occupied and dark (") and cmd[0]["message"].endswith("→ ceiling 95%")
+    assert cmd[0]["entity_id"] == "sensor.sb_modes_kitchen" and cmd[0]["entities"] == [CEILING]
+    # the light calls carry the event's context (the Logbook's "triggered by")
+    assert lights["on"][-1].context.id == acts[-1].context.id
+    # a decision that changes nothing is not logged
+    hass.states.async_set(CEILING, "on", {"brightness": 242}, context=lights["on"][-1].context)
+    await hass.async_block_till_done()
+    n = len(acts)
+    _rt(hass).apply({CEILING: {"brightness_pct": 95}}, "kitchen: again", "kitchen")
+    await hass.async_block_till_done()
+    assert len(acts) == n
+
+
+async def test_activity_hand_hold_mode(hass, kitchen, lights, freezer) -> None:
+    await _setup(hass)
+    await _save(hass, _with("vacancy_off", {"lights": [SINK], "off_after_seconds": 60}))
+    acts = _acts(hass)
+    hass.states.async_set(SINK, "on", {"brightness": 128}, context=Context(user_id="u"))
+    await hass.async_block_till_done()
+    assert [(a.data["kind"], a.data["message"]) for a in acts] == [("hand", "sink 50% by hand — left alone until the zone is empty")]
+    await hass.services.async_call(DOMAIN, "hold_zone", {"zone": "kitchen", "hold": 30}, blocking=True)
+    _rt(hass).apply({SINK: {"state": "off"}}, "kitchen: off: vacant", "kitchen")
+    await hass.async_block_till_done()
+    kinds = [(a.data["kind"], a.data["message"]) for a in acts[1:]]
+    assert ("hold", "held 30 min (by hand)") in kinds
+    assert ("skipped", "empty: lights off — held, nothing sent (sink off)") in kinds
+    await hass.services.async_call(DOMAIN, "release_zone", {"zone": "kitchen"}, blocking=True)
+    await _mode(hass, "evening")
+    msgs = [a.data["message"] for a in acts]
+    assert "released (by hand): back to its setting for Day" in msgs
+    assert any(m.startswith("Day → Evening (by hand)") for m in msgs)
+    assert [a.data["entity_id"] for a in acts if a.data["kind"] == "mode"] == [SELECT]
+
+
+async def test_logbook_describes_activity(hass) -> None:
+    from custom_components.sb_modes import logbook as lb
+    from custom_components.sb_modes.activity import EVENT_ACTIVITY
+    from homeassistant.core import Event
+    got = {}
+    lb.async_describe_events(hass, lambda domain, event_type, fn: got.setdefault(event_type, fn))
+    entry = got[EVENT_ACTIVITY](Event(EVENT_ACTIVITY, {"kind": "command", "zone": "kitchen", "zone_name": "Kitchen",
+                                                       "message": "empty since 16:45 → ceiling off", "entity_id": "sensor.sb_modes_kitchen"}))
+    assert entry == {"name": "SB Modes · Kitchen", "message": "empty since 16:45 → ceiling off",
+                     "icon": "mdi:lightbulb-auto-outline", "entity_id": "sensor.sb_modes_kitchen"}
