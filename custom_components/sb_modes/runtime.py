@@ -169,6 +169,22 @@ class Runtime:
         wanted = rule_day_sets(self.config)
         today = dt_util.now().date()
         lo, hi = today - timedelta(days=9), today + timedelta(days=10)
+        found = await self.async_read_day_sets(wanted, lo, hi)
+        self._day_sets, self._day_window = found, (lo, hi)
+        if wanted and not wanted <= set(found):
+            # not all calendars there yet (SB Scheduler still starting): try again in a minute
+            self._unsubs.append(async_call_later(self.hass, 60, HassJob(self._refresh_tick, cancel_on_shutdown=True)))
+            return
+        self._after_day_sets()
+
+    def day_set_choices(self) -> list[dict]:
+        """The day sets SB Scheduler publishes (its calendars' day_set_id), for the editor."""
+        return sorted(({"id": st.attributes["day_set_id"], "name": st.name} for st in self.hass.states.async_all("calendar")
+                       if st.attributes.get("day_set_id")), key=lambda x: x["name"])
+
+    async def async_read_day_sets(self, wanted, lo: date, hi: date) -> dict[str, set[date]]:
+        """{day set: its dates within [lo, hi]} read from SB Scheduler's calendars; day sets
+        whose calendar is missing or not answering are left out."""
         found: dict[str, set[date]] = {}
         for ds in wanted:
             eid = self._day_set_entity(ds)
@@ -193,11 +209,10 @@ class Runtime:
                     dates.add(d)
                     d += timedelta(days=1)
             found[ds] = dates
-        self._day_sets, self._day_window = found, (lo, hi)
-        if wanted and not wanted <= set(found):
-            # not all calendars there yet (SB Scheduler still starting): try again in a minute
-            self._unsubs.append(async_call_later(self.hass, 60, HassJob(self._refresh_tick, cancel_on_shutdown=True)))
-            return
+        return found
+
+    @callback
+    def _after_day_sets(self) -> None:
         if self._calendar_wait:
             self._calendar_wait = False
             self._catch_up(source="startup")

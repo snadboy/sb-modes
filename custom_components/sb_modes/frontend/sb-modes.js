@@ -11,7 +11,7 @@
  *
  * Rows use the shared SB row style (window.SBKit, from the SB UI Kit integration).
  */
-const VERSION = "0.21.3";
+const VERSION = "0.22.2";
 const CARD = "sb-modes-card";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -140,7 +140,8 @@ const MODE_ICONS = {
   morning: "mdi:weather-sunset-up", day: "mdi:white-balance-sunny", evening: "mdi:weather-sunset-down",
   overnight: "mdi:weather-night", night: "mdi:weather-night", away: "mdi:home-export-outline",
 };
-const modeIcon = (id) => MODE_ICONS[id] || "mdi:home-clock-outline";
+let ICON_OVERRIDES = {};              // the table's own mode icons (select attribute mode_icons)
+const modeIcon = (id) => ICON_OVERRIDES[id] || MODE_ICONS[id] || "mdi:home-clock-outline";
 
 const BEHAVIOUR_NAMES = {
   hands_off: "Hands off",
@@ -311,6 +312,7 @@ class SbModesCard extends HTMLElement {
       return;
     }
     const names = sel.attributes.mode_names || {};
+    ICON_OVERRIDES = sel.attributes.mode_icons || {};
     const nm = (id) => names[id] || id;
     this._modeName = nm;
     const options = sel.attributes.options || [];

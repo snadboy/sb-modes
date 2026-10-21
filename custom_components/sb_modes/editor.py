@@ -10,6 +10,7 @@
   sb_modes/versions                       the last VERSIONS_KEPT versions (no tables)
   sb_modes/revert    {version}            save that version's table again (a new version)
   sb_modes/try       {zone, targets, minutes?}   set lights now and hold the zone
+  sb_modes/preview   {config?, days?}     the coming days' mode changes under that schedule
 
 One draft for the house, kept in HA (.storage/sb_modes.draft) so it follows the person between
 devices. A draft remembers the version it started from; saving after someone else saved is
@@ -31,7 +32,9 @@ from homeassistant.util import dt as dt_util
 from . import changes
 from .activity import short_name
 from .const import DOMAIN
-from .model import ALL_MODES, BEHAVIOUR_INFO, BEHAVIOURS, DAYS, NEEDS
+from datetime import timedelta
+
+from .model import ALL_MODES, BEHAVIOUR_INFO, BEHAVIOURS, DAYS, NEEDS, occurrences, rule_day_sets, scheduled_mode
 from .runtime import Runtime, state_lookup
 from .validate import Issues, _check_param
 
@@ -107,7 +110,7 @@ async def async_save_table(hass: HomeAssistant, rt: Runtime, config: dict, user:
 @callback
 def async_register(hass: HomeAssistant) -> None:
     for handler in (ws_schema, ws_check, ws_diff, ws_draft_get, ws_draft_set, ws_draft_discard,
-                    ws_save, ws_versions, ws_revert, ws_try):
+                    ws_save, ws_versions, ws_revert, ws_try, ws_preview):
         websocket_api.async_register_command(hass, handler)
 
 
@@ -137,6 +140,7 @@ def ws_schema(hass, connection, msg) -> None:
                        for name, params in BEHAVIOURS.items()},
         "all_modes": ALL_MODES,
         "days": DAYS,
+        "day_sets": rt.day_set_choices() if (rt := _runtime(hass)) else [],
         "target_fields": {
             "state": {"type": "select", "options": ["on", "off"], "label": "On / off"},
             "brightness_pct": {"type": "number", "min": 0, "max": 100, "unit": "%", "label": "Brightness"},
@@ -284,3 +288,31 @@ def ws_try(hass, connection, msg) -> None:
     rt.send(msg["targets"], "Try it", msg["zone"])
     connection.send_result(msg["id"], {"held_minutes": msg["minutes"],
                                        "set": [short_name(hass, e, None) for e in msg["targets"]]})
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command({vol.Required("type"): "sb_modes/preview", vol.Optional("config"): dict,
+                                  vol.Optional("days", default=7): vol.All(int, vol.Range(min=1, max=14))})
+@websocket_api.async_response
+async def ws_preview(hass, connection, msg) -> None:
+    """The mode the schedule gives now and each change over the next days, for a table (the
+    draft by default) — day sets read fresh from SB Scheduler, so new rules preview too."""
+    if not (rt := _need_rt(hass, connection, msg)):
+        return
+    config = msg.get("config")
+    if config is None:
+        draft = await _stores(hass)[1].async_load()
+        config = (draft or {}).get("config") or rt.config
+    now = dt_util.now()
+    end = now + timedelta(days=msg["days"])
+    found = await rt.async_read_day_sets(rule_day_sets(config), now.date() - timedelta(days=2), end.date() + timedelta(days=1))
+    in_set = lambda ds, d: (d in found[ds]) if ds in found else None  # noqa: E731
+    sched = scheduled_mode(config, now, in_set, rt.sun)          # (mode, since) or None
+    current = sched[0] if isinstance(sched, (tuple, list)) else sched
+    out, last = [], current
+    for at, mode in occurrences(config, now, end, in_set, rt.sun):
+        if mode != last:
+            out.append({"at": at.isoformat(), "mode": mode})
+            last = mode
+    missing = sorted(rule_day_sets(config) - set(found))
+    connection.send_result(msg["id"], {"now": current, "changes": out, "missing_day_sets": missing})

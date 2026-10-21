@@ -421,7 +421,10 @@ def test_changes_in_words():
     assert "Kitchen · All modes: now Presence + light level (Dark below 50 lx)" in lines, lines
     assert "Kitchen · when Daytime begins: — → Cabinet on" in lines, lines
     assert "Zone Dining Room renamed Dining" in lines, lines
-    assert "Schedule · added: mon, tue 06:00 → Daytime" in lines and "Schedule · removed: mon 06:00 → Daytime" in lines, lines
+    assert "Schedule: Daytime at 06:00 on Mon → Daytime at 06:00 on Mon, Tue" in lines, lines
+    d = copy.deepcopy(b)
+    d["schedule"].append({"days": ["mon", "tue", "wed", "thu", "fri"], "at": "sunset-01:00", "mode": "overnight"})
+    assert CH.describe(b, d) == ["Schedule · added: Overnight at sunset − 1:00 weekdays"], CH.describe(b, d)
     # removing a zone setting, and a behaviour swap
     c = copy.deepcopy(b)
     del c["zones"][0]["overrides"]["overnight"]

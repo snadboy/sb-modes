@@ -8,6 +8,7 @@ One line per change, "Where · what: before → after", for example
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
 from typing import Any
 
@@ -60,12 +61,16 @@ def describe(old: dict, new: dict, name_of: Callable[[str], str] = lambda e: e) 
     # ── schedule ────────────────────────────────────────────────────────────
     orules = [_rule(r, mode_name) for r in old.get("schedule") or []]
     nrules = [_rule(r, mode_name) for r in new.get("schedule") or []]
+    gone, came = list(orules), []
     for r in nrules:
-        if r not in orules:
-            out.append(f"Schedule · added: {r}")
-    for r in orules:
-        if r not in nrules:
-            out.append(f"Schedule · removed: {r}")
+        if r in gone:
+            gone.remove(r)                            # unchanged (wherever it sits)
+        else:
+            came.append(r)
+    for a, b in zip(gone, came):                      # an edited rule: the leftovers, in order
+        out.append(f"Schedule: {a} → {b}")
+    out += [f"Schedule · added: {r}" for r in came[len(gone):]]
+    out += [f"Schedule · removed: {r}" for r in gone[len(came):]]
     return out
 
 
@@ -223,8 +228,23 @@ def _rule(r: dict, mode_name) -> str:
     if r.get("day_set"):
         days = ("not " if r.get("not") else "") + ("eve of " if r.get("eve") else "") + str(r["day_set"])
     else:
-        days = ", ".join(r.get("days") or []) or NONE
-    return f"{days} {r.get('at')} → {mode_name(r.get('mode'))}"
+        days = _days(r.get("days") or [])
+    on = days if days in ("every day", "weekdays", "weekends") else f"on {days}"
+    return f"{mode_name(r.get('mode'))} at {_at(r.get('at'))} {on}"
+
+
+def _at(at) -> str:
+    """'sunset-01:30' → 'sunset − 1:30'; clock times stay as they are."""
+    m = re.fullmatch(r"(sunrise|sunset)([+-])(\d{1,2}):(\d{2})", str(at or ""))
+    return f"{m[1]} {'−' if m[2] == '-' else '+'} {int(m[3])}:{m[4]}" if m else str(at)
+
+
+def _days(days: list) -> str:
+    named = {("mon", "tue", "wed", "thu", "fri", "sat", "sun"): "every day", ("mon", "tue", "wed", "thu", "fri"): "weekdays",
+             ("sat", "sun"): "weekends"}
+    order = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+    key = tuple(d for d in order if d in days)
+    return named.get(key) or ", ".join(d.capitalize() for d in key) or NONE
 
 
 # ── helpers ─────────────────────────────────────────────────────────────────

@@ -132,7 +132,17 @@ redraw (focus); the draft is stored 0.5 s after the last edit; errors go to the 
 whose path matches, scalar-param errors onto the ha-form field. ha-form is pulled in through
 loadCardHelpers → an entities card editor. Tested headless: edit → "Draft · 1 change" → Review
 → out-of-range error disables Save → Discard (saved table untouched).
-Next: step 3 — Modes and Schedule tabs with the week preview.
+**Step 3, Modes + Schedule (0.22.x, 2026-10-21):** editor tabs Zones | Modes | Schedule. The
+behaviour editor works on an OWNER — a zone's setting for a mode or a mode's default — so
+modes reuse it (Try it only for zones). Modes: fallback, name, icon (modes may carry `icon`;
+select attribute mode_icons; the card's built-in icons are the placeholders), default
+behaviour, ↑/↓ order, + Mode, delete (lists what goes with it; refused while the mode is the
+fallback or a wake-up's after_mode). Schedule: rules (mode, a time / sunrise / sunset ± h:mm,
+days or an SB Scheduler calendar with "the evening before" / "not on those days"), + Rule,
+and "The coming week" from sb_modes/preview (draft's rules; day sets read fresh via
+Runtime.async_read_day_sets; consecutive same-mode occurrences are not changes). Review text:
+edited rules pair up ("Schedule: A → B"), "every day" / "weekdays", "sunset − 1:30".
+Next: step 4 — zone extras (when a mode begins, follow, TV overlay, buttons).
 
 ## Cleanup 2026-10-21
 

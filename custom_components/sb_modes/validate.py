@@ -103,6 +103,10 @@ def _check_config(config, state_of, area_exists, zone_entities, day_set_exists) 
             continue
         where = f"Mode {mode.get('name') or mode.get('id') or i + 1}"
         _check_id(mode.get("id"), where, errors)
+        icon = mode.get("icon")
+        if icon is not None and not (isinstance(icon, str) and re.match(r"^[a-z0-9-]+:[a-z0-9-]+$", icon)):
+            with _sub("icon"):
+                errors.append(f"{where}: icon {icon!r} must look like mdi:weather-night.")
         if not mode.get("default"):
             errors.append(f"{where}: needs a default behaviour (a mode exists only through its default).")
         else:

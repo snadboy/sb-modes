@@ -1491,3 +1491,38 @@ async def test_editor_try_it(hass, kitchen, lights, hass_ws_client) -> None:
     assert lights["on"][-1].data == {"entity_id": SINK, "brightness_pct": 40}
     r = await _ws(hass, hass_ws_client, type="sb_modes/try", zone="kitchen", targets={SINK: {"brightness_pct": 400}})
     assert not r["success"]
+
+
+async def test_editor_preview_week(hass, kitchen, hass_ws_client, freezer) -> None:
+    client = await hass_ws_client(hass)                     # log in first: the clock goes back below
+    async def ws(**m):
+        await client.send_json_auto_id(m)
+        return await client.receive_json()
+    await _at(hass, freezer, 10, 5)
+    await _setup(hass)
+    await _save(hass, _sched_table())
+    t = _sched_table()
+    t["schedule"].append({"days": ["sat", "sun"], "at": "12:00", "mode": "day"})
+    r = await ws(type="sb_modes/preview", config=t, days=2)
+    res = r["result"]
+    assert r["success"] and res["now"] == "day" and res["missing_day_sets"] == []
+    got = [(c["at"][11:16], c["mode"]) for c in res["changes"]]
+    # Fri 10:05: evening 10:10, overnight 10:20; Sat: day 10:00, evening, overnight, day again 12:00;
+    # Sun 10:00 "day" is no change (already Day since Sat 12:00), so it is left out
+    assert got == [("10:10", "evening"), ("10:20", "overnight"), ("10:00", "day"), ("10:10", "evening"),
+                   ("10:20", "overnight"), ("12:00", "day")], got
+    # a rule on a day set SB Scheduler doesn't publish shows as missing
+    t["schedule"].append({"day_set": "nope", "at": "08:00", "mode": "day"})
+    r = await ws(type="sb_modes/preview", config=t, days=1)
+    assert r["result"]["missing_day_sets"] == ["nope"]
+
+
+async def test_mode_icons_reach_the_select(hass, kitchen) -> None:
+    await _setup(hass)
+    t = _table()
+    t["modes"][0]["icon"] = "mdi:white-balance-sunny"
+    await _save(hass, t)
+    assert hass.states.get(SELECT).attributes["mode_icons"] == {"day": "mdi:white-balance-sunny"}
+    t["modes"][0]["icon"] = "sunny"
+    with pytest.raises(ServiceValidationError, match="must look like mdi:"):
+        await _save(hass, t)
