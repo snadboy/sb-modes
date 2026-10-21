@@ -11,7 +11,7 @@
  *
  * Rows use the shared SB row style (window.SBKit, from the SB UI Kit integration).
  */
-const VERSION = "0.23.0";
+const VERSION = "0.24.2";
 const CARD = "sb-modes-card";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -732,6 +732,7 @@ class SbModesPanel extends HTMLElement {
       .bar a:hover { background: rgba(127,127,127,.2); opacity: 1; }
       .bar a.on { opacity: 1; background: rgba(127,127,127,.25); font-weight: 500; }
       .page { padding: 16px; } .col { max-width: 860px; margin: 0 auto; }
+      :host([editing]) .col { max-width: 1240px; }
       .intro { color: var(--secondary-text-color); font-size: 14px; margin: 0 4px 12px; line-height: 1.5; }
       .ver { color: var(--secondary-text-color); font-size: 12px; margin: 12px 4px 0; }
       [hidden] { display: none !important; }
@@ -762,6 +763,7 @@ class SbModesPanel extends HTMLElement {
 
   async _show() {
     const root = this.shadowRoot, edit = this._editing();
+    this.toggleAttribute("editing", edit);
     root.querySelector(".status").hidden = edit;
     root.querySelector(".edit").hidden = !edit;
     root.querySelector(".nav-status").classList.toggle("on", !edit);

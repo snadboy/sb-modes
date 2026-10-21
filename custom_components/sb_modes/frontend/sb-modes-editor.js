@@ -5,29 +5,39 @@
  * shared draft (sb_modes/draft/set), which answers with its errors (with field paths) and the
  * changes in words. Save turns the draft into the table (a new version); Discard drops it.
  *
- * Tabs: Zones (basics, each mode's behaviour), Modes (name, icon, default behaviour, order,
- * fallback) and Schedule (rules, with the coming week previewed from the draft). The zone
- * extras (follow, overlay, buttons, when a mode begins) are kept as they are until step 4.
+ * Three views (the structure agreed from the mock-ups, 2026-10-21):
+ *   House — rooms × modes: what each room does in each mode, "Usual" or its own setting, and
+ *           what is set when a mode begins; mode headings open the mode (name, icon, order).
+ *   Times — the day types (Vacation, Workdays, Days off…) in priority order, each with its
+ *           mode changes on a 24-hour band; other rules; the coming week.
+ *   Room  — one room top to bottom: Usually · By mode (behaviour + when it begins) · Always
+ *           (follow, TV overlay, buttons) · Devices.
  *
- * A behaviour setting lives in one of two places, an OWNER: a zone's setting for a mode
- * ({kind: "zone", zone, mode}) or a mode's default ({kind: "mode", mode}); the same editor
- * (behaviour picker, schema-built form, light-settings tables, wake steps) serves both.
+ * Light settings ("targets") live in several places; a LOC says which:
+ *   {k:"choice", owner, key, step?}  a behaviour's param (owner: {kind:"zone", zone, mode} or
+ *                                    {kind:"mode", mode} for a mode's default)
+ *   {k:"enter", zone, mode}          set when that mode begins (on_enter)
+ *   {k:"band", zone, band}           a follow band
+ *   {k:"overlay", zone, state}       a TV state
+ *   {k:"button", zone, ent, etype}   a button press that holds
  *
- * Typing never redraws the form (it would lose focus): field edits change the model and the
- * draft bar; only structural changes (another tab or zone, a row opened, a behaviour picked, a
- * light or rule added or removed) redraw.
+ * Typing never redraws (it would lose focus): field edits change the model and the draft
+ * bar; only structural changes redraw.
  */
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const clone = (o) => JSON.parse(JSON.stringify(o));
 const ALL = "*";
-/** The card's built-in icons for the usual mode ids (a mode's own `icon` wins). */
 const DEFAULT_ICONS = {
   morning: "mdi:weather-sunset-up", day: "mdi:white-balance-sunny", evening: "mdi:weather-sunset-down",
   overnight: "mdi:weather-night", night: "mdi:weather-night", away: "mdi:home-export-outline",
 };
 const DAY_NAMES = { mon: "Mon", tue: "Tue", wed: "Wed", thu: "Thu", fri: "Fri", sat: "Sat", sun: "Sun" };
+const MODE_FILL = ["#3d2b5a", "#1f5a4f", "#5a2b44", "#4a4a2a"];          // for modes beyond the usual four
+const KNOWN_FILL = { overnight: "#2b3a5a", night: "#2b3a5a", morning: "#6a4f1f", day: "#56541b", evening: "#6b3a26", away: "#3a3a3a" };
+const OVERLAY_STATES = ["playing", "paused", "idle", "off"];
 const slug = (name) => name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").replace(/^(\d)/, "x_$1").slice(0, 32) || "item";
+const uniqueId = (name, taken) => { let id = slug(name); for (let n = 2; taken.has(id); n++) id = `${slug(name)}_${n}`; return id; };
 
 /** HA's form elements are lazy-loaded by the frontend; pull them in through a card editor. */
 let formsReady = null;
@@ -52,79 +62,136 @@ const parseAt = (at) => {
   return { kind: "clock", time: /^\d{1,2}:\d{2}$/.test(String(at || "")) ? String(at).padStart(5, "0") : "" };
 };
 const joinAt = (p) => (p.kind === "clock" ? p.time : p.off && p.off !== "00:00" ? `${p.kind}${p.sign}${p.off}` : p.kind);
+const offInput = (v) => {
+  const m = /^(\d{1,2})(?::(\d{1,2}))?$/.exec(String(v || "").trim() || "0");
+  return m ? `${m[1].padStart(2, "0")}:${(m[2] || "0").padStart(2, "0")}` : String(v).trim();
+};
 
 const STYLE = `
 :host { display: block; }
-.bar { position: sticky; top: var(--header-height, 56px); z-index: 1; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+.bar { position: sticky; top: var(--header-height, 56px); z-index: 2; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
        padding: 10px 14px; margin-bottom: 12px; border-radius: 12px; background: var(--card-background-color); border: 1px solid var(--divider-color); }
 .bar .st { flex: 1; font-size: 14px; min-width: 160px; }
 .bar .st b { font-weight: 500; }
 .err { color: var(--error-color); }
-button.b { border: 1px solid var(--divider-color); background: none; color: var(--primary-text-color); border-radius: 18px; padding: 6px 14px;
-           font: inherit; font-size: 14px; cursor: pointer; }
+a.lk, button.lk { color: var(--primary-color); background: none; border: none; padding: 0; font: inherit; cursor: pointer; text-decoration: none; }
+button.b { border: 1px solid var(--divider-color); background: none; color: var(--primary-text-color); border-radius: 18px; padding: 6px 14px; font: inherit; font-size: 14px; cursor: pointer; }
 button.b.pri { background: var(--primary-color); border-color: var(--primary-color); color: var(--text-primary-color, #fff); }
 button.b:disabled { opacity: .45; cursor: default; }
 button.b.sm { padding: 3px 10px; font-size: 13px; }
 button.b.danger { color: var(--error-color); border-color: var(--error-color); }
-button.ic { border: none; background: none; color: var(--secondary-text-color); cursor: pointer; font-size: 18px; padding: 2px 6px; line-height: 1; }
+button.b.add { border-style: dashed; border-radius: 10px; padding: 8px 14px; }
+button.ic { border: none; background: none; color: var(--secondary-text-color); cursor: pointer; font-size: 18px; padding: 2px 6px; line-height: 1; font-family: inherit; }
 button.ic:disabled { opacity: .3; cursor: default; }
 .tabs { display: flex; gap: 6px; margin-bottom: 12px; }
-.tabs button { flex: 1; border: 1px solid var(--divider-color); background: var(--card-background-color); color: inherit; font: inherit; font-size: 15px;
-               border-radius: 10px; padding: 8px 0; cursor: pointer; }
+.tabs button { flex: 1; border: 1px solid var(--divider-color); background: var(--card-background-color); color: inherit; font: inherit; font-size: 15px; border-radius: 10px; padding: 8px 0; cursor: pointer; }
 .tabs button.on { background: var(--primary-color); border-color: var(--primary-color); color: var(--text-primary-color, #fff); font-weight: 500; }
-.tabs .dot, .chips .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--error-color); margin-left: 6px; vertical-align: middle; }
+.dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--error-color); margin-left: 6px; vertical-align: middle; }
 .card { background: var(--card-background-color); border: 1px solid var(--divider-color); border-radius: 12px; margin-bottom: 12px; }
-.sec { padding: 12px 16px; }
+.sec { padding: 14px 16px; }
 .sec + .sec { border-top: 1px solid var(--divider-color); }
 h3 { margin: 0 0 8px; font-size: 13px; font-weight: 500; text-transform: uppercase; letter-spacing: .05em; color: var(--secondary-text-color); }
-.chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 16px; }
-.chips button { border: 1px solid var(--divider-color); background: none; color: inherit; font: inherit; font-size: 14px; border-radius: 16px; padding: 5px 12px; cursor: pointer; }
-.chips button.on { background: var(--primary-color); border-color: var(--primary-color); color: var(--text-primary-color, #fff); }
-.mrow { border-top: 1px solid var(--divider-color); }
-.mrow:first-of-type { border-top: none; }
-.mhead { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 0; background: none; border: none; color: inherit; font: inherit; cursor: pointer; text-align: left; }
-.mhead .mn { width: 110px; flex: none; font-weight: 500; }
-.mhead .what { flex: 1; color: var(--secondary-text-color); font-size: 14px; }
-.mhead .what.own { color: var(--primary-text-color); }
-.mhead ha-icon { --mdc-icon-size: 20px; color: var(--secondary-text-color); }
-.mbody { padding: 0 0 14px; }
+h3 .sub { text-transform: none; letter-spacing: 0; font-weight: 400; margin-left: 8px; }
 .help { color: var(--secondary-text-color); font-size: 13px; margin: 2px 0 8px; line-height: 1.45; }
 .errs { color: var(--error-color); font-size: 13px; margin: 4px 0 8px; padding-left: 18px; }
 .warns { color: var(--warning-color, #ffa600); font-size: 13px; margin: 4px 0 8px; padding-left: 18px; }
+.empty { color: var(--secondary-text-color); font-size: 14px; padding: 4px 0; }
+.load { padding: 24px; color: var(--secondary-text-color); }
+.note { font-size: 13px; padding: 8px 12px; border-radius: 8px; background: var(--secondary-background-color, rgba(127,127,127,.1)); margin: 0 0 12px; }
+.review ul { margin: 6px 0; padding-left: 20px; font-size: 14px; line-height: 1.6; }
+select, input.in { font: inherit; font-size: 14px; color: var(--primary-text-color); background: var(--secondary-background-color, transparent);
+       border: 1px solid var(--divider-color); border-radius: 6px; padding: 4px 6px; }
+.tools { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; }
+.tools .add { min-width: 220px; flex: 1; }
+/* House grid */
+.grid { overflow-x: auto; }
+.grid table { width: 100%; border-collapse: collapse; min-width: 900px; font-size: 14px; }
+.grid th, .grid td { border-bottom: 1px solid var(--divider-color); text-align: left; vertical-align: middle; padding: 10px 12px; }
+.grid th + th, .grid td + td { border-left: 1px solid var(--divider-color); }
+.grid th { font-weight: 500; background: var(--secondary-background-color, rgba(127,127,127,.06)); }
+.grid th.lbl { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--secondary-text-color); vertical-align: bottom; }
+.grid th button.mh { all: unset; cursor: pointer; display: flex; flex-direction: column; gap: 3px; }
+.grid th button.mh:focus-visible { outline: 2px solid var(--primary-color); }
+.grid th .mn { display: flex; align-items: center; gap: 8px; font-size: 15px; }
+.grid th .mt { font-size: 12px; color: var(--secondary-text-color); font-weight: 400; }
+.grid th ha-icon { --mdc-icon-size: 20px; }
+.grid td.room { width: 230px; }
+.grid td.room button { all: unset; cursor: pointer; font-weight: 500; font-size: 15px; color: var(--primary-color); }
+.grid td.room .us { display: block; font-size: 12.5px; color: var(--secondary-text-color); line-height: 1.35; margin-top: 2px; }
+.grid td.cell { cursor: pointer; }
+.grid td.cell:hover { background: rgba(127,127,127,.06); }
+.grid .usual { color: var(--secondary-text-color); font-size: 13px; }
+.grid .own { display: inline-block; padding: 4px 9px; border-radius: 8px; background: rgba(3,169,244,.12); border: 1px solid rgba(3,169,244,.45); font-size: 13px; line-height: 1.35; }
+.grid .beg { display: block; margin-top: 4px; font-size: 12.5px; color: var(--primary-color); line-height: 1.35; }
+.grid td.alw { font-size: 12.5px; color: var(--secondary-text-color); width: 130px; }
+.legend { display: flex; gap: 18px; flex-wrap: wrap; font-size: 12.5px; color: var(--secondary-text-color); padding: 2px 4px 12px; }
+/* Room */
+.crumb { display: flex; align-items: baseline; gap: 14px; margin: 0 0 12px; }
+.crumb h2 { margin: 0; font-size: 24px; font-weight: 500; flex: 1; }
+.crumb .live { font-size: 13px; color: var(--secondary-text-color); }
+.mrow { border-top: 1px solid var(--divider-color); padding: 10px 0; }
+.mrow:first-of-type { border-top: none; }
+.mhead { display: grid; grid-template-columns: 150px minmax(0, 1fr) minmax(0, 1fr) 28px; gap: 10px; align-items: center; width: 100%;
+         background: none; border: none; color: inherit; font: inherit; cursor: pointer; text-align: left; padding: 0; }
+.mhead .mn { font-weight: 500; font-size: 15px; display: flex; flex-direction: column; }
+.mhead .mn small { font-weight: 400; font-size: 12px; color: var(--secondary-text-color); }
+.mhead .what { color: var(--secondary-text-color); font-size: 14px; }
+.mhead .what.own { color: var(--primary-text-color); }
+.mhead .beg { font-size: 13px; color: var(--primary-color); }
+.mhead ha-icon { --mdc-icon-size: 20px; color: var(--secondary-text-color); }
+.mbody { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; padding: 10px 0 4px 160px; }
+.mbody .col h4 { margin: 0 0 6px; font-size: 13px; font-weight: 500; color: var(--secondary-text-color); }
+.box { background: var(--secondary-background-color, rgba(127,127,127,.06)); border: 1px solid var(--divider-color); border-radius: 10px; padding: 12px; margin-bottom: 10px; }
+.box .bh { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.box .bh b { flex: 1; font-weight: 500; }
 .tlabel { font-weight: 500; font-size: 14px; margin: 12px 0 2px; }
 table.tg { width: 100%; border-collapse: collapse; font-size: 14px; }
 table.tg td { padding: 4px 4px 4px 0; vertical-align: middle; }
 table.tg td.n { width: 40%; }
-select, input.in { font: inherit; font-size: 14px; color: var(--primary-text-color); background: var(--secondary-background-color, transparent);
-       border: 1px solid var(--divider-color); border-radius: 6px; padding: 4px 6px; }
 table.tg input[type=number] { width: 64px; }
-.tools { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; }
-.tools .add { min-width: 220px; flex: 1; }
 .step { border-left: 3px solid var(--divider-color); padding-left: 10px; margin: 10px 0; }
 .step .sh { display: flex; align-items: center; gap: 8px; font-size: 14px; }
 .step input { width: 64px; }
-.note { font-size: 13px; padding: 8px 12px; border-radius: 8px; background: var(--secondary-background-color, rgba(127,127,127,.1)); margin: 0 0 12px; }
-.review ul { margin: 6px 0; padding-left: 20px; font-size: 14px; line-height: 1.6; }
-.extra { font-size: 14px; color: var(--secondary-text-color); line-height: 1.6; }
-.empty { color: var(--secondary-text-color); font-size: 14px; padding: 4px 0; }
-.load { padding: 24px; color: var(--secondary-text-color); }
-.mtitle { display: flex; align-items: center; gap: 8px; }
-.mtitle .mn { flex: 1; font-weight: 500; font-size: 16px; cursor: pointer; display: flex; align-items: center; gap: 8px; }
-.mtitle .mid { color: var(--secondary-text-color); font-size: 12px; font-weight: 400; }
-.mtitle ha-icon { --mdc-icon-size: 20px; }
+.devices summary { cursor: pointer; font-size: 13px; font-weight: 500; text-transform: uppercase; letter-spacing: .05em; color: var(--secondary-text-color); list-style: none; display: flex; gap: 10px; align-items: baseline; }
+.devices summary .sub { text-transform: none; letter-spacing: 0; font-weight: 400; color: var(--primary-text-color); font-size: 13px; }
+.brow { display: grid; grid-template-columns: 120px 1fr; gap: 10px; align-items: start; padding: 8px 0; border-top: 1px solid var(--divider-color); }
+.brow:first-child { border-top: none; }
+/* Times */
+.dtrow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 0; border-top: 1px solid var(--divider-color); }
+.dtrow:first-of-type { border-top: none; }
+.dtrow .pri { width: 22px; color: var(--secondary-text-color); font-size: 13px; text-align: right; }
+.dtrow input.in { width: 160px; }
+.axis { display: flex; justify-content: space-between; font-size: 11.5px; color: var(--secondary-text-color); margin: 8px 0 4px 120px; }
+.band { display: flex; align-items: stretch; gap: 10px; margin: 12px 0 6px; }
+.band .bn { width: 110px; flex: none; display: flex; flex-direction: column; justify-content: center; }
+.band .bn b { font-weight: 500; font-size: 15px; }
+.band .bn small { font-size: 12px; color: var(--secondary-text-color); }
+.band .strip { flex: 1; display: flex; height: 40px; border-radius: 8px; overflow: hidden; border: 1px solid var(--divider-color); }
+.band .strip div { display: flex; align-items: center; color: #f2f2f2; font-size: 12.5px; min-width: 0; border-right: 1px solid rgba(0,0,0,.5); }
+.band .strip span { padding: 0 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stops { margin-left: 120px; display: flex; flex-direction: column; gap: 6px; }
+.stop { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 14px; }
+.stop label { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; color: var(--secondary-text-color); }
 .rule { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 0; border-top: 1px solid var(--divider-color); font-size: 14px; }
 .rule:first-of-type { border-top: none; }
 .rule .days { display: flex; gap: 3px; flex-wrap: wrap; }
 .rule .days button { border: 1px solid var(--divider-color); background: none; color: inherit; font: inherit; font-size: 12px; border-radius: 12px; padding: 3px 7px; cursor: pointer; }
 .rule .days button.on { background: var(--primary-color); border-color: var(--primary-color); color: var(--text-primary-color, #fff); }
 .rule label { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; }
-.rule .grow { flex: 1; }
-.rule .errs { flex-basis: 100%; margin: 0; }
-.pv .day { font-size: 12px; font-weight: 500; text-transform: uppercase; letter-spacing: .05em; color: var(--secondary-text-color); margin: 10px 0 2px; }
-.pv .day:first-child { margin-top: 0; }
-.pv .ch { display: flex; gap: 10px; align-items: center; font-size: 14px; padding: 2px 0; }
-.pv .ch .t { width: 74px; font-variant-numeric: tabular-nums; color: var(--secondary-text-color); }
-.pv .ch ha-icon { --mdc-icon-size: 18px; color: var(--secondary-text-color); }
+.rule .grow, .stop .grow { flex: 1; }
+.week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; min-width: 820px; }
+.week .wd { background: var(--secondary-background-color, rgba(127,127,127,.06)); border: 1px solid var(--divider-color); border-radius: 10px; padding: 8px 10px; }
+.week .wd b { font-weight: 500; display: block; }
+.week .wd small { font-size: 11.5px; color: var(--secondary-text-color); display: block; margin-bottom: 4px; }
+.week .ch { display: flex; gap: 6px; font-size: 13px; padding: 1px 0; }
+.week .ch .t { width: 66px; flex: none; color: var(--secondary-text-color); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.modepanel { border: 1px solid var(--primary-color); }
+@media (max-width: 700px) {
+  .mhead { grid-template-columns: 1fr 28px; }
+  .mhead .what, .mhead .beg { grid-column: 1; }
+  .mbody { grid-template-columns: 1fr; padding-left: 0; }
+  .band .bn { width: 80px; } .stops, .axis { margin-left: 0; }
+}
 `;
 
 export class SbModesEditor extends HTMLElement {
@@ -134,7 +201,8 @@ export class SbModesEditor extends HTMLElement {
     this._timer = null;
     this._check = { errors: [], warnings: [] };
     this._changes = [];
-    this._tab = "zones";
+    this._view = "house";
+    this._unlinked = new Set();
   }
 
   set hass(h) {
@@ -144,7 +212,7 @@ export class SbModesEditor extends HTMLElement {
     this.shadowRoot?.querySelectorAll("ha-form, ha-selector").forEach((f) => { f.hass = h; });
   }
 
-  set zone(z) { this._wantZone = z; }
+  set zone(z) { if (z) { this._room = z; this._view = "room"; } }
 
   async _init() {
     if (!this.shadowRoot) this.attachShadow({ mode: "open" });
@@ -160,7 +228,6 @@ export class SbModesEditor extends HTMLElement {
 
   _ws(msg) { return this._hass.callWS(msg); }
 
-  /** The saved table and the draft (if any) from HA. */
   async _load() {
     const r = await this._ws({ type: "sb_modes/draft/get" });
     this._saved = r.saved;
@@ -170,30 +237,87 @@ export class SbModesEditor extends HTMLElement {
     this._stale = !!r.stale;
     this._changes = r.changes || [];
     this._check = { errors: r.errors || [], warnings: r.warnings || [] };
-    const zones = this._draft.zones || [];
-    if (!this._zone || !zones.some((z) => z.id === this._zone)) {
-      this._zone = (this._wantZone && zones.some((z) => z.id === this._wantZone)) ? this._wantZone : zones[0]?.id;
-    }
+    if (this._room && !this._zoneObj(this._room)) { this._room = null; this._view = "house"; }
     this._preview = null;
     this._render();
   }
 
-  // ── model ──────────────────────────────────────────────────────────────
+  // ── model helpers ──────────────────────────────────────────────────────
   _modes() { return this._draft.modes || []; }
-  _modeName(id) { return id === ALL ? "All modes" : (this._modes().find((m) => m.id === id)?.name || id); }
-  _modeIcon(id) { return this._modes().find((m) => m.id === id)?.icon || DEFAULT_ICONS[id] || "mdi:home-clock-outline"; }
-  _zoneObj(id = this._zone) { return (this._draft.zones || []).find((z) => z.id === id); }
-  _zoneIndex(id = this._zone) { return (this._draft.zones || []).findIndex((z) => z.id === id); }
+  _mode(id) { return this._modes().find((m) => m.id === id); }
+  _modeName(id) { return id === ALL ? "Usually" : (this._mode(id)?.name || id); }
+  _modeIcon(id) { return this._mode(id)?.icon || DEFAULT_ICONS[id] || "mdi:home-clock-outline"; }
+  _zones() { return this._draft.zones || []; }
+  _zoneObj(id) { return this._zones().find((z) => z.id === id); }
+  _zoneIndex(id) { return this._zones().findIndex((z) => z.id === id); }
   _modeIndex(id) { return this._modes().findIndex((m) => m.id === id); }
+  _types() { return this._draft.day_types || []; }
   _beh(name) { return this._schema.behaviours[name] || { label: name || "—", params: {} }; }
   _name(eid) { return this._hass.states[eid]?.attributes.friendly_name || eid; }
-  /** A light's name without its zone's name in front ("Kitchen Aux Sink" in Kitchen → "Aux Sink"). */
-  _short(eid, zoneId = this._zone) {
+  _short(eid, zoneId) {
     const n = this._name(eid), z = this._zoneObj(zoneId)?.name;
     return z && n.toLowerCase().startsWith(`${z.toLowerCase()} `) && n.length > z.length + 1 ? n.slice(z.length + 1) : n;
   }
+  _clock(at) {
+    const p = parseAt(at);
+    if (p.kind === "clock") {
+      const [h, m] = p.time.split(":").map(Number);
+      if (Number.isNaN(h)) return at;
+      const h12 = this._hass.locale?.time_format === "24" ? false : this._hass.locale?.time_format === "12" ? true
+        : new Intl.DateTimeFormat(this._hass.locale?.language, { hour: "numeric" }).resolvedOptions().hour12;
+      return h12 ? `${((h + 11) % 12) + 1}:${String(m).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}` : p.time;
+    }
+    const [oh, om] = p.off.split(":");
+    return p.off && p.off !== "00:00" ? `${p.kind} ${p.sign === "-" ? "−" : "+"} ${Number(oh)}:${om}` : p.kind;
+  }
 
-  /** The {behaviour, params} an owner holds in table d (undefined when it has none). */
+  /** A behaviour in words: its name and its numbers ("Presence + light level · dark below 50 lx · empty after 3 min"). */
+  _sayChoice(ch, zoneId, withTargets = false) {
+    if (!ch?.behaviour) return "Not controlled";
+    const b = this._beh(ch.behaviour), p = ch.params || {}, bits = [b.label];
+    for (const [k, s] of Object.entries(b.params || {})) {
+      const v = p[k] ?? s.default;
+      if (v === undefined || v === null || v === "") continue;
+      if (s.type === "number") {
+        if (k === "max_on_minutes" && !v) continue;
+        const val = s.unit === "s" && v >= 120 && v % 60 === 0 ? `${v / 60} min` : `${v}${s.unit ? ` ${s.unit}` : ""}`;
+        bits.push(`${(s.label || k).toLowerCase()} ${val}`);
+      } else if (s.type === "bool" && v) bits.push((s.label || k).toLowerCase());
+      else if (s.type === "mode") bits.push(`${(s.label || k).toLowerCase()} ${this._modeName(v)}`);
+      else if (s.type === "targets" && withTargets && Object.keys(v).length) bits.push(this._sayTargets(v, zoneId));
+      else if (s.type === "steps" && withTargets) bits.push(v.map((st) => `+${st.after_minutes} min ${this._sayTargets(st.targets, zoneId)}`).join(", "));
+    }
+    return bits.join(" · ");
+  }
+  _sayTarget(t) {
+    if (!t) return "";
+    if ("value" in t) return String(t.value);
+    if (t.state === "off") return "off";
+    if (t.min_brightness_pct != null) return `at least ${t.min_brightness_pct}%`;
+    return t.brightness_pct != null ? `${t.brightness_pct}%${t.color_temp_kelvin ? ` ${t.color_temp_kelvin} K` : ""}` : "on";
+  }
+  /** "Aux Recessed, Aux Sink at least 10% · Aux Cabinet on" — lights with the same setting together. */
+  _sayTargets(targets, zoneId) {
+    const groups = new Map();
+    for (const [e, t] of Object.entries(targets || {})) {
+      const k = this._sayTarget(t);
+      groups.set(k, [...(groups.get(k) || []), this._short(e, zoneId)]);
+    }
+    return [...groups].map(([k, names]) => `${names.join(", ")} ${k}`).join(" · ");
+  }
+  /** "Workdays 6:00 AM · Days off 8:00 AM" — when a mode begins, from the day types. */
+  _modeTimes(mid) {
+    const times = this._draft.times || {}, per = [];
+    for (const t of this._types()) {
+      const at = (times[t.id] || []).filter((e) => e.mode === mid).map((e) => this._clock(e.at) + (e.eve ? " (night before)" : ""));
+      if (at.length) per.push([t.name || t.id, at.join(", ")]);
+    }
+    if (!per.length) return (this._draft.schedule || []).some((r) => r.mode === mid) ? "by other rules" : "not scheduled";
+    if (per.length === this._types().length && per.every((x) => x[1] === per[0][1])) return `Every day ${per[0][1]}`;
+    return per.map(([n, a]) => `${n} ${a}`).join(" · ");
+  }
+
+  // owners and locs
   _choice(d, owner) {
     if (owner.kind === "mode") return d.modes.find((m) => m.id === owner.mode)?.default;
     return (d.zones.find((z) => z.id === owner.zone)?.overrides || {})[owner.mode];
@@ -206,27 +330,45 @@ export class SbModesEditor extends HTMLElement {
     if (!Object.keys(z.overrides).length) delete z.overrides;
   }
   _ownerPath(owner) {
-    return owner.kind === "mode" ? ["modes", this._modeIndex(owner.mode), "default"]
-      : ["zones", this._zoneIndex(owner.zone), "overrides", owner.mode];
+    return owner.kind === "mode" ? ["modes", this._modeIndex(owner.mode), "default"] : ["zones", this._zoneIndex(owner.zone), "overrides", owner.mode];
   }
+  _zoneOf(loc) { return loc.k === "choice" ? (loc.owner.kind === "zone" ? loc.owner.zone : null) : loc.zone; }
   _targetsRef(d, loc) {
-    const ch = this._choice(d, loc.owner);
-    ch.params = ch.params || {};
-    if (loc.step != null) {
-      const st = ch.params[loc.key][loc.step];
-      st.targets = st.targets || {};
-      return st.targets;
+    const z = this._zoneOf(loc) ? d.zones.find((q) => q.id === this._zoneOf(loc)) : null;
+    if (loc.k === "choice") {
+      const ch = this._choice(d, loc.owner);
+      ch.params = ch.params || {};
+      if (loc.step != null) { const st = ch.params[loc.key][loc.step]; return (st.targets ||= {}); }
+      return (ch.params[loc.key] ||= {});
     }
-    ch.params[loc.key] = ch.params[loc.key] || {};
-    return ch.params[loc.key];
+    if (loc.k === "enter") return ((z.on_enter ||= {})[loc.mode] ||= {});
+    if (loc.k === "band") return (z.follow.bands[loc.band].targets ||= {});
+    if (loc.k === "overlay") return (z.overlay.states[loc.state].targets ||= {});
+    if (loc.k === "button") return (z.buttons[loc.ent][loc.etype].targets ||= {});
+    return {};
+  }
+  /** After an edit: drop empty containers the table should not keep (an empty on_enter). */
+  _tidy(d, loc) {
+    if (loc.k !== "enter") return;
+    const z = d.zones.find((q) => q.id === loc.zone);
+    if (z.on_enter && !Object.keys(z.on_enter[loc.mode] || {}).length) delete z.on_enter[loc.mode];
+    if (z.on_enter && !Object.keys(z.on_enter).length) delete z.on_enter;
   }
   _lookTargets(loc) { try { return this._targetsRef(clone(this._draft), loc); } catch (e) { return {}; } }
   _locPath(loc) {
-    const p = [...this._ownerPath(loc.owner), "params", loc.key];
-    return loc.step != null ? [...p, loc.step, "targets"] : p;
+    const zi = this._zoneIndex(this._zoneOf(loc));
+    if (loc.k === "choice") {
+      const p = [...this._ownerPath(loc.owner), "params", loc.key];
+      return loc.step != null ? [...p, loc.step, "targets"] : p;
+    }
+    if (loc.k === "enter") return ["zones", zi, "on_enter", loc.mode];
+    if (loc.k === "band") return ["zones", zi, "follow", "bands", loc.band];
+    if (loc.k === "overlay") return ["zones", zi, "overlay", "states", loc.state];
+    if (loc.k === "button") return ["zones", zi, "buttons", loc.ent, loc.etype];
+    return [];
   }
 
-  /** A field edit: change the model, store the draft after a pause, refresh the bar. */
+  // ── draft ──────────────────────────────────────────────────────────────
   _edit(fn, redraw = false) {
     fn(this._draft);
     this._dirty = true;
@@ -246,39 +388,31 @@ export class SbModesEditor extends HTMLElement {
     } catch (e) { this._msg = `The draft was not stored: ${e?.message || e}`; }
     this._renderBar();
     this._renderErrors();
-    if (this._tab === "schedule") this._loadPreview();
+    if (this._view === "times") this._loadPreview();
   }
 
-  _errorsAt(prefix, list = this._check.errors) {
-    return list.filter((e) => prefix.every((p, i) => e.path[i] === p));
-  }
+  _errorsAt(prefix, list = this._check.errors) { return list.filter((e) => prefix.every((p, i) => e.path[i] === p)); }
 
   // ── rendering ──────────────────────────────────────────────────────────
   _render() {
     const root = this.shadowRoot;
-    const tabErr = (k) => this._errorsAt([k === "schedule" ? "schedule" : k]).length + (k === "modes" ? this._errorsAt(["fallback_mode"]).length : 0);
-    const tabs = [["zones", "Zones"], ["modes", "Modes"], ["schedule", "Schedule"]].map(([k, l]) =>
-      `<button role="tab" data-tab="${k}" class="${this._tab === k ? "on" : ""}" aria-selected="${this._tab === k}">${l}${tabErr(k) ? `<span class="dot"></span>` : ""}</button>`).join("");
-    const body = this._tab === "modes" ? this._modesHtml() : this._tab === "schedule" ? this._scheduleHtml() : this._zonesHtml();
-    root.innerHTML = `<style>${STYLE}</style>
-      <div class="bar"></div>
-      ${this._review ? this._reviewHtml() : ""}
-      <div class="tabs" role="tablist" aria-label="Edit">${tabs}</div>
-      ${body}`;
+    const tab = (k, l) => `<button role="tab" data-view="${k}" class="${(this._view === k || (k === "house" && this._view === "room")) ? "on" : ""}">${l}<span class="tdot" data-tdot="${k}"></span></button>`;
+    const body = this._view === "times" ? this._timesHtml() : this._view === "room" ? this._roomHtml() : this._houseHtml();
+    root.innerHTML = `<style>${STYLE}</style><div class="bar"></div>${this._review ? this._reviewHtml() : ""}
+      <div class="tabs" role="tablist" aria-label="Edit">${tab("house", "House")}${tab("times", "Times")}</div>${body}`;
     this._renderBar();
     this._mountForms();
     this._wire();
     this._renderErrors();
-    if (this._tab === "schedule" && !this._preview) this._loadPreview();
+    if (this._view === "times") { if (this._preview) this._renderPreview(); else this._loadPreview(); }
   }
 
   _renderBar() {
     const bar = this.shadowRoot.querySelector(".bar");
     if (!bar) return;
     const n = this._changes.length, ne = this._check.errors.length;
-    const pending = this._dirty ? " · storing the draft…" : "";
     bar.innerHTML = `<span class="st">${this._hasDraft || this._dirty
-        ? `<b>Draft</b> · ${n} change${n === 1 ? "" : "s"}${ne ? ` · <span class="err">${ne} error${ne === 1 ? "" : "s"}</span>` : ""}${pending}${
+        ? `<b>Draft</b> · ${n} change${n === 1 ? "" : "s"}${ne ? ` · <span class="err">${ne} error${ne === 1 ? "" : "s"}</span>` : ""}${this._dirty ? " · storing…" : ""}${
           this._stale ? ` · <span class="err">the table was saved elsewhere since</span>` : ""}`
         : `No changes${this._version ? ` · version ${esc(this._version)}` : " to the saved table"}`}${this._msg ? ` · <span class="err">${esc(this._msg)}</span>` : ""}${
         this._toast ? ` · <span>${esc(this._toast)}</span>` : ""}</span>
@@ -297,90 +431,179 @@ export class SbModesEditor extends HTMLElement {
     </div></div>`;
   }
 
-  // ── Zones tab ──────────────────────────────────────────────────────────
-  _zonesHtml() {
-    const z = this._zoneObj();
-    return `<div class="card"><div class="chips" role="tablist" aria-label="Zones">${(this._draft.zones || []).map((x, i) =>
-        `<button role="tab" data-zone="${esc(x.id)}" class="${x.id === this._zone ? "on" : ""}" aria-selected="${x.id === this._zone}">${esc(x.name || x.id)}${
-          this._errorsAt(["zones", i]).length ? `<span class="dot" title="Has errors"></span>` : ""}</button>`).join("")}
-        <button data-act="add-zone" title="Add a zone">+ Zone</button></div></div>
-      ${z ? this._zoneHtml(z) : `<div class="card"><div class="sec empty">No zones yet — add one.</div></div>`}`;
+  // ── House ──────────────────────────────────────────────────────────────
+  _houseHtml() {
+    const modes = this._modes();
+    const head = modes.map((m) => `<th><button class="mh" data-mode-open="${esc(m.id)}" aria-label="Edit mode ${esc(m.name || m.id)}">
+        <span class="mn"><ha-icon icon="${esc(this._modeIcon(m.id))}"></ha-icon>${esc(m.name || m.id)}${this._errorsAt(["modes", this._modeIndex(m.id)]).length ? `<span class="dot"></span>` : ""}</span>
+        <span class="mt">${esc(this._modeTimes(m.id))}</span></button></th>`).join("");
+    const rows = this._zones().map((z) => {
+      const ov = z.overrides || {}, usual = ov[ALL];
+      const cells = modes.map((m) => {
+        const own = ov[m.id];
+        const fallback = !own && !usual ? this._mode(m.id)?.default : null;
+        const what = own ? `<span class="own">${esc(this._sayChoice(own, z.id, true))}</span>`
+          : fallback && fallback.behaviour !== "hands_off" ? `<span class="usual">Mode default: ${esc(this._beh(fallback.behaviour).label)}</span>`
+          : usual ? `<span class="usual">Usual</span>` : `<span class="usual">Not controlled</span>`;
+        const beg = (z.on_enter || {})[m.id];
+        return `<td class="cell" data-cell="${esc(z.id)}|${esc(m.id)}">${what}${beg ? `<span class="beg">▸ ${esc(this._sayTargets(beg, z.id))}</span>` : ""}</td>`;
+      }).join("");
+      const always = [z.follow && `Follows ${this._short(z.follow.leader, z.id)}`, z.overlay && "TV overlay", z.buttons && "Hold button"].filter(Boolean);
+      const nerr = this._errorsAt(["zones", this._zoneIndex(z.id)]).length;
+      return `<tr><td class="room"><button data-room="${esc(z.id)}">${esc(z.name || z.id)} ›</button>${nerr ? `<span class="dot" title="Has errors"></span>` : ""}
+          <span class="us">${esc(usual ? this._sayChoice(usual, z.id) : "No usual setting")}</span></td>${cells}<td class="alw">${always.map(esc).join("<br>")}</td></tr>`;
+    }).join("");
+    return `${this._modePanelHtml()}
+      <div class="card"><div class="grid"><table>
+        <thead><tr><th class="lbl">Room · usually</th>${head}<th class="lbl">Always</th></tr></thead>
+        <tbody>${rows || `<tr><td colspan="${modes.length + 2}" class="empty">No rooms yet.</td></tr>`}</tbody></table></div></div>
+      <div class="legend"><span>Usual = the room's normal behaviour (left)</span><span><span class="own" style="padding:1px 7px">Own</span> = something else in that mode</span>
+        <span style="color:var(--primary-color)">▸ set once when the mode begins</span><span>Tap a room or a cell to edit · tap a mode for its name, icon and order</span></div>
+      <div class="tools" style="margin-bottom:12px"><button class="b add" data-act="add-zone">+ Room</button><button class="b add" data-act="add-mode">+ Mode</button>
+        <span class="grow" style="flex:1"></span><span class="form" data-form="fallback" style="min-width:260px"></span></div>`;
   }
 
-  _zoneHtml(z) {
-    const zi = this._zoneIndex();
-    const rows = [ALL, ...this._modes().map((m) => m.id)].map((mid) => this._zoneModeRowHtml(z, zi, mid)).join("");
-    return `<div class="card">
-      <div class="sec"><h3>${esc(z.name || z.id)}</h3><div class="errs-slot" data-path='${esc(JSON.stringify(["zones", zi]))}'></div>
-        <div class="form" data-form="basics"></div>
-        <div class="tools"><button class="b sm danger" data-act="del-zone">Delete zone</button></div></div>
-      <div class="sec"><h3>Behaviour by mode</h3>
-        <div class="help">“All modes” applies wherever a mode has no setting of its own; a mode with neither uses its own default.</div>
-        ${rows}</div>
-      <div class="sec"><h3>More</h3><div class="extra">${this._extrasHtml(z)}</div></div>
-    </div>`;
+  _modePanelHtml() {
+    const m = this._modePanel && this._mode(this._modePanel);
+    if (!m) return "";
+    const i = this._modeIndex(m.id), n = this._modes().length;
+    return `<div class="card modepanel"><div class="sec">
+      <h3>Mode · ${esc(m.name || m.id)}<span class="sub">${esc(m.id)}</span></h3>
+      <div class="errs-slot" data-path='${esc(JSON.stringify(["modes", i]))}'></div>
+      <div class="form" data-form="mode" data-mode="${esc(m.id)}"></div>
+      <div class="help">When it begins: ${esc(this._modeTimes(m.id))} — change that under Times.</div>
+      <details style="margin:8px 0"><summary class="help" style="cursor:pointer">Rooms with no setting of their own (advanced)</summary>
+        ${this._choiceEditorHtml({ kind: "mode", mode: m.id }, m.default)}</details>
+      <div class="tools"><button class="b sm" data-move-mode="${i}" data-dir="-1" ${i ? "" : "disabled"}>← Earlier</button>
+        <button class="b sm" data-move-mode="${i}" data-dir="1" ${i < n - 1 ? "" : "disabled"}>Later →</button>
+        <button class="b sm danger" data-del-mode="${esc(m.id)}">Delete mode</button><span style="flex:1"></span>
+        <button class="b sm" data-act="mode-close">Done</button></div></div></div>`;
   }
 
-  /** One row per mode: what the zone does there, and its editor when open. */
-  _zoneModeRowHtml(z, zi, mid) {
-    const ov = (z.overrides || {})[mid];
-    const key = `${z.id}|${mid}`;
-    const open = this._open.has(key);
-    let what;
-    if (ov) what = this._beh(ov.behaviour).label;
-    else if (mid === ALL) what = "Not set — each mode's default";
-    else if ((z.overrides || {})[ALL]) what = `From All modes: ${this._beh(z.overrides[ALL].behaviour).label}`;
-    else what = `Mode default: ${this._beh(this._modes().find((m) => m.id === mid)?.default?.behaviour).label}`;
-    const nerr = this._errorsAt(["zones", zi, "overrides", mid]).length;
+  // ── Room ───────────────────────────────────────────────────────────────
+  _roomHtml() {
+    const z = this._zoneObj(this._room);
+    if (!z) return `<div class="empty">That room is gone.</div>`;
+    const zi = this._zoneIndex(z.id);
+    const zs = Object.values(this._hass.states).find((s) => s.attributes.sb_modes_zone === z.id);
+    const usual = (z.overrides || {})[ALL];
+    const modeRows = this._modes().map((m) => this._roomModeRowHtml(z, m)).join("");
+    return `<div class="crumb"><button class="lk" data-view="house">‹ House</button><h2>${esc(z.name || z.id)}</h2>
+        <span class="live">${esc(zs ? zs.attributes.status || "" : "new — saved rooms show their live state here")}</span></div>
+      <div class="errs-slot" data-path='${esc(JSON.stringify(["zones", zi]))}'></div>
+      <div class="card"><div class="sec"><h3>1 · Usually<span class="sub">what ${esc(z.name || z.id)} does unless a mode says otherwise</span></h3>
+        ${this._choiceEditorHtml({ kind: "zone", zone: z.id, mode: ALL }, usual)}</div></div>
+      <div class="card"><div class="sec"><h3>2 · By mode<span class="sub">each mode: same as usual or its own, and anything set once when it begins</span></h3>${modeRows}</div></div>
+      <div class="card"><div class="sec"><h3>3 · Always<span class="sub">in every mode, on top of the above</span></h3>${this._alwaysHtml(z)}</div></div>
+      <div class="card"><div class="sec"><details class="devices" ${this._open.has(`dev|${z.id}`) ? "open" : ""} data-dev="${esc(z.id)}"><summary>4 · Devices
+          <span class="sub">${esc(this._sayDevices(z, zs))}</span></summary><div class="form" data-form="basics" style="margin-top:10px"></div></details>
+        <div class="tools"><button class="b sm danger" data-act="del-zone">Delete room</button></div></div></div>`;
+  }
+
+  _sayDevices(z, zs) {
+    const a = zs?.attributes || {};
+    const lights = z.lights || a.lights || [], occ = z.occupancy || a.occupancy || [], lux = z.illuminance || a.illuminance || [];
+    return [`areas ${(z.areas || []).join(", ") || "—"}`, `${lights.length} light${lights.length === 1 ? "" : "s"}`,
+      `presence: ${occ.map((e) => this._short(e, z.id)).join(", ") || "—"}`, lux.length ? `light level: ${lux.map((e) => this._short(e, z.id)).join(", ")}` : ""].filter(Boolean).join(" · ");
+  }
+
+  _roomModeRowHtml(z, m) {
+    const ov = (z.overrides || {})[m.id], key = `${z.id}|${m.id}`, open = this._open.has(key);
+    const beg = (z.on_enter || {})[m.id];
+    const what = ov ? this._sayChoice(ov, z.id, true) : (z.overrides || {})[ALL] ? "Same as usual" : `Mode default: ${this._beh(m.default?.behaviour).label}`;
+    const nerr = this._errorsAt(["zones", this._zoneIndex(z.id), "overrides", m.id]).length + this._errorsAt(["zones", this._zoneIndex(z.id), "on_enter", m.id]).length;
     return `<div class="mrow"><button class="mhead" data-row="${esc(key)}" aria-expanded="${open}">
-        <span class="mn">${esc(this._modeName(mid))}</span><span class="what ${ov ? "own" : ""}">${esc(what)}${nerr ? ` <span class="err">· ${nerr} error${nerr === 1 ? "" : "s"}</span>` : ""}</span>
+        <span class="mn">${esc(m.name || m.id)}<small>${esc(this._modeTimes(m.id))}</small></span>
+        <span class="what ${ov ? "own" : ""}">${esc(what)}${nerr ? ` <span class="err">· ${nerr} error${nerr === 1 ? "" : "s"}</span>` : ""}</span>
+        <span class="beg">${beg ? `▸ ${esc(this._sayTargets(beg, z.id))}` : ""}</span>
         <ha-icon icon="${open ? "mdi:chevron-down" : "mdi:chevron-right"}"></ha-icon></button>
-      ${open ? `<div class="mbody">${this._choiceEditorHtml({ kind: "zone", zone: z.id, mode: mid }, ov)}</div>` : ""}</div>`;
+      ${open ? `<div class="mbody"><div class="col"><h4>Behaviour</h4>${this._choiceEditorHtml({ kind: "zone", zone: z.id, mode: m.id }, ov)}</div>
+        <div class="col"><h4>When ${esc(m.name || m.id)} begins</h4>
+          ${this._targetsHtml({ k: "enter", zone: z.id, mode: m.id }, beg || {}, { label: "", help: "Set once, the moment this mode starts (not after a restart)." })}</div></div>` : ""}</div>`;
   }
 
-  _extrasHtml(z) {
-    const bits = [];
-    if (z.on_enter) bits.push(`When a mode begins: ${Object.keys(z.on_enter).map((m) => esc(this._modeName(m))).join(", ")}`);
-    if (z.follow) bits.push(`Follows ${esc(this._name(z.follow.leader))}`);
-    if (z.overlay) bits.push(`TV overlay: ${esc(this._name(z.overlay.entity))}`);
-    if (z.buttons) bits.push(`Buttons: ${Object.keys(z.buttons).map((e) => esc(this._name(e))).join(", ")}`);
-    return (bits.length ? bits.join("<br>") : "None.") + `<br><span class="help">These are edited in a later step; they are kept as they are.</span>`;
+  _alwaysHtml(z) {
+    const parts = [];
+    if (z.follow) {
+      const bands = (z.follow.bands || []).map((b, i) => ({ b, i })).sort((x, y) => (y.b.min_pct || 0) - (x.b.min_pct || 0));
+      parts.push(`<div class="box"><div class="bh"><b>Follow</b><button class="b sm" data-rm-extra="follow">Remove</button></div>
+        <div class="help">Lights that track a leader light in every mode (the band its brightness falls in sets them).</div>
+        <div class="form" data-form="follow"></div>
+        <div class="errs-slot" data-path='${esc(JSON.stringify(["zones", this._zoneIndex(z.id), "follow"]))}'></div>
+        ${bands.map(({ b, i }) => `<div class="brow"><div><label class="help" style="display:block">Leader at or above</label>
+            <input class="in" type="number" min="0" max="100" data-band-pct="${i}" value="${esc(b.min_pct ?? 0)}" style="width:64px"> %
+            <button class="ic" data-band-rm="${i}" title="Remove band" aria-label="Remove band">×</button></div>
+          <div>${this._targetsHtml({ k: "band", zone: z.id, band: i }, b.targets || {}, { label: "" })}</div></div>`).join("")}
+        <div class="tools"><button class="b sm" data-band-add="1">+ Band</button></div></div>`);
+    }
+    if (z.overlay) {
+      const st = z.overlay.states || {};
+      parts.push(`<div class="box"><div class="bh"><b>TV overlay</b><button class="b sm" data-rm-extra="overlay">Remove</button></div>
+        <div class="help">Lights set from the TV's state. A state that holds the zone replaces its behaviour while it lasts; a hold or a hand change still wins.</div>
+        <div class="form" data-form="overlay"></div>
+        <div class="errs-slot" data-path='${esc(JSON.stringify(["zones", this._zoneIndex(z.id), "overlay"]))}'></div>
+        ${OVERLAY_STATES.map((s) => `<div class="brow"><div><label><input type="checkbox" data-ov-on="${s}" ${st[s] ? "checked" : ""}> <b style="font-weight:500">${s}</b></label>
+            ${st[s] ? `<label class="help" style="display:block;margin-top:4px"><input type="checkbox" data-ov-holds="${s}" ${st[s].holds ? "checked" : ""}> holds the zone</label>` : ""}</div>
+          <div>${st[s] ? this._targetsHtml({ k: "overlay", zone: z.id, state: s }, st[s].targets || {}, { label: "" }) : `<span class="help">Not used.</span>`}</div></div>`).join("")}</div>`);
+    }
+    if (z.buttons) {
+      parts.push(`<div class="box"><div class="bh"><b>Buttons</b><button class="b sm" data-rm-extra="buttons">Remove all</button></div>
+        <div class="help">A press holds the zone (optionally setting lights, with a flash as the cue) or releases it.</div>
+        <div class="errs-slot" data-path='${esc(JSON.stringify(["zones", this._zoneIndex(z.id), "buttons"]))}'></div>
+        ${Object.entries(z.buttons).map(([ent, acts]) => this._buttonHtml(z, ent, acts)).join("")}
+        <div class="tools"><div class="add" data-btn-picker="1"></div></div></div>`);
+    }
+    const add = [!z.follow && `<button class="b add" data-add-extra="follow">+ Follow a leader light</button>`,
+      !z.overlay && `<button class="b add" data-add-extra="overlay">+ TV overlay</button>`,
+      !z.buttons && `<button class="b add" data-add-extra="buttons">+ Hold / release button</button>`].filter(Boolean).join("");
+    return `${parts.join("")}${add ? `<div class="tools">${add}</div>` : ""}`;
   }
 
-  // ── the behaviour editor (a zone's setting for a mode, or a mode's default) ──
+  _buttonHtml(z, ent, acts) {
+    const types = this._hass.states[ent]?.attributes.event_types || Object.keys(acts);
+    const PRESS = { multi_press_1: "Press", multi_press_2: "Double press", multi_press_3: "Triple press", long_press: "Hold", long_release: "Hold (on release)" };
+    const actKey = (a) => !a ? "" : a === "release" || a.release ? "release" : a.hold === "next" ? "next" : a.hold === "paused" ? "paused" : `m${a.hold}`;
+    const rows = types.map((et) => {
+      const a = acts[et], k = actKey(a), id = esc(JSON.stringify({ ent, et }));
+      return `<div class="stop" style="margin:4px 0"><span style="width:130px">${esc(PRESS[et] || et)}</span>
+        <select data-btn='${id}' data-f="act">${[["", "nothing"], ["m15", "hold 15 min"], ["m30", "hold 30 min"], ["m60", "hold 60 min"], ["next", "hold until the next mode"],
+          ["paused", "hold until released"], ["release", "release"], ...(k && /^m\d+$/.test(k) && !["m15", "m30", "m60"].includes(k) ? [[k, `hold ${k.slice(1)} min`]] : [])]
+          .map(([v, l]) => `<option value="${v}" ${v === k ? "selected" : ""}>${l}</option>`).join("")}</select>
+        ${k ? `<label class="help">flash <select data-btn='${id}' data-f="flash">${[0, 1, 2, 3].map((n) => `<option value="${n}" ${(a.flash || 0) === n ? "selected" : ""}>${n ? `×${n}` : "none"}</option>`).join("")}</select></label>` : ""}</div>
+        ${k && k !== "release" ? `<div style="margin-left:140px">${this._targetsHtml({ k: "button", zone: z.id, ent, etype: et }, a.targets || {}, { label: "", help: "Lights to set when it holds (leave empty to keep them as they are)." })}</div>` : ""}`;
+    }).join("");
+    return `<div class="brow"><div><b style="font-weight:500">${esc(this._short(ent, z.id))}</b><br><button class="ic" data-btn-rm="${esc(ent)}" title="Remove button" style="font-size:13px;padding:0">remove</button></div><div>${rows}</div></div>`;
+  }
+
+  // ── the behaviour editor ───────────────────────────────────────────────
   _choiceEditorHtml(owner, ch) {
     const o = esc(JSON.stringify(owner));
     const pick = `<div class="form" data-form="pick" data-owner='${o}'></div>`;
-    if (!ch) return `${pick}<div class="help">${owner.mode === ALL ? "Pick a behaviour to use in every mode without its own setting." : "Pick a behaviour to give this mode its own setting."}</div>`;
-    const b = this._beh(ch.behaviour);
-    const params = b.params || {};
+    if (!ch) return pick;
+    const b = this._beh(ch.behaviour), params = b.params || {};
     const scalar = Object.keys(params).some((k) => !["targets", "steps"].includes(params[k].type));
     const big = Object.entries(params).filter(([, s]) => ["targets", "steps"].includes(s.type));
     return `${pick}<div class="help">${esc(b.help || "")}</div>
       <div class="errs-slot" data-path='${esc(JSON.stringify(this._ownerPath(owner)))}'></div>
       ${scalar ? `<div class="form" data-form="params" data-owner='${o}'></div>` : ""}
-      ${big.map(([k, s]) => s.type === "targets"
-        ? this._targetsHtml({ owner, key: k }, (ch.params || {})[k] || {}, s)
+      ${big.map(([k, s]) => s.type === "targets" ? this._targetsHtml({ k: "choice", owner, key: k }, (ch.params || {})[k] || {}, s)
         : this._stepsHtml(owner, k, (ch.params || {})[k] || [], s)).join("")}`;
   }
 
-  /** The light-settings table for one targets parameter. */
   _targetsHtml(loc, targets, spec) {
-    const id = esc(JSON.stringify(loc));
-    const zoneId = loc.owner.kind === "zone" ? loc.owner.zone : null;
+    const id = esc(JSON.stringify(loc)), zoneId = this._zoneOf(loc);
     const rows = Object.entries(targets).map(([eid, t]) => {
       const mode = t.state === "off" ? "off" : t.min_brightness_pct != null ? "min" : "on";
       const pct = mode === "min" ? t.min_brightness_pct : t.brightness_pct;
       const isLight = eid.startsWith("light.");
       return `<tr data-eid="${esc(eid)}"><td class="n" title="${esc(this._name(eid))} (${esc(eid)})">${esc(zoneId ? this._short(eid, zoneId) : this._name(eid))}</td>
-        <td><select data-f="mode" aria-label="Setting">${[["on", "On"], ["off", "Off"], ...(isLight ? [["min", "At least"]] : [])]
-          .map(([v, l]) => `<option value="${v}" ${v === mode ? "selected" : ""}>${l}</option>`).join("")}</select></td>
+        <td><select data-f="mode" aria-label="Setting">${[["on", "On"], ["off", "Off"], ...(isLight ? [["min", "At least"]] : [])].map(([v, l]) => `<option value="${v}" ${v === mode ? "selected" : ""}>${l}</option>`).join("")}</select></td>
         <td>${isLight && mode !== "off" ? `<input class="in" type="number" min="0" max="100" data-f="pct" value="${esc(pct ?? "")}" placeholder="—" aria-label="Brightness %"> %` : ""}</td>
         <td>${isLight && mode === "on" ? `<input class="in" type="number" min="1500" max="9000" step="100" data-f="k" value="${esc(t.color_temp_kelvin ?? "")}" placeholder="—" aria-label="Colour temperature K"> K` : ""}</td>
         <td><button class="ic" data-f="rm" title="Remove" aria-label="Remove">×</button></td></tr>`;
     }).join("");
     return `<div class="tg-wrap" data-loc='${id}'>
-      <div class="tlabel">${esc(spec.label || loc.key)}</div>${spec.help ? `<div class="help">${esc(spec.help)}</div>` : ""}
+      ${spec.label ? `<div class="tlabel">${esc(spec.label)}</div>` : ""}${spec.help ? `<div class="help">${esc(spec.help)}</div>` : ""}
       ${rows ? `<table class="tg"><tbody>${rows}</tbody></table>` : `<div class="empty">No lights set.</div>`}
       <div class="tools"><div class="add" data-picker='${id}'></div>
         <button class="b sm" data-tg="capture" title="Fill from how the lights are right now">Use the lights as they are now</button>
@@ -393,87 +616,110 @@ export class SbModesEditor extends HTMLElement {
     return `<div class="tlabel">${esc(spec.label || key)}</div>
       ${steps.map((st, i) => `<div class="step"><div class="sh">+ <input class="in" type="number" min="0" max="720" data-step="${i}" data-owner='${o}' data-key="${esc(key)}" value="${esc(st.after_minutes ?? 0)}" aria-label="Minutes after"> min
           <button class="ic" data-step-rm="${i}" data-owner='${o}' data-key="${esc(key)}" title="Remove step">×</button></div>
-        ${this._targetsHtml({ owner, key, step: i }, st.targets || {}, { label: `Step ${i + 1}` })}</div>`).join("")}
+        ${this._targetsHtml({ k: "choice", owner, key, step: i }, st.targets || {}, { label: `Step ${i + 1}` })}</div>`).join("")}
       <div class="tools"><button class="b sm" data-step-add="1" data-owner='${o}' data-key="${esc(key)}">+ Step</button></div>`;
   }
 
-  // ── Modes tab ──────────────────────────────────────────────────────────
-  _modesHtml() {
-    const modes = this._modes();
-    const list = modes.map((m, i) => {
-      const open = this._open.has(`mode|${m.id}`);
-      const saved = (this._saved.modes || []).some((x) => x.id === m.id);
-      const nerr = this._errorsAt(["modes", i]).length;
-      return `<div class="sec"><div class="mtitle">
-          <span class="mn" data-mode-row="${esc(m.id)}" role="button" aria-expanded="${open}"><ha-icon icon="${esc(this._modeIcon(m.id))}"></ha-icon>${esc(m.name || m.id)}
-            <span class="mid">${esc(m.id)}${saved ? "" : " · new"}</span>${nerr ? ` <span class="err" style="font-size:13px">· ${nerr} error${nerr === 1 ? "" : "s"}</span>` : ""}</span>
-          <button class="ic" data-move="${i}" data-dir="-1" ${i ? "" : "disabled"} title="Move up" aria-label="Move up">↑</button>
-          <button class="ic" data-move="${i}" data-dir="1" ${i < modes.length - 1 ? "" : "disabled"} title="Move down" aria-label="Move down">↓</button>
-          <button class="ic" data-mode-row="${esc(m.id)}" aria-label="${open ? "Close" : "Open"}"><ha-icon icon="${open ? "mdi:chevron-down" : "mdi:chevron-right"}"></ha-icon></button></div>
-        ${open ? `<div class="errs-slot" data-path='${esc(JSON.stringify(["modes", i]))}'></div>
-          <div class="form" data-form="mode" data-mode="${esc(m.id)}"></div>
-          <div class="tlabel">Default behaviour</div><div class="help">What every zone does in ${esc(m.name || m.id)} unless it has its own setting (or one for All modes).</div>
-          ${this._choiceEditorHtml({ kind: "mode", mode: m.id }, m.default)}
-          <div class="tools"><button class="b sm danger" data-del-mode="${esc(m.id)}">Delete mode</button></div>` : ""}</div>`;
+  // ── Times ──────────────────────────────────────────────────────────────
+  _timesHtml() {
+    const types = this._types(), sets = this._schema.day_sets || [];
+    const typeRows = types.map((t, i) => {
+      const last = i === types.length - 1;
+      return `<div class="dtrow" data-dt="${i}"><span class="pri">${i + 1}</span>
+        <input class="in" data-dt-f="name" value="${esc(t.name || "")}" aria-label="Day type name">
+        ${last ? `<span class="help" style="margin:0">every other day</span>`
+          : `<select data-dt-f="set" aria-label="Calendar">${sets.some((s) => s.id === t.day_set) ? "" : `<option value="${esc(t.day_set || "")}" selected>${esc(t.day_set || "choose a calendar…")}</option>`}${
+              sets.map((s) => `<option value="${esc(s.id)}" ${s.id === t.day_set ? "selected" : ""}>${esc(s.name)}</option>`).join("")}</select>`}
+        <span class="grow" style="flex:1"></span>
+        <button class="ic" data-dt-move="${i}" data-dir="-1" ${i && !last ? "" : "disabled"} title="Higher priority" aria-label="Higher priority">↑</button>
+        <button class="ic" data-dt-move="${i}" data-dir="1" ${i < types.length - 2 ? "" : "disabled"} title="Lower priority" aria-label="Lower priority">↓</button>
+        <button class="ic" data-dt-rm="${i}" ${last || types.length < 2 ? "disabled" : ""} title="Remove day type" aria-label="Remove day type">×</button>
+        <div class="errs-slot" style="flex-basis:100%" data-path='${esc(JSON.stringify(["day_types", i]))}'></div></div>`;
     }).join("");
-    return `<div class="card"><div class="sec"><h3>Fallback</h3><div class="errs-slot" data-path='["fallback_mode"]'></div>
-        <div class="form" data-form="fallback"></div>
-        <div class="help">The mode at start-up when the schedule gives none, and when the active mode is deleted.</div></div></div>
-      <div class="card">${list || `<div class="sec empty">No modes.</div>`}
-        <div class="sec"><button class="b sm" data-act="add-mode">+ Mode</button></div></div>`;
+    const bands = types.map((t) => this._bandHtml(t)).join("");
+    return `<div class="card"><div class="sec"><h3>Day types<span class="sub">a day takes the first type whose calendar holds it; the last takes every other day</span></h3>
+        <div class="errs-slot" data-path='["day_types"]'></div>
+        ${typeRows || `<div class="empty">No day types — the house follows only the other rules below.</div>`}
+        <div class="tools">${types.length ? `<button class="b sm" data-act="add-type">+ Day type</button>` : `<button class="b sm" data-act="start-types">Use day types</button>`}</div></div>
+      ${types.length ? `<div class="sec"><div class="axis"><span>12 AM</span><span>6 AM</span><span>12 PM</span><span>6 PM</span><span>12 AM</span></div>${bands}</div>` : ""}</div>
+      <div class="card"><div class="sec"><h3>Other rules<span class="sub">one weekday, another calendar — they add to the day types' times</span></h3>${this._rulesHtml()}</div></div>
+      <div class="card"><div class="sec"><h3>The coming week</h3><div class="pvbody" style="overflow-x:auto"><div class="empty">Working it out…</div></div></div></div>`;
   }
 
-  /** Where a mode is used, in words — before it is deleted. */
-  _modeUses(id) {
-    const d = this._draft, uses = [], blocks = [];
-    for (const z of d.zones || []) {
-      if ((z.overrides || {})[id]) uses.push(`${z.name || z.id}: its own setting for this mode`);
-      if ((z.on_enter || {})[id]) uses.push(`${z.name || z.id}: settings when this mode begins`);
-      for (const [k, c] of Object.entries(z.overrides || {})) if (c?.params?.after_mode === id) blocks.push(`${z.name || z.id} (${this._modeName(k)}): wake-up after this mode`);
-    }
-    for (const m of d.modes || []) if (m.id !== id && m.default?.params?.after_mode === id) blocks.push(`${m.name || m.id}: its default wakes up after this mode`);
-    (d.schedule || []).forEach((r, i) => { if (r.mode === id) uses.push(`schedule rule ${i + 1}`); });
-    if (d.fallback_mode === id) blocks.push("it is the fallback mode");
-    return { uses, blocks };
+  /** One day type: a 24-hour strip from its times (sun times at today's), then its editable times. */
+  _bandHtml(t) {
+    const entries = (this._draft.times || {})[t.id] || [];
+    const sun = this._hass.states["sun.sun"]?.attributes || {};
+    const hourOf = (at) => {
+      const p = parseAt(at);
+      if (p.kind === "clock") { const [h, m] = p.time.split(":").map(Number); return h + m / 60; }
+      const base = new Date(p.kind === "sunset" ? sun.next_setting : sun.next_rising);
+      if (Number.isNaN(base.getTime())) return p.kind === "sunset" ? 18 : 7;
+      const local = new Date(base.toLocaleString("en-US", { timeZone: this._hass.config?.time_zone }));
+      const [oh, om] = p.off.split(":").map(Number);
+      return local.getHours() + local.getMinutes() / 60 + (p.sign === "-" ? -1 : 1) * (oh + om / 60);
+    };
+    const own = entries.filter((e) => !e.eve).map((e) => ({ h: hourOf(e.at), mode: e.mode })).sort((a, b) => a.h - b.h);
+    const eve = entries.filter((e) => e.eve).map((e) => ({ h: hourOf(e.at), mode: e.mode })).sort((a, b) => a.h - b.h);
+    const stops = [...own, ...eve].sort((a, b) => a.h - b.h);
+    const colour = (mid) => KNOWN_FILL[mid] || MODE_FILL[Math.max(0, this._modeIndex(mid)) % MODE_FILL.length];
+    const segs = [];
+    // before the first change the house is still in the night before's mode: an 'eve' entry of this
+    // type if it has one, else (roughly) its own last change of the day
+    let at = 0, cur = (eve.at(-1) || own.at(-1))?.mode || null;
+    for (const s of stops) { if (s.h > at) segs.push({ from: at, to: s.h, mode: cur }); at = Math.max(at, s.h); cur = s.mode; }
+    segs.push({ from: at, to: 24, mode: cur });
+    const strip = segs.filter((s) => s.to > s.from).map((s) => `<div style="flex:${(s.to - s.from).toFixed(3)} 0 0;background:${s.mode ? colour(s.mode) : "transparent"}" title="${esc(s.mode ? this._modeName(s.mode) : "the day before's mode")}"><span>${esc(s.mode ? this._modeName(s.mode) : "")}</span></div>`).join("");
+    const others = this._types().filter((x) => x.id !== t.id);
+    const rows = entries.map((e, j) => {
+      const p = parseAt(e.at), key = `${t.id}|${j}`;
+      const twins = others.filter((x) => ((this._draft.times || {})[x.id] || []).some((f) => f.mode === e.mode && f.at === e.at && !!f.eve === !!e.eve));
+      const linked = twins.length && !this._unlinked.has(key);
+      return `<div class="stop" data-stop="${esc(t.id)}|${j}">
+        <select data-s="mode" aria-label="Mode">${this._modes().map((m) => `<option value="${esc(m.id)}" ${m.id === e.mode ? "selected" : ""}>${esc(m.name || m.id)}</option>`).join("")}</select>
+        <span>at</span>
+        <select data-s="kind" aria-label="Time kind">${[["clock", "a time"], ["sunrise", "sunrise"], ["sunset", "sunset"]].map(([v, l]) => `<option value="${v}" ${v === p.kind ? "selected" : ""}>${l}</option>`).join("")}</select>
+        ${p.kind === "clock" ? `<input class="in" type="time" data-s="time" value="${esc(p.time)}" aria-label="Time">`
+          : `<select data-s="sign" aria-label="Before or after">${[["-", "−"], ["+", "+"]].map(([v, l]) => `<option value="${v}" ${v === p.sign ? "selected" : ""}>${l}</option>`).join("")}</select>
+             <input class="in" type="text" inputmode="numeric" data-s="off" value="${esc(p.off.replace(/^0/, ""))}" size="5" placeholder="0:00" aria-label="Offset, hours:minutes"> h`}
+        <label><input type="checkbox" data-s="eve" ${e.eve ? "checked" : ""}> the night before</label>
+        ${twins.length ? `<label title="Also change it in ${esc(twins.map((x) => x.name).join(", "))}"><input type="checkbox" data-s="link" ${linked ? "checked" : ""}> same in ${esc(twins.map((x) => x.name).join(", "))}</label>` : ""}
+        <span class="grow"></span><button class="ic" data-s="rm" title="Remove" aria-label="Remove">×</button>
+        <div class="errs-slot" style="flex-basis:100%" data-path='${esc(JSON.stringify(["times", t.id, j]))}'></div></div>`;
+    }).join("");
+    return `<div class="band"><div class="bn"><b>${esc(t.name || t.id)}</b><small>${esc(t.day_set ? (this._schema.day_sets || []).find((s) => s.id === t.day_set)?.name || t.day_set : "every other day")}</small></div>
+        <div class="strip">${strip}</div></div>
+      <div class="stops">${rows || `<div class="empty">No mode changes on these days.</div>`}
+        <div class="errs-slot" data-path='${esc(JSON.stringify(["times", t.id]))}'></div>
+        <div class="tools"><button class="b sm" data-add-stop="${esc(t.id)}">+ Mode change</button></div></div>`;
   }
 
-  // ── Schedule tab ───────────────────────────────────────────────────────
-  _scheduleHtml() {
-    const rules = this._draft.schedule || [];
-    const sets = this._schema.day_sets || [];
+  _rulesHtml() {
+    const rules = this._draft.schedule || [], sets = this._schema.day_sets || [];
     const rows = rules.map((r, i) => {
-      const at = parseAt(r.at);
-      const byDays = r.day_set == null;
-      const days = Array.isArray(r.days) ? r.days : [];
+      const at = parseAt(r.at), byDays = r.day_set == null, days = Array.isArray(r.days) ? r.days : [];
       return `<div class="rule" data-rule="${i}">
         <select data-r="mode" aria-label="Mode">${this._modes().map((m) => `<option value="${esc(m.id)}" ${m.id === r.mode ? "selected" : ""}>${esc(m.name || m.id)}</option>`).join("")}</select>
         <span>at</span>
         <select data-r="atkind" aria-label="Time kind">${[["clock", "a time"], ["sunrise", "sunrise"], ["sunset", "sunset"]].map(([v, l]) => `<option value="${v}" ${v === at.kind ? "selected" : ""}>${l}</option>`).join("")}</select>
         ${at.kind === "clock" ? `<input class="in" type="time" data-r="time" value="${esc(at.time)}" aria-label="Time">`
           : `<select data-r="sign" aria-label="Before or after">${[["-", "−"], ["+", "+"]].map(([v, l]) => `<option value="${v}" ${v === at.sign ? "selected" : ""}>${l}</option>`).join("")}</select>
-             <input class="in" type="text" inputmode="numeric" data-r="off" value="${esc(at.off.replace(/^0/, ""))}" size="5" placeholder="0:00" aria-label="Offset, hours:minutes" title="Offset, hours:minutes (1:00 = an hour)"> h`}
+             <input class="in" type="text" inputmode="numeric" data-r="off" value="${esc(at.off.replace(/^0/, ""))}" size="5" placeholder="0:00" aria-label="Offset, hours:minutes"> h`}
         <span>on</span>
         <select data-r="by" aria-label="Days or calendar"><option value="days" ${byDays ? "selected" : ""}>these days</option><option value="set" ${byDays ? "" : "selected"}>a calendar</option></select>
-        ${byDays ? `<span class="days">${(this._schema.days || Object.keys(DAY_NAMES)).map((dd) =>
-            `<button data-day="${dd}" class="${days.includes(dd) ? "on" : ""}" aria-pressed="${days.includes(dd)}">${DAY_NAMES[dd] || dd}</button>`).join("")}</span>`
-          : `<select data-r="set" aria-label="Calendar">${sets.some((s) => s.id === r.day_set) ? "" : `<option value="${esc(r.day_set || "")}" selected>${esc(r.day_set || "choose…")}</option>`}${
-              sets.map((s) => `<option value="${esc(s.id)}" ${s.id === r.day_set ? "selected" : ""}>${esc(s.name)}</option>`).join("")}</select>
-             <label><input type="checkbox" data-r="eve" ${r.eve ? "checked" : ""}> the evening before</label>
-             <label><input type="checkbox" data-r="not" ${r.not ? "checked" : ""}> not on those days</label>`}
+        ${byDays ? `<span class="days">${(this._schema.days || Object.keys(DAY_NAMES)).map((dd) => `<button data-day="${dd}" class="${days.includes(dd) ? "on" : ""}" aria-pressed="${days.includes(dd)}">${DAY_NAMES[dd] || dd}</button>`).join("")}</span>`
+          : `<select data-r="set" aria-label="Calendar">${sets.some((s) => s.id === r.day_set) ? "" : `<option value="${esc(r.day_set || "")}" selected>${esc(r.day_set || "choose…")}</option>`}${sets.map((s) => `<option value="${esc(s.id)}" ${s.id === r.day_set ? "selected" : ""}>${esc(s.name)}</option>`).join("")}</select>
+             <select data-r="which" aria-label="Which days">${[["", "those days"], ["not", "days not in it"], ["eve", "the evening before"], ["eve-not", "the evening before days not in it"]].map(([v, l]) =>
+               `<option value="${v}" ${v === `${r.eve ? "eve" : ""}${r.eve && r.not ? "-" : ""}${r.not ? "not" : ""}` ? "selected" : ""}>${l}</option>`).join("")}</select>`}
         <span class="grow"></span><button class="ic" data-r="rm" title="Remove rule" aria-label="Remove rule">×</button>
-        <div class="errs-slot" data-path='${esc(JSON.stringify(["schedule", i]))}'></div></div>`;
+        <div class="errs-slot" style="flex-basis:100%" data-path='${esc(JSON.stringify(["schedule", i]))}'></div></div>`;
     }).join("");
-    return `<div class="card"><div class="sec"><h3>Rules</h3>
-        <div class="help">Each rule switches the house to a mode at a time on certain days. Sunrise and sunset take an offset (sunset − 1:00 = an hour before). Calendars are SB Scheduler's day sets (Workday, Weekend…); "the evening before" moves a rule to the day before each calendar day.</div>
-        ${rows || `<div class="empty">No rules — the mode changes only by hand.</div>`}
-        <div class="tools"><button class="b sm" data-act="add-rule">+ Rule</button></div></div></div>
-      <div class="card"><div class="sec pv"><h3>The coming week</h3><div class="pvbody"><div class="empty">Working it out…</div></div></div></div>`;
+    return `${rows || `<div class="empty">None.</div>`}<div class="tools"><button class="b sm" data-act="add-rule">+ Rule</button></div>`;
   }
 
   async _loadPreview() {
-    try {
-      this._preview = await this._ws({ type: "sb_modes/preview", config: this._draft, days: 7 });
-    } catch (e) { this._preview = { error: e?.message || String(e) }; }
+    try { this._preview = await this._ws({ type: "sb_modes/preview", config: this._draft, days: 7 }); }
+    catch (e) { this._preview = { error: e?.message || String(e) }; }
     this._renderPreview();
   }
 
@@ -482,18 +728,22 @@ export class SbModesEditor extends HTMLElement {
     if (!el || !this._preview) return;
     const p = this._preview;
     if (p.error) { el.innerHTML = `<div class="err">${esc(p.error)}</div>`; return; }
-    const tz = this._hass.config?.time_zone;
-    const fmtDay = (d) => new Intl.DateTimeFormat(undefined, { weekday: "long", month: "short", day: "numeric", timeZone: tz }).format(d);
-    const fmtTime = (d) => new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit", timeZone: tz }).format(d);
-    let day = null;
-    const rows = p.changes.map((c) => {
-      const d = new Date(c.at), k = fmtDay(d), head = k !== day ? `<div class="day">${esc(k)}</div>` : "";
-      day = k;
-      return `${head}<div class="ch"><span class="t">${esc(fmtTime(d))}</span><ha-icon icon="${esc(this._modeIcon(c.mode))}"></ha-icon>${esc(this._modeName(c.mode))}</div>`;
-    }).join("");
+    const tz = this._hass.config?.time_zone, lang = this._hass.locale?.language;
+    const dayKey = (d) => new Intl.DateTimeFormat("en-CA", { timeZone: tz }).format(d);
+    const fmtDay = (d) => new Intl.DateTimeFormat(lang, { weekday: "short", day: "numeric", timeZone: tz }).format(d);
+    const fmtTime = (d) => new Intl.DateTimeFormat(lang, { hour: "numeric", minute: "2-digit", timeZone: tz }).format(d);
+    const typeName = (id) => this._types().find((t) => t.id === id)?.name || (id ? id : "—");
+    const days = Object.keys(p.day_types || {}).slice(0, 7);
+    const byDay = {};
+    for (const c of p.changes) (byDay[dayKey(new Date(c.at))] ||= []).push(c);
+    const today = dayKey(new Date());
     el.innerHTML = `<div class="help">Now: ${esc(p.now ? this._modeName(p.now) : "no scheduled mode")}</div>${
-      p.missing_day_sets?.length ? `<div class="warns">Calendar not found: ${esc(p.missing_day_sets.join(", "))} — rules on it are skipped.</div>` : ""}${
-      rows || `<div class="empty">No mode changes in the next 7 days.</div>`}`;
+      p.missing_day_sets?.length ? `<div class="warns">Calendar not found: ${esc(p.missing_day_sets.join(", "))} — its days are skipped.</div>` : ""}
+      <div class="week">${days.map((k) => {
+        const d = new Date(`${k}T12:00:00`);
+        return `<div class="wd"><b>${esc(fmtDay(d))}</b><small>${esc(typeName(p.day_types[k]))}${k === today ? " · today" : ""}</small>${
+          (byDay[k] || []).map((c) => `<div class="ch"><span class="t">${esc(fmtTime(new Date(c.at)))}</span><span>${esc(this._modeName(c.mode))}</span></div>`).join("") || `<div class="ch help">no change</div>`}</div>`;
+      }).join("")}</div>`;
   }
 
   // ── HA form elements ───────────────────────────────────────────────────
@@ -508,66 +758,76 @@ export class SbModesEditor extends HTMLElement {
     return f;
   }
 
+  _picker(slot, selector, label, onPick) {
+    const sel = document.createElement("ha-selector");
+    sel.hass = this._hass;
+    sel.selector = selector;
+    sel.label = label;
+    sel.required = false;
+    sel.value = "";
+    sel.addEventListener("value-changed", (e) => { if (e.detail.value) onPick(e.detail.value); });
+    slot.appendChild(sel);
+  }
+
   _mountForms() {
-    const root = this.shadowRoot;
-    const modeOpts = () => this._modes().map((m) => ({ value: m.id, label: m.name || m.id }));
-    const z = this._zoneObj();
+    const root = this.shadowRoot, modeOpts = () => this._modes().map((m) => ({ value: m.id, label: m.name || m.id }));
+    const fb = root.querySelector('[data-form="fallback"]');
+    if (fb) fb.appendChild(this._form([{ name: "fallback_mode", selector: { select: { mode: "dropdown", options: modeOpts() } } }],
+      { fallback_mode: this._draft.fallback_mode || "" }, (v) => this._edit((d) => { d.fallback_mode = v.fallback_mode; }), { fallback_mode: "Mode at start-up when the schedule gives none" }));
+    root.querySelectorAll('[data-form="mode"]').forEach((slot) => {
+      const m = this._mode(slot.dataset.mode);
+      slot.appendChild(this._form([{ name: "name", selector: { text: {} } }, { name: "icon", selector: { icon: { placeholder: DEFAULT_ICONS[m.id] || "mdi:home-clock-outline" } } }],
+        { name: m.name || "", icon: m.icon || "" },
+        (v) => this._edit((d) => { const x = d.modes.find((q) => q.id === m.id); x.name = v.name; if (v.icon) x.icon = v.icon; else delete x.icon; }), { name: "Name", icon: "Icon" }));
+    });
+    const z = this._view === "room" ? this._zoneObj(this._room) : null;
     const basics = root.querySelector('[data-form="basics"]');
     if (basics && z) {
       basics.appendChild(this._form([
-        { name: "name", selector: { text: {} } },
-        { name: "areas", selector: { area: { multiple: true } } },
+        { name: "name", selector: { text: {} } }, { name: "areas", selector: { area: { multiple: true } } },
         { name: "lights", selector: { entity: { multiple: true, filter: { domain: ["light", "switch"] } } } },
         { name: "occupancy", selector: { entity: { multiple: true, filter: { domain: "binary_sensor", device_class: ["occupancy", "presence"] } } } },
         { name: "illuminance", selector: { entity: { multiple: true, filter: { domain: "sensor", device_class: "illuminance" } } } },
       ], { name: z.name || "", areas: z.areas || [], lights: z.lights || [], occupancy: z.occupancy || [], illuminance: z.illuminance || [] },
       (v) => this._edit((d) => {
         const x = d.zones.find((q) => q.id === z.id);
-        x.name = v.name;
-        x.areas = v.areas || [];
+        x.name = v.name; x.areas = v.areas || [];
         for (const k of ["lights", "occupancy", "illuminance"]) { if (v[k]?.length) x[k] = v[k]; else delete x[k]; }
-      }), { name: "Name", areas: "Areas", lights: "Own lights", occupancy: "Own occupancy sensors", illuminance: "Own light sensors" },
-      { lights: "Leave empty to use every light in the areas.", occupancy: "Leave empty to use the areas' occupancy sensors.",
-        illuminance: "Leave empty to use (the average of) the areas' light sensors." }));
+      }), { name: "Name", areas: "Areas", lights: "Own lights", occupancy: "Own presence sensors", illuminance: "Own light sensors" },
+      { lights: "Leave empty to use every light in the areas.", occupancy: "Leave empty to use the areas' presence sensors.", illuminance: "Leave empty to use (the average of) the areas' light sensors." }));
     }
-    const fb = root.querySelector('[data-form="fallback"]');
-    if (fb) {
-      fb.appendChild(this._form([{ name: "fallback_mode", selector: { select: { mode: "dropdown", options: modeOpts() } } }],
-        { fallback_mode: this._draft.fallback_mode || "" }, (v) => this._edit((d) => { d.fallback_mode = v.fallback_mode; }), { fallback_mode: "Fallback mode" }));
-    }
-    root.querySelectorAll('[data-form="mode"]').forEach((slot) => {
-      const m = this._modes().find((x) => x.id === slot.dataset.mode);
-      slot.appendChild(this._form([{ name: "name", selector: { text: {} } },
-        { name: "icon", selector: { icon: { placeholder: DEFAULT_ICONS[m.id] || "mdi:home-clock-outline" } } }],
-        { name: m.name || "", icon: m.icon || "" },
-        (v) => this._edit((d) => { const x = d.modes.find((q) => q.id === m.id); x.name = v.name; if (v.icon) x.icon = v.icon; else delete x.icon; }),
-        { name: "Name", icon: "Icon" }));
-    });
+    const follow = root.querySelector('[data-form="follow"]');
+    if (follow && z) follow.appendChild(this._form([{ name: "leader", selector: { entity: { filter: { domain: ["light", "switch"] } } } }], { leader: z.follow.leader || "" },
+      (v) => this._edit((d) => { d.zones.find((q) => q.id === z.id).follow.leader = v.leader; }), { leader: "Leader light" }));
+    const overlay = root.querySelector('[data-form="overlay"]');
+    if (overlay && z) overlay.appendChild(this._form([
+      { name: "entity", selector: { entity: { filter: { domain: "media_player" } } } },
+      { name: "debounce_seconds", selector: { number: { min: 0, max: 3600, mode: "box", unit_of_measurement: "s" } } },
+      { name: "unavailable_cooldown_seconds", selector: { number: { min: 0, max: 3600, mode: "box", unit_of_measurement: "s" } } },
+      { name: "presence", selector: { boolean: {} } },
+    ], { entity: z.overlay.entity || "", debounce_seconds: z.overlay.debounce_seconds ?? 5, unavailable_cooldown_seconds: z.overlay.unavailable_cooldown_seconds ?? 60, presence: z.overlay.presence ?? true },
+    (v) => this._edit((d) => { const o = d.zones.find((q) => q.id === z.id).overlay; Object.assign(o, v); if (o.presence === true) delete o.presence; }),
+    { entity: "TV", debounce_seconds: "A state counts after", unavailable_cooldown_seconds: "Ignore changes after a drop-out for", presence: "Watching counts as someone in the room" }));
+    root.querySelectorAll("[data-btn-picker]").forEach((slot) => this._picker(slot, { entity: { filter: { domain: "event" } } }, "Add a button",
+      (eid) => this._edit((d) => { const x = d.zones.find((q) => q.id === z.id); (x.buttons ||= {})[eid] ||= {}; }, true)));
     root.querySelectorAll('[data-form="pick"]').forEach((slot) => {
-      const owner = JSON.parse(slot.dataset.owner);
-      const ch = this._choice(this._draft, owner);
-      const opts = [
-        ...(owner.kind === "zone" ? [{ value: "", label: owner.mode === ALL ? "Not set — each mode's default" : "Not set — use All modes or the mode's default" }] : []),
-        ...Object.entries(this._schema.behaviours).map(([k, b]) => ({ value: k, label: b.label })),
-      ];
-      const label = owner.kind === "mode" ? "Behaviour" : `Setting for ${this._modeName(owner.mode)}`;
-      slot.appendChild(this._form([{ name: "behaviour", selector: { select: { mode: "dropdown", options: opts } } }],
-        { behaviour: ch?.behaviour || "" },
+      const owner = JSON.parse(slot.dataset.owner), ch = this._choice(this._draft, owner);
+      const NONE = "__none__";
+      const opts = [...(owner.kind === "zone" ? [{ value: NONE, label: owner.mode === ALL ? "Not set — each mode's default" : "Same as usual" }] : []),
+        ...Object.entries(this._schema.behaviours).map(([k, b]) => ({ value: k, label: b.label }))];
+      slot.appendChild(this._form([{ name: "behaviour", selector: { select: { mode: "dropdown", options: opts } } }], { behaviour: ch?.behaviour || NONE },
         (v) => this._edit((d) => {
           const cur = this._choice(d, owner);
-          if (!v.behaviour) { if (owner.kind === "zone") this._setChoice(d, owner, null); }
+          if (!v.behaviour || v.behaviour === NONE) { if (owner.kind === "zone") this._setChoice(d, owner, null); }
           else if (cur?.behaviour !== v.behaviour) this._setChoice(d, owner, { behaviour: v.behaviour, params: this._defaults(v.behaviour) });
-        }, true), { behaviour: label }));
+        }, true), { behaviour: owner.kind === "mode" ? "Behaviour" : owner.mode === ALL ? "Behaviour" : `In ${this._modeName(owner.mode)}` }));
     });
     root.querySelectorAll('[data-form="params"]').forEach((slot) => {
-      const owner = JSON.parse(slot.dataset.owner);
-      const ch = this._choice(this._draft, owner);
-      const params = this._beh(ch.behaviour).params;
+      const owner = JSON.parse(slot.dataset.owner), ch = this._choice(this._draft, owner), params = this._beh(ch.behaviour).params;
       const schema = [], labels = {}, helps = {};
       for (const [k, s] of Object.entries(params)) {
         if (["targets", "steps"].includes(s.type)) continue;
-        labels[k] = s.label || k;
-        helps[k] = s.help;
+        labels[k] = s.label || k; helps[k] = s.help;
         if (s.type === "number") schema.push({ name: k, required: !!s.required, selector: { number: { min: s.min, max: s.max, mode: "box", unit_of_measurement: s.unit } } });
         else if (s.type === "bool") schema.push({ name: k, selector: { boolean: {} } });
         else if (s.type === "entities") schema.push({ name: k, required: !!s.required, selector: { entity: { multiple: true, filter: { domain: s.domains } } } });
@@ -577,8 +837,7 @@ export class SbModesEditor extends HTMLElement {
       const data = {};
       for (const k of Object.keys(labels)) data[k] = (ch.params || {})[k] ?? params[k].default;
       const form = this._form(schema, data, (v) => this._edit((d) => {
-        const c = this._choice(d, owner);
-        const p = (c.params ||= {});
+        const p = (this._choice(d, owner).params ||= {});
         for (const k of Object.keys(labels)) { if (v[k] === undefined || v[k] === "" || v[k] === null) delete p[k]; else p[k] = v[k]; }
       }), labels, helps);
       form.dataset.owner = slot.dataset.owner;
@@ -587,18 +846,8 @@ export class SbModesEditor extends HTMLElement {
     });
     root.querySelectorAll("[data-picker]").forEach((slot) => {
       const loc = JSON.parse(slot.dataset.picker);
-      const sel = document.createElement("ha-selector");
-      sel.hass = this._hass;
-      sel.selector = { entity: { filter: { domain: ["light", "switch", "number"] } } };
-      sel.label = "Add a light";
-      sel.required = false;
-      sel.value = "";
-      sel.addEventListener("value-changed", (e) => {
-        const eid = e.detail.value;
-        if (!eid) return;
-        this._edit((d) => { this._targetsRef(d, loc)[eid] = eid.startsWith("number.") ? { value: 0 } : { brightness_pct: 100 }; }, true);
-      });
-      slot.appendChild(sel);
+      this._picker(slot, { entity: { filter: { domain: ["light", "switch", "number"] } } }, "Add a light",
+        (eid) => this._edit((d) => { this._targetsRef(d, loc)[eid] = eid.startsWith("number.") ? { value: 0 } : { brightness_pct: 100 }; }, true));
     });
   }
 
@@ -612,15 +861,13 @@ export class SbModesEditor extends HTMLElement {
     return p;
   }
 
-  /** Errors and warnings into their slots, and onto the params forms by field. Each message
-   *  goes to the deepest slot whose path starts its own; a message about one form field goes on
-   *  that field instead (ha-form's own error line). */
+  /** Errors and warnings into their slots (the deepest whose path starts theirs), scalar param
+   *  errors onto their ha-form field, and dots on the tabs. */
   _renderErrors() {
     const root = this.shadowRoot;
     const slots = [...root.querySelectorAll(".errs-slot")].map((el) => ({ el, path: JSON.parse(el.dataset.path), errs: [], warns: [] }));
     const forms = [...root.querySelectorAll("ha-form.params")].map((f) => {
-      const owner = JSON.parse(f.dataset.owner);
-      const ch = this._choice(this._draft, owner);
+      const owner = JSON.parse(f.dataset.owner), ch = this._choice(this._draft, owner);
       return { f, path: this._ownerPath(owner), params: this._beh(ch?.behaviour).params || {}, out: {} };
     });
     const place = (e, kind) => {
@@ -629,7 +876,6 @@ export class SbModesEditor extends HTMLElement {
         if (p.length === fm.path.length + 2 && fm.path.every((x, i) => p[i] === x) && p[fm.path.length] === "params") {
           const spec = fm.params[p[fm.path.length + 1]];
           if (spec && !["targets", "steps"].includes(spec.type)) {
-            // the field already says where: keep the last part ("5000 is outside 1–2000.")
             if (kind === "errs") fm.out[p[fm.path.length + 1]] = e.message.replace(/^.*:\s+(?=[^:]+$)/, "");
             return;
           }
@@ -646,113 +892,165 @@ export class SbModesEditor extends HTMLElement {
         s.warns.length ? `<ul class="warns">${s.warns.map((m) => `<li>${esc(m)}</li>`).join("")}</ul>` : ""}`;
     }
     for (const fm of forms) fm.f.error = Object.keys(fm.out).length ? fm.out : undefined;
-    root.querySelectorAll(".chips [data-zone]").forEach((b) => this._dot(b, this._errorsAt(["zones", this._zoneIndex(b.dataset.zone)]).length));
-    root.querySelectorAll(".tabs [data-tab]").forEach((b) => {
-      const k = b.dataset.tab;
-      this._dot(b, this._errorsAt([k]).length + (k === "modes" ? this._errorsAt(["fallback_mode"]).length : 0));
-    });
-  }
-
-  _dot(el, on) {
-    const dot = el.querySelector(".dot");
-    if (on && !dot) el.insertAdjacentHTML("beforeend", `<span class="dot" title="Has errors"></span>`);
-    if (!on && dot) dot.remove();
+    const house = this._check.errors.filter((e) => ["zones", "modes", "fallback_mode"].includes(e.path[0])).length;
+    const times = this._check.errors.filter((e) => ["day_types", "times", "schedule"].includes(e.path[0])).length;
+    root.querySelectorAll("[data-tdot]").forEach((el) => { el.innerHTML = (el.dataset.tdot === "house" ? house : times) ? `<span class="dot"></span>` : ""; });
   }
 
   // ── events ─────────────────────────────────────────────────────────────
   _wire() {
-    const root = this.shadowRoot;
-    root.querySelectorAll("[data-tab]").forEach((b) => b.addEventListener("click", () => { this._tab = b.dataset.tab; this._render(); }));
-    root.querySelectorAll("[data-zone]").forEach((b) => b.addEventListener("click", () => { this._zone = b.dataset.zone; this._render(); }));
-    root.querySelectorAll("[data-row]").forEach((b) => b.addEventListener("click", () => this._toggle(b.dataset.row)));
-    root.querySelectorAll("[data-mode-row]").forEach((b) => b.addEventListener("click", () => this._toggle(`mode|${b.dataset.modeRow}`)));
-    root.querySelectorAll("[data-act]").forEach((b) => { if (!b.closest(".bar")) b.addEventListener("click", () => this._act(b.dataset.act)); });
-    root.querySelectorAll("[data-move]").forEach((b) => b.addEventListener("click", () => this._edit((d) => {
-      const i = Number(b.dataset.move), j = i + Number(b.dataset.dir);
-      [d.modes[i], d.modes[j]] = [d.modes[j], d.modes[i]];
+    const root = this.shadowRoot, q = (sel, fn) => root.querySelectorAll(sel).forEach(fn);
+    const room = this._view === "room" ? this._room : null;
+    const zone = (d) => d.zones.find((x) => x.id === room);
+    q("[data-view]", (b) => b.addEventListener("click", () => { this._view = b.dataset.view; this._modePanel = null; this._render(); window.scrollTo({ top: 0 }); }));
+    q("[data-room]", (b) => b.addEventListener("click", () => this._goRoom(b.dataset.room)));
+    q("[data-cell]", (td) => td.addEventListener("click", () => { const [z, m] = td.dataset.cell.split("|"); this._open.add(`${z}|${m}`); this._goRoom(z); }));
+    q("[data-mode-open]", (b) => b.addEventListener("click", () => { this._modePanel = this._modePanel === b.dataset.modeOpen ? null : b.dataset.modeOpen; this._render(); }));
+    q("[data-row]", (b) => b.addEventListener("click", () => this._toggle(b.dataset.row)));
+    q("[data-dev]", (det) => det.addEventListener("toggle", () => { const k = `dev|${det.dataset.dev}`; if (det.open) this._open.add(k); else this._open.delete(k); }));
+    q("[data-act]", (b) => { if (!b.closest(".bar")) b.addEventListener("click", () => this._act(b.dataset.act)); });
+    q("[data-move-mode]", (b) => b.addEventListener("click", () => this._edit((d) => {
+      const i = Number(b.dataset.moveMode), j = i + Number(b.dataset.dir); [d.modes[i], d.modes[j]] = [d.modes[j], d.modes[i]];
     }, true)));
-    root.querySelectorAll("[data-del-mode]").forEach((b) => b.addEventListener("click", () => this._deleteMode(b.dataset.delMode)));
-    root.querySelectorAll(".tg-wrap").forEach((w) => this._wireTargets(w));
-    root.querySelectorAll("[data-step]").forEach((inp) => inp.addEventListener("input", () => this._edit((d) => {
+    q("[data-del-mode]", (b) => b.addEventListener("click", () => this._deleteMode(b.dataset.delMode)));
+    q(".tg-wrap", (w) => this._wireTargets(w));
+    q("[data-step]", (inp) => inp.addEventListener("input", () => this._edit((d) => {
       this._choice(d, JSON.parse(inp.dataset.owner)).params[inp.dataset.key][Number(inp.dataset.step)].after_minutes = Number(inp.value || 0);
     })));
-    root.querySelectorAll("[data-step-rm]").forEach((b) => b.addEventListener("click", () => this._edit((d) => {
+    q("[data-step-rm]", (b) => b.addEventListener("click", () => this._edit((d) => {
       this._choice(d, JSON.parse(b.dataset.owner)).params[b.dataset.key].splice(Number(b.dataset.stepRm), 1);
     }, true)));
-    root.querySelectorAll("[data-step-add]").forEach((b) => b.addEventListener("click", () => this._edit((d) => {
-      const c = this._choice(d, JSON.parse(b.dataset.owner));
-      const list = (c.params ||= {})[b.dataset.key] ||= [];
+    q("[data-step-add]", (b) => b.addEventListener("click", () => this._edit((d) => {
+      const list = ((this._choice(d, JSON.parse(b.dataset.owner)).params ||= {})[b.dataset.key] ||= []);
       list.push({ after_minutes: (list.at(-1)?.after_minutes ?? 0) + 10, targets: {} });
     }, true)));
-    root.querySelectorAll(".rule").forEach((row) => this._wireRule(row));
+    // Always
+    q("[data-add-extra]", (b) => b.addEventListener("click", () => this._edit((d) => {
+      const x = zone(d), k = b.dataset.addExtra;
+      if (k === "follow") x.follow = { leader: "", bands: [{ min_pct: 50, targets: {} }, { min_pct: 0, targets: {} }] };
+      if (k === "overlay") x.overlay = { entity: "", states: { playing: { holds: true, targets: {} }, paused: { holds: true, targets: {} }, off: { targets: {} } } };
+      if (k === "buttons") x.buttons = {};
+    }, true)));
+    q("[data-rm-extra]", (b) => b.addEventListener("click", () => {
+      if (!confirm(`Remove the ${b.dataset.rmExtra === "overlay" ? "TV overlay" : b.dataset.rmExtra} from this room (in the draft)?`)) return;
+      this._edit((d) => { delete zone(d)[b.dataset.rmExtra]; }, true);
+    }));
+    q("[data-band-pct]", (inp) => inp.addEventListener("input", () => this._edit((d) => { zone(d).follow.bands[Number(inp.dataset.bandPct)].min_pct = Number(inp.value || 0); })));
+    q("[data-band-rm]", (b) => b.addEventListener("click", () => this._edit((d) => { zone(d).follow.bands.splice(Number(b.dataset.bandRm), 1); }, true)));
+    q("[data-band-add]", (b) => b.addEventListener("click", () => this._edit((d) => { zone(d).follow.bands.push({ min_pct: 0, targets: {} }); }, true)));
+    q("[data-ov-on]", (cb) => cb.addEventListener("change", () => this._edit((d) => {
+      const st = (zone(d).overlay.states ||= {});
+      if (cb.checked) st[cb.dataset.ovOn] = { targets: {} }; else delete st[cb.dataset.ovOn];
+    }, true)));
+    q("[data-ov-holds]", (cb) => cb.addEventListener("change", () => this._edit((d) => {
+      const s = zone(d).overlay.states[cb.dataset.ovHolds]; if (cb.checked) s.holds = true; else delete s.holds;
+    })));
+    q("[data-btn]", (el) => el.addEventListener("change", () => this._edit((d) => {
+      const { ent, et } = JSON.parse(el.dataset.btn), acts = zone(d).buttons[ent], cur = acts[et];
+      if (el.dataset.f === "flash") { const n = Number(el.value); if (n) cur.flash = n; else delete cur.flash; return; }
+      const v = el.value;
+      if (!v) { delete acts[et]; return; }
+      const keep = cur && typeof cur === "object" ? { ...(cur.flash ? { flash: cur.flash } : {}), ...(cur.targets && v !== "release" ? { targets: cur.targets } : {}) } : {};
+      acts[et] = v === "release" ? { release: true, ...keep } : { hold: v === "next" || v === "paused" ? v : Number(v.slice(1)), ...keep };
+    }, true)));
+    q("[data-btn-rm]", (b) => b.addEventListener("click", () => this._edit((d) => {
+      const x = zone(d); delete x.buttons[b.dataset.btnRm]; if (!Object.keys(x.buttons).length) delete x.buttons;
+    }, true)));
+    // Times
+    q("[data-dt]", (row) => {
+      const i = Number(row.dataset.dt);
+      row.querySelector('[data-dt-f="name"]')?.addEventListener("input", (e) => this._edit((d) => { d.day_types[i].name = e.target.value; }));
+      row.querySelector('[data-dt-f="set"]')?.addEventListener("change", (e) => this._edit((d) => { d.day_types[i].day_set = e.target.value; }, true));
+    });
+    q("[data-dt-move]", (b) => b.addEventListener("click", () => this._edit((d) => {
+      const i = Number(b.dataset.dtMove), j = i + Number(b.dataset.dir); [d.day_types[i], d.day_types[j]] = [d.day_types[j], d.day_types[i]];
+    }, true)));
+    q("[data-dt-rm]", (b) => b.addEventListener("click", () => {
+      const t = this._types()[Number(b.dataset.dtRm)];
+      if (!confirm(`Remove the day type “${t.name}” and its times (in the draft)?`)) return;
+      this._edit((d) => { d.day_types.splice(Number(b.dataset.dtRm), 1); if (d.times) delete d.times[t.id]; }, true);
+    }));
+    q("[data-add-stop]", (b) => b.addEventListener("click", () => this._edit((d) => {
+      ((d.times ||= {})[b.dataset.addStop] ||= []).push({ mode: this._modes()[0]?.id, at: "12:00" });
+    }, true)));
+    q("[data-stop]", (row) => this._wireStop(row));
+    q(".rule", (row) => this._wireRule(row));
   }
 
+  _goRoom(id) { this._room = id; this._view = "room"; this._modePanel = null; this._render(); window.scrollTo({ top: 0 }); }
   _toggle(k) { if (this._open.has(k)) this._open.delete(k); else this._open.add(k); this._render(); }
 
   _wireTargets(w) {
     const loc = JSON.parse(w.dataset.loc);
+    const edit = (fn, redraw) => this._edit((d) => { fn(d); this._tidy(d, loc); }, redraw);
     w.querySelectorAll("tr[data-eid]").forEach((tr) => {
       const eid = tr.dataset.eid;
-      tr.querySelector('[data-f="mode"]')?.addEventListener("change", (e) => this._edit((d) => {
-        const t = this._targetsRef(d, loc), cur = t[eid] || {}, v = e.target.value;
-        const pct = cur.min_brightness_pct ?? cur.brightness_pct;
+      tr.querySelector('[data-f="mode"]')?.addEventListener("change", (e) => edit((d) => {
+        const t = this._targetsRef(d, loc), cur = t[eid] || {}, v = e.target.value, pct = cur.min_brightness_pct ?? cur.brightness_pct;
         t[eid] = v === "off" ? { state: "off" } : v === "min" ? { min_brightness_pct: pct ?? 1 }
           : eid.startsWith("light.") ? { brightness_pct: pct ?? 100, ...(cur.color_temp_kelvin ? { color_temp_kelvin: cur.color_temp_kelvin } : {}) } : { state: "on" };
       }, true));
-      tr.querySelector('[data-f="pct"]')?.addEventListener("input", (e) => this._edit((d) => {
+      tr.querySelector('[data-f="pct"]')?.addEventListener("input", (e) => edit((d) => {
         const t = this._targetsRef(d, loc)[eid], v = e.target.value === "" ? null : Number(e.target.value);
         const key = t.min_brightness_pct != null ? "min_brightness_pct" : "brightness_pct";
         if (v == null) { delete t[key]; if (key === "brightness_pct" && !Object.keys(t).length) t.state = "on"; } else { t[key] = v; delete t.state; }
       }));
-      tr.querySelector('[data-f="k"]')?.addEventListener("input", (e) => this._edit((d) => {
-        const t = this._targetsRef(d, loc)[eid];
-        if (e.target.value === "") delete t.color_temp_kelvin; else t.color_temp_kelvin = Number(e.target.value);
+      tr.querySelector('[data-f="k"]')?.addEventListener("input", (e) => edit((d) => {
+        const t = this._targetsRef(d, loc)[eid]; if (e.target.value === "") delete t.color_temp_kelvin; else t.color_temp_kelvin = Number(e.target.value);
       }));
-      tr.querySelector('[data-f="rm"]')?.addEventListener("click", () => this._edit((d) => { delete this._targetsRef(d, loc)[eid]; }, true));
+      tr.querySelector('[data-f="rm"]')?.addEventListener("click", () => edit((d) => { delete this._targetsRef(d, loc)[eid]; }, true));
     });
     w.querySelector('[data-tg="capture"]')?.addEventListener("click", () => this._capture(loc));
     w.querySelector('[data-tg="try"]')?.addEventListener("click", () => this._try(loc));
   }
 
+  /** A day type's time entry; "same in …" changes the identical entries in the other day types too. */
+  _wireStop(row) {
+    const [tid, js] = row.dataset.stop.split("|"), j = Number(js), key = `${tid}|${j}`;
+    const linked = () => !!row.querySelector('[data-s="link"]')?.checked;
+    const change = (fn, redraw = false) => this._edit((d) => {
+      const e = d.times[tid][j], before = { mode: e.mode, at: e.at, eve: !!e.eve };
+      const twins = linked() ? Object.entries(d.times).filter(([k]) => k !== tid)
+        .flatMap(([, list]) => list.filter((f) => f.mode === before.mode && f.at === before.at && !!f.eve === before.eve)) : [];
+      for (const x of [e, ...twins]) fn(x);
+    }, redraw);
+    const on = (sel, ev, fn, redraw) => row.querySelector(sel)?.addEventListener(ev, (e) => change((x) => fn(x, e.target), redraw));
+    on('[data-s="mode"]', "change", (x, t) => { x.mode = t.value; }, true);
+    on('[data-s="kind"]', "change", (x, t) => { const p = parseAt(x.at); x.at = t.value === "clock" ? (p.kind === "clock" && p.time ? p.time : "07:00") : joinAt({ kind: t.value, sign: p.sign || "-", off: p.off || "00:00" }); }, true);
+    on('[data-s="time"]', "change", (x, t) => { if (t.value) x.at = t.value.slice(0, 5); }, true);
+    on('[data-s="sign"]', "change", (x, t) => { const p = parseAt(x.at); p.sign = t.value; x.at = joinAt(p); }, true);
+    on('[data-s="off"]', "change", (x, t) => { const p = parseAt(x.at); p.off = offInput(t.value); x.at = joinAt(p); }, true);
+    on('[data-s="eve"]', "change", (x, t) => { if (t.checked) x.eve = true; else delete x.eve; }, true);
+    row.querySelector('[data-s="link"]')?.addEventListener("change", (e) => { if (e.target.checked) this._unlinked.delete(key); else this._unlinked.add(key); });
+    row.querySelector('[data-s="rm"]')?.addEventListener("click", () => change((x) => { x.__rm = true; }, false) || this._edit((d) => {
+      for (const k of Object.keys(d.times)) d.times[k] = d.times[k].filter((x) => !x.__rm);
+    }, true));
+  }
+
   _wireRule(row) {
-    const i = Number(row.dataset.rule);
-    const rule = (d) => d.schedule[i];
+    const i = Number(row.dataset.rule), rule = (d) => d.schedule[i];
     const on = (sel, ev, fn, redraw = false) => row.querySelector(sel)?.addEventListener(ev, (e) => this._edit((d) => fn(rule(d), e.target), redraw));
     on('[data-r="mode"]', "change", (r, t) => { r.mode = t.value; }, true);
-    on('[data-r="atkind"]', "change", (r, t) => {
-      const p = parseAt(r.at);
-      r.at = t.value === "clock" ? (p.kind === "clock" && p.time ? p.time : "07:00") : joinAt({ kind: t.value, sign: p.sign || "-", off: p.off || "00:00" });
-    }, true);
+    on('[data-r="atkind"]', "change", (r, t) => { const p = parseAt(r.at); r.at = t.value === "clock" ? (p.kind === "clock" && p.time ? p.time : "07:00") : joinAt({ kind: t.value, sign: p.sign || "-", off: p.off || "00:00" }); }, true);
     on('[data-r="time"]', "change", (r, t) => { if (t.value) r.at = t.value.slice(0, 5); });
     on('[data-r="sign"]', "change", (r, t) => { const p = parseAt(r.at); p.sign = t.value; r.at = joinAt(p); });
-    on('[data-r="off"]', "change", (r, t) => {
-      const m = /^(\d{1,2})(?::(\d{1,2}))?$/.exec(t.value.trim() || "0");
-      const p = parseAt(r.at);
-      // "1" → 1:00, "1:5" → 1:05; anything else is passed through for the check to flag
-      p.off = m ? `${m[1].padStart(2, "0")}:${(m[2] || "0").padStart(2, "0")}` : t.value.trim();
-      r.at = joinAt(p);
-    });
+    on('[data-r="off"]', "change", (r, t) => { const p = parseAt(r.at); p.off = offInput(t.value); r.at = joinAt(p); });
     on('[data-r="by"]', "change", (r, t) => {
       if (t.value === "set") { delete r.days; r.day_set = (this._schema.day_sets || [])[0]?.id || ""; }
       else { delete r.day_set; delete r.eve; delete r.not; r.days = ["mon", "tue", "wed", "thu", "fri"]; }
     }, true);
     on('[data-r="set"]', "change", (r, t) => { r.day_set = t.value; });
-    on('[data-r="eve"]', "change", (r, t) => { if (t.checked) r.eve = true; else delete r.eve; });
-    on('[data-r="not"]', "change", (r, t) => { if (t.checked) r.not = true; else delete r.not; });
+    on('[data-r="which"]', "change", (r, t) => { delete r.eve; delete r.not; if (t.value.includes("eve")) r.eve = true; if (t.value.includes("not")) r.not = true; });
     row.querySelectorAll("[data-day]").forEach((b) => b.addEventListener("click", () => this._edit((d) => {
-      const r = rule(d), dd = b.dataset.day, set = new Set(r.days || []);
-      if (set.has(dd)) set.delete(dd); else set.add(dd);
+      const r = rule(d), set = new Set(r.days || []);
+      if (set.has(b.dataset.day)) set.delete(b.dataset.day); else set.add(b.dataset.day);
       r.days = (this._schema.days || Object.keys(DAY_NAMES)).filter((x) => set.has(x));
     }, true)));
-    row.querySelector('[data-r="rm"]')?.addEventListener("click", () => this._edit((d) => {
-      d.schedule.splice(i, 1);
-      if (!d.schedule.length) delete d.schedule;
-    }, true));
+    row.querySelector('[data-r="rm"]')?.addEventListener("click", () => this._edit((d) => { d.schedule.splice(i, 1); if (!d.schedule.length) delete d.schedule; }, true));
   }
 
-  /** "Use the lights as they are now": the listed lights (or the zone's own) as they stand. */
   _capture(loc) {
-    const zoneId = loc.owner.kind === "zone" ? loc.owner.zone : null;
+    const zoneId = this._zoneOf(loc);
     const zs = zoneId && Object.values(this._hass.states).find((s) => s.attributes.sb_modes_zone === zoneId);
     const listed = Object.keys(this._lookTargets(loc));
     const lights = listed.length ? listed : (zs?.attributes.lights || []);
@@ -773,37 +1071,50 @@ export class SbModesEditor extends HTMLElement {
   }
 
   async _try(loc) {
+    const zoneId = this._zoneOf(loc);
     try {
-      await this._ws({ type: "sb_modes/try", zone: loc.owner.zone, targets: this._lookTargets(loc) });
+      await this._ws({ type: "sb_modes/try", zone: zoneId, targets: this._lookTargets(loc) });
       this._msg = "";
-      this._toast = `${this._zoneObj(loc.owner.zone)?.name || loc.owner.zone} set and held 15 min — release it on the Status page to go back`;
+      this._toast = `${this._zoneObj(zoneId)?.name || zoneId} set and held 15 min — release it on the Status page to go back`;
     } catch (e) { this._msg = `Try it failed: ${e?.message || e}`; }
     this._renderBar();
   }
 
   _deleteMode(id) {
-    const { uses, blocks } = this._modeUses(id);
+    const d = this._draft, uses = [], blocks = [];
+    for (const z of d.zones || []) {
+      if ((z.overrides || {})[id]) uses.push(`${z.name || z.id}: its own setting for this mode`);
+      if ((z.on_enter || {})[id]) uses.push(`${z.name || z.id}: lights set when it begins`);
+      for (const [k, c] of Object.entries(z.overrides || {})) if (c?.params?.after_mode === id) blocks.push(`${z.name || z.id} (${this._modeName(k)}): a wake-up after this mode`);
+    }
+    for (const m of d.modes || []) if (m.id !== id && m.default?.params?.after_mode === id) blocks.push(`${m.name || m.id}: a wake-up after this mode`);
+    for (const [t, list] of Object.entries(d.times || {})) if ((list || []).some((e) => e.mode === id)) uses.push(`${this._types().find((x) => x.id === t)?.name || t}: its times`);
+    (d.schedule || []).forEach((r, i) => { if (r.mode === id) uses.push(`other rule ${i + 1}`); });
+    if (d.fallback_mode === id) blocks.push("it is the start-up mode");
     if (blocks.length) { alert(`“${this._modeName(id)}” can't be deleted yet:\n• ${blocks.join("\n• ")}\nChange those first.`); return; }
-    if ((this._modes().length) <= 1) { alert("The table needs at least one mode."); return; }
+    if (this._modes().length <= 1) { alert("The table needs at least one mode."); return; }
     if (!confirm(`Delete the mode “${this._modeName(id)}” from the draft?${uses.length ? `\nThese go with it:\n• ${uses.join("\n• ")}` : ""}\nNothing changes until you save.`)) return;
-    this._edit((d) => {
-      d.modes = d.modes.filter((m) => m.id !== id);
-      for (const z of d.zones || []) {
+    this._modePanel = null;
+    this._edit((dd) => {
+      dd.modes = dd.modes.filter((m) => m.id !== id);
+      for (const z of dd.zones || []) {
         if (z.overrides) { delete z.overrides[id]; if (!Object.keys(z.overrides).length) delete z.overrides; }
         if (z.on_enter) { delete z.on_enter[id]; if (!Object.keys(z.on_enter).length) delete z.on_enter; }
       }
-      if (d.schedule) { d.schedule = d.schedule.filter((r) => r.mode !== id); if (!d.schedule.length) delete d.schedule; }
+      for (const k of Object.keys(dd.times || {})) dd.times[k] = dd.times[k].filter((e) => e.mode !== id);
+      if (dd.schedule) { dd.schedule = dd.schedule.filter((r) => r.mode !== id); if (!dd.schedule.length) delete dd.schedule; }
     }, true);
   }
 
   async _act(act) {
     if (act === "review") { this._review = true; this._render(); window.scrollTo({ top: 0, behavior: "smooth" }); return; }
     if (act === "review-close") { this._review = false; this._render(); return; }
+    if (act === "mode-close") { this._modePanel = null; this._render(); return; }
     if (act === "discard") {
       if (!confirm("Discard the draft? The table stays as saved.")) return;
       clearTimeout(this._timer);
       await this._ws({ type: "sb_modes/draft/discard" });
-      this._review = false; this._dirty = false; this._toast = "";
+      this._review = false; this._dirty = false; this._toast = ""; this._unlinked.clear();
       await this._load();
       return;
     }
@@ -820,31 +1131,44 @@ export class SbModesEditor extends HTMLElement {
       return;
     }
     if (act === "add-zone") {
-      const name = prompt("Name of the new zone:");
+      const name = prompt("Name of the new room:");
       if (!name) return;
-      const ids = new Set((this._draft.zones || []).map((z) => z.id));
-      let id = slug(name);
-      for (let n = 2; ids.has(id); n++) id = `${slug(name)}_${n}`;
-      this._zone = id;
-      this._edit((d) => { (d.zones ||= []).push({ id, name, areas: [] }); }, true);
+      const id = uniqueId(name, new Set(this._zones().map((z) => z.id)));
+      this._open.add(`dev|${id}`);
+      this._room = id; this._view = "room";
+      this._edit((d) => { (d.zones ||= []).push({ id, name, areas: [], overrides: { [ALL]: { behaviour: "hands_off", params: {} } } }); }, true);
       return;
     }
     if (act === "del-zone") {
-      const z = this._zoneObj();
-      if (!z || !confirm(`Delete the zone “${z.name || z.id}” from the draft? Nothing changes until you save.`)) return;
-      this._edit((d) => { d.zones = d.zones.filter((x) => x.id !== z.id); }, false);
-      this._zone = this._draft.zones[0]?.id;
-      this._render();
+      const z = this._zoneObj(this._room);
+      if (!z || !confirm(`Delete the room “${z.name || z.id}” from the draft? Nothing changes until you save.`)) return;
+      this._view = "house"; this._room = null;
+      this._edit((d) => { d.zones = d.zones.filter((x) => x.id !== z.id); }, true);
       return;
     }
     if (act === "add-mode") {
       const name = prompt("Name of the new mode:");
       if (!name) return;
-      const ids = new Set(this._modes().map((m) => m.id));
-      let id = slug(name);
-      for (let n = 2; ids.has(id); n++) id = `${slug(name)}_${n}`;
-      this._open.add(`mode|${id}`);
+      const id = uniqueId(name, new Set(this._modes().map((m) => m.id)));
+      this._modePanel = id;
       this._edit((d) => { (d.modes ||= []).push({ id, name, default: { behaviour: "hands_off", params: {} } }); }, true);
+      return;
+    }
+    if (act === "start-types") {
+      this._edit((d) => { d.day_types = [{ id: "every_day", name: "Every day" }]; d.times = { every_day: [] }; }, true);
+      return;
+    }
+    if (act === "add-type") {
+      const name = prompt("Name of the new day type (for example Vacation):");
+      if (!name) return;
+      const id = uniqueId(name, new Set(this._types().map((t) => t.id)));
+      const sets = this._schema.day_sets || [], used = new Set(this._types().map((t) => t.day_set));
+      const guess = sets.find((s) => !used.has(s.id) && (s.id === id || s.name.toLowerCase().includes(name.toLowerCase())));
+      this._edit((d) => {
+        const last = d.day_types.length - 1, copyFrom = d.day_types[last]?.id;
+        d.day_types.splice(0, 0, { id, name, day_set: guess?.id || "" });           // new types go first: they are the exceptions
+        (d.times ||= {})[id] = clone((d.times || {})[copyFrom] || []);
+      }, true);
       return;
     }
     if (act === "add-rule") {

@@ -142,7 +142,25 @@ days or an SB Scheduler calendar with "the evening before" / "not on those days"
 and "The coming week" from sb_modes/preview (draft's rules; day sets read fresh via
 Runtime.async_read_day_sets; consecutive same-mode occurrences are not changes). Review text:
 edited rules pair up ("Schedule: A → B"), "every day" / "weekdays", "sunset − 1:30".
-Next: step 4 — zone extras (when a mode begins, follow, TV overlay, buttons).
+**Restructure (0.23–0.24, 2026-10-21)** after the user found the tabs disjointed; mock-ups:
+https://claude.ai/artifact/JPyvAkDUgyBfjt8dRswrdz (House · Times · Room · phone). The user wants
+day types incl. **Vacation**, and edits mainly in a browser.
+- **Day types** in the table: `day_types` (ordered; first whose SB Scheduler day set holds the date
+  wins; the last has no day set = every other day) + `times` {type: [{mode, at, eve?}]} ("eve" =
+  the evening before such a day). model.day_type_of/_day_entries; `schedule` stays as "other
+  rules". Proven equal to the 6 old rules (60 days offline, 14 days live) and the LIVE TABLE WAS
+  CONVERTED (version 2 "rules → day types"; version 1 = the old rules, revertable).
+- **Editor = House | Times, with Room pages.** House: rooms × modes grid (Usual / own / ▸ when it
+  begins / Always), mode headings open a mode panel (name, icon, order, delete, the default
+  behaviour under "advanced"), + Room / + Mode, start-up mode. Times: day types (name, calendar,
+  priority, + Day type → goes first with the last type's times copied), a 24-h band and editable
+  times per type ("same in …" edits the identical entries of the other types too), other rules,
+  the coming week with each day's type. Room: Usually · By mode (behaviour + when it begins) ·
+  Always (follow bands, TV overlay states/holds/debounce, buttons per event type: hold N min / next
+  / until released / release, flash, lights) · Devices (folded). Step 4 (extras) is included.
+- Status card's Schedule section lists day types' times + other rules.
+Open: how Vacation days are marked (an SB Scheduler day type from dates and/or a tagged
+calendar event) — then add the Vacation day type in Times.
 
 ## Cleanup 2026-10-21
 
