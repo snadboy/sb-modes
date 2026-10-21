@@ -35,6 +35,7 @@ from . import activity, driver
 from .behaviours import KINDS, Behaviour, HandsOff, Held, Overlaid
 from .bookkeeping import Keeper, describe_hold, release_delay
 from .follow import Follower
+from .autooff import AutoOff
 from .buttons import Buttons
 from .overlay import Overlay
 from . import presence
@@ -94,6 +95,7 @@ class Runtime:
         self._followers: dict[str, Follower] = {}
         self._overlays: dict[str, Overlay] = {}
         self._buttons: dict[str, Buttons] = {}
+        self._autooff: dict[str, AutoOff] = {}
         self.media_left: dict[str, datetime] = {}          # media player → when it stopped being watched
         self.daylight: dict[str, tuple] = {}              # zone → (last reading with its lights off, when)
         self._behaviours: dict[str, Behaviour] = {}
@@ -240,11 +242,12 @@ class Runtime:
                 setattr(self, name, None)
         self._cancel_grace()
         self._stop_behaviours()
-        for f in [*self._followers.values(), *self._overlays.values(), *self._buttons.values()]:
+        for f in [*self._followers.values(), *self._overlays.values(), *self._buttons.values(), *self._autooff.values()]:
             f.stop()
         self._followers.clear()
         self._overlays.clear()
         self._buttons.clear()
+        self._autooff.clear()
         self.keeper.stop()
 
     # ── the table ────────────────────────────────────────────────────────────
@@ -499,11 +502,14 @@ class Runtime:
     @callback
     def _restart_behaviours(self) -> None:
         self._stop_behaviours()
-        if self.ready and not (self._followers or self._overlays or self._buttons):
+        if self.ready and not (self._followers or self._overlays or self._buttons or self._autooff):
             self._restart_followers()
         if self.ready and self.mode:
             for zone in self.zones():
                 self._start_zone(zone)
+        for a in self._autooff.values():                 # after the zones: they know their presence sensors
+            a.stop()
+            a.start()
         self._rewatch()
         self.notify()
 
@@ -568,12 +574,17 @@ class Runtime:
         for f in self._followers.values():
             f.stop()
         self._followers.clear()
-        for o in [*self._overlays.values(), *self._buttons.values()]:
+        for o in [*self._overlays.values(), *self._buttons.values(), *self._autooff.values()]:
             o.stop()
         self._overlays.clear()
         self._buttons.clear()
+        self._autooff.clear()
         if not self.ready:
             return
+        for zone in self.zones():
+            if zone.get("auto_off"):
+                a = AutoOff(self, zone, zone["auto_off"])
+                self._autooff[zone["id"]] = a
         for zone in self.zones():
             if zone.get("buttons"):
                 b = Buttons(self, zone, zone["buttons"])
@@ -625,7 +636,8 @@ class Runtime:
         return {e: t for e, t in targets.items() if driver.plan(self.hass.states.get(e), t or {}) is not None}
 
     @callback
-    def send(self, targets: dict[str, dict], why: str, zone_id: str | None = None, note: str | None = None) -> Context | None:
+    def send(self, targets: dict[str, dict], why: str, zone_id: str | None = None, note: str | None = None,
+             cascade: bool = True) -> Context | None:
         """apply() without the held / by-hand filter — for a person's own button press."""
         changing = self._changing(targets)
         if not changing:
@@ -645,7 +657,20 @@ class Runtime:
         self.log("command", zone_id, text + (f" ({note})" if note else ""), changing, ctx)
         _LOGGER.debug("SB Modes: %s → %s", why, targets)
         self.hass.async_create_task(driver.apply(self.hass, changing, ctx), f"sb_modes apply {why}")
+        if cascade and zone_id in self._autooff and any((t or {}).get("state") == "off" for t in changing.values()):
+            sources = self.zone_presence(zone_id)
+            if sources and self.vacant_since(sources) is not None:
+                self._autooff[zone_id].empty_setting_applied()   # the lamp goes with the others
         return ctx
+
+    def zone_presence(self, zone_id: str) -> list[str]:
+        b = self._behaviours.get(zone_id)
+        return list(b.entities.get("occupancy", [])) if b else []
+
+    def zone_empty_delay(self, zone_id: str) -> float:
+        """Minutes this zone counts as 'empty' after (its behaviour's own delay)."""
+        picked = (resolve(self.config, self.mode, zone_id) if self.mode else None) or {}
+        return release_delay(picked.get("behaviour"), picked.get("params") or {})
 
     # ── activity ─────────────────────────────────────────────────────────────
     @callback

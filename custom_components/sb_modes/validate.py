@@ -238,6 +238,26 @@ def _check_config(config, state_of, area_exists, zone_entities, day_set_exists) 
                                 errors.append(f"{at}: targets go with a hold.")
                             else:
                                 _check_param(act["targets"], {"type": "targets"}, at, state_of, errors, warnings)
+        auto = zone.get("auto_off")
+        _here("zones", i, "auto_off")
+        if auto is not None:
+            if not isinstance(auto, list):
+                errors.append(f"{where}: auto_off must be a list of {{lights, with_empty, on_minutes}}.")
+            else:
+                for n, r in enumerate(auto):
+                    _here("zones", i, "auto_off", n)
+                    if not isinstance(r, dict) or not isinstance(r.get("lights"), list) or not r["lights"]:
+                        errors.append(f"{where}, auto-off {n + 1}: list the lights it turns off.")
+                        continue
+                    for eid in r["lights"]:
+                        _check_entity(eid, ["light", "switch"], f"{where}, auto-off {n + 1}", state_of, errors, warnings)
+                    if "with_empty" in r and not isinstance(r["with_empty"], bool):
+                        errors.append(f"{where}, auto-off {n + 1}: with_empty must be true or false.")
+                    m = r.get("on_minutes")
+                    if m is not None and (isinstance(m, bool) or not isinstance(m, (int, float)) or not 0 <= m <= 1440):
+                        errors.append(f"{where}, auto-off {n + 1}: on_minutes must be 0–1440.")
+                    if not r.get("with_empty") and not r.get("on_minutes"):
+                        errors.append(f"{where}, auto-off {n + 1}: choose when it turns off (with the empty setting, after some minutes, or both).")
         enter = zone.get("on_enter")
         _here("zones", i, "on_enter")
         if enter is not None:

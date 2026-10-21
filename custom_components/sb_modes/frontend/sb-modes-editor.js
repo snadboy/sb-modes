@@ -448,7 +448,8 @@ export class SbModesEditor extends HTMLElement {
         const beg = (z.on_enter || {})[m.id];
         return `<td class="cell" data-cell="${esc(z.id)}|${esc(m.id)}">${what}${beg ? `<span class="beg">▸ ${esc(this._sayTargets(beg, z.id))}</span>` : ""}</td>`;
       }).join("");
-      const always = [z.follow && `Follows ${this._short(z.follow.leader, z.id)}`, z.overlay && "TV overlay", z.buttons && "Hold button"].filter(Boolean);
+      const always = [z.follow && `Follows ${this._short(z.follow.leader, z.id)}`, z.overlay && "TV overlay", z.buttons && "Hold button",
+        z.auto_off && `Auto-off: ${z.auto_off.flatMap((r) => r.lights || []).map((e) => this._short(e, z.id)).join(", ")}`].filter(Boolean);
       const nerr = this._errorsAt(["zones", this._zoneIndex(z.id)]).length;
       return `<tr><td class="room"><button data-room="${esc(z.id)}">${esc(z.name || z.id)} ›</button>${nerr ? `<span class="dot" title="Has errors"></span>` : ""}
           <span class="us">${esc(usual ? this._sayChoice(usual, z.id) : "No usual setting")}</span></td>${cells}<td class="alw">${always.map(esc).join("<br>")}</td></tr>`;
@@ -553,7 +554,17 @@ export class SbModesEditor extends HTMLElement {
         ${Object.entries(z.buttons).map(([ent, acts]) => this._buttonHtml(z, ent, acts)).join("")}
         <div class="tools"><div class="add" data-btn-picker="1"></div></div></div>`);
     }
-    const add = [!z.follow && `<button class="b add" data-add-extra="follow">+ Follow a leader light</button>`,
+    if (z.auto_off) {
+      parts.push(`<div class="box"><div class="bh"><b>Auto-off</b><button class="b sm" data-rm-extra="auto_off">Remove</button></div>
+        <div class="help">Lights someone turns on by hand that SB Modes only ever turns off: with the room's empty setting, or once on a while with the room empty.</div>
+        <div class="errs-slot" data-path='${esc(JSON.stringify(["zones", this._zoneIndex(z.id), "auto_off"]))}'></div>
+        ${z.auto_off.map((r, i) => `<div class="brow"><div><b style="font-weight:500">Rule ${i + 1}</b><br><button class="ic" data-ao-rm="${i}" style="font-size:13px;padding:0">remove</button></div>
+          <div><div class="form" data-form="autooff" data-i="${i}"></div>
+            <div class="errs-slot" data-path='${esc(JSON.stringify(["zones", this._zoneIndex(z.id), "auto_off", i]))}'></div></div></div>`).join("")}
+        <div class="tools"><button class="b sm" data-ao-add="1">+ Rule</button></div></div>`);
+    }
+    const add = [!z.auto_off && `<button class="b add" data-add-extra="auto_off">+ Auto-off (lights turned on by hand)</button>`,
+      !z.follow && `<button class="b add" data-add-extra="follow">+ Follow a leader light</button>`,
       !z.overlay && `<button class="b add" data-add-extra="overlay">+ TV overlay</button>`,
       !z.buttons && `<button class="b add" data-add-extra="buttons">+ Hold / release button</button>`].filter(Boolean).join("");
     return `${parts.join("")}${add ? `<div class="tools">${add}</div>` : ""}`;
@@ -799,6 +810,21 @@ export class SbModesEditor extends HTMLElement {
     const follow = root.querySelector('[data-form="follow"]');
     if (follow && z) follow.appendChild(this._form([{ name: "leader", selector: { entity: { filter: { domain: ["light", "switch"] } } } }], { leader: z.follow.leader || "" },
       (v) => this._edit((d) => { d.zones.find((q) => q.id === z.id).follow.leader = v.leader; }), { leader: "Leader light" }));
+    root.querySelectorAll('[data-form="autooff"]').forEach((slot) => {
+      const i = Number(slot.dataset.i), r = z.auto_off[i];
+      slot.appendChild(this._form([
+        { name: "lights", selector: { entity: { multiple: true, filter: { domain: ["light", "switch"] } } } },
+        { name: "with_empty", selector: { boolean: {} } },
+        { name: "on_minutes", selector: { number: { min: 0, max: 1440, mode: "box", unit_of_measurement: "min" } } },
+      ], { lights: r.lights || [], with_empty: !!r.with_empty, on_minutes: r.on_minutes || 0 },
+      (v) => this._edit((d) => {
+        const x = d.zones.find((q) => q.id === z.id).auto_off[i];
+        x.lights = v.lights || [];
+        if (v.with_empty) x.with_empty = true; else delete x.with_empty;
+        if (v.on_minutes) x.on_minutes = v.on_minutes; else delete x.on_minutes;
+      }), { lights: "Lights", with_empty: "Off with the room's empty setting (when it turns other lights off)", on_minutes: "Or once on this long while the room is empty" },
+      { on_minutes: "0 = only with the empty setting. “Empty” means empty for the room's usual delay, so a sensor's blink doesn't count." }));
+    });
     const overlay = root.querySelector('[data-form="overlay"]');
     if (overlay && z) overlay.appendChild(this._form([
       { name: "entity", selector: { entity: { filter: { domain: "media_player" } } } },
@@ -930,11 +956,17 @@ export class SbModesEditor extends HTMLElement {
       if (k === "follow") x.follow = { leader: "", bands: [{ min_pct: 50, targets: {} }, { min_pct: 0, targets: {} }] };
       if (k === "overlay") x.overlay = { entity: "", states: { playing: { holds: true, targets: {} }, paused: { holds: true, targets: {} }, off: { targets: {} } } };
       if (k === "buttons") x.buttons = {};
+      if (k === "auto_off") x.auto_off = [{ lights: [], with_empty: true, on_minutes: 15 }];
     }, true)));
     q("[data-rm-extra]", (b) => b.addEventListener("click", () => {
-      if (!confirm(`Remove the ${b.dataset.rmExtra === "overlay" ? "TV overlay" : b.dataset.rmExtra} from this room (in the draft)?`)) return;
+      const label = { overlay: "TV overlay", auto_off: "auto-off rules" }[b.dataset.rmExtra] || b.dataset.rmExtra;
+      if (!confirm(`Remove the ${label} from this room (in the draft)?`)) return;
       this._edit((d) => { delete zone(d)[b.dataset.rmExtra]; }, true);
     }));
+    q("[data-ao-add]", (b) => b.addEventListener("click", () => this._edit((d) => { zone(d).auto_off.push({ lights: [], with_empty: true, on_minutes: 15 }); }, true)));
+    q("[data-ao-rm]", (b) => b.addEventListener("click", () => this._edit((d) => {
+      const x = zone(d); x.auto_off.splice(Number(b.dataset.aoRm), 1); if (!x.auto_off.length) delete x.auto_off;
+    }, true)));
     q("[data-band-pct]", (inp) => inp.addEventListener("input", () => this._edit((d) => { zone(d).follow.bands[Number(inp.dataset.bandPct)].min_pct = Number(inp.value || 0); })));
     q("[data-band-rm]", (b) => b.addEventListener("click", () => this._edit((d) => { zone(d).follow.bands.splice(Number(b.dataset.bandRm), 1); }, true)));
     q("[data-band-add]", (b) => b.addEventListener("click", () => this._edit((d) => { zone(d).follow.bands.push({ min_pct: 0, targets: {} }); }, true)));

@@ -539,6 +539,13 @@ def test_day_type_changes_in_words():
     assert "Holidays away · added: Day at 11:00" in lines, lines
 
 
+def test_auto_off_in_words():
+    a = copy.deepcopy(GOOD)
+    b = copy.deepcopy(a)
+    b["zones"][0]["auto_off"] = [{"lights": ["light.kitchen_aux_sink"], "with_empty": True, "on_minutes": 15}]
+    assert CH.describe(a, b, NAMES.get) == ["Kitchen · auto-off · added: Aux Sink off with the empty setting, or once on 15 min with the room empty"]
+
+
 if __name__ == "__main__":
     n = 0
     for name, fn in list(globals().items()):

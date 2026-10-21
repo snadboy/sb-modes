@@ -108,6 +108,15 @@ def _entry(e: dict, mode_name) -> str:
     return f"{mode_name(e.get('mode'))} at {_at(e.get('at'))}" + (" the night before" if e.get("eve") else "")
 
 
+def _auto(r: dict, name_of) -> str:
+    """'Side Window Lamp off with the empty setting, or once on 15 min with the room empty'."""
+    if not isinstance(r, dict):
+        return str(r)
+    when = [w for w in ("with the empty setting" if r.get("with_empty") else "",
+                        f"once on {r['on_minutes']:g} min with the room empty" if r.get("on_minutes") else "") if w]
+    return f"{_names(r.get('lights'), name_of)} off " + (", or ".join(when) or "(never)")
+
+
 def _calendar(t: dict) -> str:
     return f"calendar {t['day_set']}" if t.get("day_set") else "every other day"
 
@@ -138,6 +147,8 @@ def _zone_changes(a: dict, b: dict, name_of, mode_name) -> list[str]:
             out.append(f"{z} · when {mode_name(mid)} begins: {_targets(ae.get(mid), name_of)} → {_targets(be.get(mid), name_of)}")
     for key, label in (("follow", "follow"), ("overlay", "TV overlay"), ("buttons", "buttons")):
         out += _generic(f"{z} · {label}", a.get(key), b.get(key), name_of)
+    out += _paired(f"{z} · auto-off", [_auto(r, name_of) for r in a.get("auto_off") or []],
+                   [_auto(r, name_of) for r in b.get("auto_off") or []])
     return out
 
 

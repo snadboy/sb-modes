@@ -1549,3 +1549,57 @@ async def test_offline_sensor_does_not_block_empty(hass, kitchen, lights, freeze
     lights["off"].clear()
     await _tick(hass, freezer, seconds=600)
     assert lights["off"] == [] and _zone(hass)["occupancy_state"] == "unknown"
+
+
+# ── auto-off: a lamp turned on by hand, that SB Modes only turns off ─────────
+
+def _office_like():
+    t = _with("occupied_vacant", {"occupied": {CEILING: {"brightness_pct": 80}}, "vacant": {CEILING: {"state": "off"}},
+                                  "vacant_after_minutes": 2})
+    t["zones"][0]["auto_off"] = [{"lights": [SINK], "with_empty": True, "on_minutes": 15}]
+    return t
+
+
+async def test_auto_off_goes_with_the_empty_setting(hass, kitchen, lights, freezer) -> None:
+    hass.states.async_set(OCC, "on")
+    hass.states.async_set(CEILING, "on", {"brightness": 204})
+    await _setup(hass)
+    await _save(hass, _office_like())
+    hass.states.async_set(SINK, "on", {"brightness": 255}, context=Context(user_id="u"))    # turned on by hand
+    await _tick(hass, freezer, seconds=30)
+    hass.states.async_set(OCC, "off")
+    await _tick(hass, freezer, seconds=100)
+    assert lights["off"] == []                                          # not yet empty 2 min
+    await _tick(hass, freezer, seconds=30)
+    offs = [c.data["entity_id"] for c in lights["off"]]
+    assert CEILING in offs and SINK in offs, offs                       # the lamp went with the others
+    assert SINK not in _rt(hass).keeper.overridden("kitchen")
+
+
+async def test_auto_off_after_minutes_when_alone(hass, kitchen, lights, freezer) -> None:
+    hass.states.async_set(OCC, "on")
+    await _setup(hass)
+    await _save(hass, _office_like())
+    hass.states.async_set(CEILING, "off")                               # the other lights are off
+    hass.states.async_set(SINK, "on", {"brightness": 255}, context=Context(user_id="u"))
+    await _tick(hass, freezer, minutes=1)
+    hass.states.async_set(OCC, "off")
+    await _tick(hass, freezer, minutes=5)                               # empty 5 min, lamp on 6 min
+    assert SINK not in [c.data["entity_id"] for c in lights["off"]]
+    await _tick(hass, freezer, minutes=10)                              # lamp on 16 min, room empty
+    assert SINK in [c.data["entity_id"] for c in lights["off"]]
+    # someone in the room: it stays on however long
+    lights["off"].clear()
+    hass.states.async_set(OCC, "on")
+    hass.states.async_set(SINK, "on", {"brightness": 255}, context=Context(user_id="u"))
+    await _tick(hass, freezer, minutes=40)
+    assert lights["off"] == []
+    assert SINK not in [c.data["entity_id"] for c in lights["on"]]      # and SB Modes never turned it on
+
+
+async def test_auto_off_validation(hass, kitchen) -> None:
+    await _setup(hass)
+    t = _table()
+    t["zones"][0]["auto_off"] = [{"lights": [SINK]}]
+    with pytest.raises(ServiceValidationError, match="choose when it turns off"):
+        await _save(hass, t)

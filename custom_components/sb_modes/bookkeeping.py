@@ -282,6 +282,16 @@ class Keeper:
         self.rt.log("hand_end", zone, f"{why}: hand changes from before end ({self._names(old, zone)})", list(old))
         self.rt.notify()
 
+    @callback
+    def forget(self, zone: str, lights) -> None:
+        """Drop the hand-change marks on these lights (auto-off turning them off on purpose)."""
+        marks = self.overrides.get(zone) or {}
+        if any(marks.pop(e, None) is not None for e in list(lights)):
+            if not marks:
+                self.overrides.pop(zone, None)
+            self._save()
+            self.rt.notify()
+
     # ── holds ────────────────────────────────────────────────────────────────
     @callback
     def hold(self, zone: str, hold: str | int, by: str = "by hand") -> None:
