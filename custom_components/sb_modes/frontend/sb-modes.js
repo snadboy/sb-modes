@@ -11,7 +11,7 @@
  *
  * Rows use the shared SB row style (window.SBKit, from the SB UI Kit integration).
  */
-const VERSION = "0.20.0";
+const VERSION = "0.20.1";
 const CARD = "sb-modes-card";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -38,10 +38,14 @@ const hhmm = (iso) => {
   } catch (e) { return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); }
 };
 const dayKey = (d) => { try { return new Intl.DateTimeFormat("en-CA", { timeZone: TIME.tz }).format(d); } catch (e) { return d.toDateString(); } };
-/** A Logbook time (epoch seconds) as the user's clock time, "yesterday" when it was. */
-const actTime = (when) => {
-  const d = new Date(when * 1000);
-  return `${dayKey(d) === dayKey(new Date()) ? "" : "yest. "}${hhmm(d.toISOString())}`;
+/** A Logbook time (epoch seconds) as the user's clock time; the day goes in a heading (actDay). */
+const actTime = (when) => hhmm(new Date(when * 1000).toISOString());
+const actDay = (when) => {
+  const d = new Date(when * 1000), k = dayKey(d);
+  if (k === dayKey(new Date())) return "Today";
+  if (k === dayKey(new Date(Date.now() - 864e5))) return "Yesterday";
+  try { return new Intl.DateTimeFormat(undefined, { weekday: "long", month: "short", day: "numeric", timeZone: TIME.tz }).format(d); }
+  catch (e) { return d.toDateString(); }
 };
 /** Clock times SB Modes writes into statuses ("goes dark at 23:14", "at 22:10 switches to 'empty'") in the user's format. */
 const fmtTimes = (text) => String(text || "").replace(/\b([01]\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?\b/g, (_, h, m) => clock(Number(h), Number(m)));
@@ -209,7 +213,9 @@ button.zt ha-icon { margin-left: auto; --mdc-icon-size: 20px; }
 .actf .sbk-chip { cursor: pointer; border: 1px solid var(--divider-color); background: none; color: inherit; font: inherit; font-size: 12px; }
 .actf .sbk-chip.on { background: var(--primary-color); color: var(--text-primary-color, #fff); border-color: var(--primary-color); }
 .act { display: grid; grid-template-columns: 74px 20px 1fr; align-items: start; gap: 6px; font-size: 13px; padding: 3px 0; --mdc-icon-size: 16px; line-height: 1.4; }
-.act .t { font-variant-numeric: tabular-nums; color: var(--secondary-text-color); white-space: nowrap; }
+.act .t { font-variant-numeric: tabular-nums; color: var(--secondary-text-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.actday { font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: .05em; color: var(--secondary-text-color); padding: 8px 0 2px; }
+.actday:first-child { padding-top: 0; }
 .act ha-icon { color: var(--secondary-text-color); margin-top: 1px; }
 .act b { font-weight: 500; }
 .detail .act { grid-template-columns: 74px 20px 1fr; }
@@ -416,6 +422,16 @@ class SbModesCard extends HTMLElement {
     this._render();
   }
 
+  /** Rows, newest first, with a heading wherever the day changes. */
+  _actRows(list, zoneName) {
+    let day = null;
+    return list.map((e) => {
+      const d = actDay(e.when), head = d !== day ? `<div class="actday">${esc(d)}</div>` : "";
+      day = d;
+      return head + this._actRow(e, zoneName(e));
+    }).join("");
+  }
+
   _actRow(e, zoneName) {
     return `<div class="act"><span class="t">${esc(actTime(e.when))}</span><ha-icon icon="${esc(e.icon || "mdi:texture-box")}"></ha-icon>
       <span class="m">${zoneName ? `<b>${esc(zoneName)}</b> · ` : ""}${esc(fmtTimes(e.message))}</span></div>`;
@@ -426,7 +442,7 @@ class SbModesCard extends HTMLElement {
     const mine = this._act.entries.filter((e) => e.entity_id === z.entity);
     if (!mine.length) return `<div><b>Recent</b> nothing in the last 24 h</div>`;
     return `<div><b>Recent</b>${mine.length > 5 ? ` <span class="src">(last 5 of ${mine.length} — all in Activity below)</span>` : ""}</div>${
-      mine.slice(0, 5).map((e) => this._actRow(e, null)).join("")}`;
+      this._actRows(mine.slice(0, 5), () => null)}`;
   }
 
   _activityHtml() {
@@ -441,7 +457,7 @@ class SbModesCard extends HTMLElement {
       ...zones.filter((z) => all.some((e) => e.entity_id === z.entity)).map((z) => [z.id, z.name])];
     const chips = `<div class="actf" role="group" aria-label="Show activity for">${filters.map(([k, n]) =>
       `<button class="sbk-chip actc ${k === f ? "on" : ""}" data-f="${esc(k)}" aria-pressed="${k === f}">${esc(n)}</button>`).join("")}</div>`;
-    const rows = list.map((e) => this._actRow(e, f === "all" ? (zoneOf[e.entity_id]?.name || "Mode") : null)).join("");
+    const rows = this._actRows(list, (e) => (f === "all" ? (zoneOf[e.entity_id]?.name || "Mode") : null));
     const cnt = this._act ? `${all.length} in the last 24 h` : "last 24 h";
     const inner = !this._act ? `<div class="sbk-empty">Loading…</div>`
       : `${this._act.err ? `<div class="sbk-note">Could not read the Logbook: ${esc(this._act.err)}</div>` : ""}${all.length ? chips : ""}${
