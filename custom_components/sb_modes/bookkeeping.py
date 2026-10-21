@@ -268,6 +268,20 @@ class Keeper:
             self._save()
             self.rt.notify()
 
+    @callback
+    def release_before(self, zone: str, when, why: str) -> None:
+        """End the zone's hand changes made before `when` (the TV turned on)."""
+        old = {e: o for e, o in self.overrides.get(zone, {}).items() if dt_util.parse_datetime(o["since"]) <= when}
+        if not old:
+            return
+        for e in old:
+            self.overrides[zone].pop(e)
+        if not self.overrides[zone]:
+            self.overrides.pop(zone)
+        self._save()
+        self.rt.log("hand_end", zone, f"{why}: hand changes from before end ({self._names(old, zone)})", list(old))
+        self.rt.notify()
+
     # ── holds ────────────────────────────────────────────────────────────────
     @callback
     def hold(self, zone: str, hold: str | int, by: str = "by hand") -> None:

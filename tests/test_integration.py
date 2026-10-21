@@ -1381,3 +1381,35 @@ async def test_logbook_describes_activity(hass) -> None:
                                                        "message": "empty since 16:45 → ceiling off", "entity_id": "sensor.sb_modes_kitchen"}))
     assert entry == {"name": "SB Modes · Kitchen", "message": "empty since 16:45 → ceiling off",
                      "icon": "mdi:lightbulb-auto-outline", "entity_id": "sensor.sb_modes_kitchen"}
+
+
+async def test_tv_turned_on_ends_earlier_hand_changes(hass, kitchen, lights, freezer) -> None:
+    """Lamps switched on to walk in, then the TV on: the TV levels take over. Changes made
+    while it is on still win."""
+    await _overlay_setup(hass)
+    hass.states.async_set(OCC, "on")
+    await _tick(hass, freezer, seconds=30)                     # the TV has been off a while
+    hass.states.async_set(SINK, "on", {"brightness": 255}, context=Context(user_id="u"))
+    await hass.async_block_till_done()
+    assert SINK in _rt(hass).keeper.overridden("kitchen")
+    await _tv(hass, freezer, "playing")                        # turned on
+    assert SINK not in _rt(hass).keeper.overridden("kitchen")
+    assert _sink_calls(lights)[-1] == ("on", 5, 3)
+    hass.states.async_set(SINK, "on", {"brightness": 13}, context=lights["on"][-1].context)  # the lamp dims
+    await hass.async_block_till_done()
+    lights["on"].clear()
+    hass.states.async_set(SINK, "on", {"brightness": 255}, context=Context(user_id="u"))   # laundry, during the show
+    await hass.async_block_till_done()
+    await _tv(hass, freezer, "paused")
+    assert lights["on"] == []
+
+
+async def test_tv_off_blip_is_not_a_turn_on(hass, kitchen, lights, freezer) -> None:
+    await _overlay_setup(hass)
+    hass.states.async_set(OCC, "on")
+    await _tv(hass, freezer, "playing")
+    hass.states.async_set(SINK, "on", {"brightness": 255}, context=Context(user_id="u"))
+    await hass.async_block_till_done()
+    await _tv(hass, freezer, "off", wait=1)                    # a one-second "off" mid-show
+    await _tv(hass, freezer, "playing")
+    assert SINK in _rt(hass).keeper.overridden("kitchen")

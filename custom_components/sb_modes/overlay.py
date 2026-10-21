@@ -15,6 +15,10 @@ entity coming back is not someone turning the TV off), but still ends a hold.
 While the entity is in a watching state (playing / paused / idle) it also counts as presence
 in the zone (presence.py) — unless the overlay says "presence": false.
 
+Turning the entity ON (from off / standby, after it has been off at least the debounce) ends the
+zone's hand changes made BEFORE that: lights switched on to walk in are not a wish to watch
+in full light. Hand changes made while it is on still win (folding laundry during the show).
+
 Precedence: a zone hold beats the overlay (Runtime.apply sends nothing to a held zone); the
 overlay beats the zone's behaviour while it holds (the behaviour is stopped, as for a hold);
 lights changed by hand stay as set (Runtime.apply skips them).
@@ -35,6 +39,7 @@ if TYPE_CHECKING:
     from .runtime import Runtime
 
 UNAVAILABLE = ("unavailable", "unknown")
+OFF_STATES = ("off", "standby")
 
 
 class Overlay:
@@ -49,6 +54,8 @@ class Overlay:
         self.state: str | None = None
         self._last_unavailable = None
         self._quiet = False                              # set while restarting from 'unavailable'
+        self._off_since = None                           # when it last went off / standby
+        self._turned_on = None                           # when it was turned on, until acted on
         self._pending: CALLBACK_TYPE | None = None
         self._unsub: CALLBACK_TYPE | None = None
 
@@ -56,6 +63,8 @@ class Overlay:
     def start(self) -> None:
         st = self.rt.hass.states.get(self.entity)
         self.state = st.state if st else None
+        if st is not None and st.state in OFF_STATES:
+            self._off_since = st.last_changed            # off already at start (after a restart)
         # at start, only learn whether the zone is held — set nothing (the lights already are)
         self.holding = bool((self.states.get(self.state) or {}).get("holds"))
         self._unsub = async_track_state_change_event(self.rt.hass, [self.entity], self._changed)
@@ -88,6 +97,12 @@ class Overlay:
             self.rt.media_left[self.entity] = new.last_changed    # stopped being watched (presence)
         if new is None or (old is not None and old.state == new.state):
             return                                       # attributes only (media position…): not a change
+        if new.state in OFF_STATES:
+            self._off_since = new.last_changed
+            self._turned_on = None
+        elif new.state in MEDIA_WATCHING and old is not None and old.state in OFF_STATES and self._off_since is not None \
+                and (new.last_changed - self._off_since).total_seconds() >= self.debounce:
+            self._turned_on = new.last_changed           # a real turn-on, not a one-second "off" blip
         self._cancel()
         if new.state in UNAVAILABLE:
             self._last_unavailable = dt_util.utcnow()
@@ -112,6 +127,9 @@ class Overlay:
         self.state = state
         was = self.holding
         self.holding = bool(cfg.get("holds"))
+        if self._turned_on is not None:
+            self.rt.keeper.release_before(self.zone_id, self._turned_on, f"{current.name} turned on")
+            self._turned_on = None
         if self.holding:
             # the zone's Overlaid behaviour sets the targets as it (re)starts
             self._quiet = from_unavailable
