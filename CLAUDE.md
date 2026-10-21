@@ -122,7 +122,17 @@ editor.async_save_table — including the sb_modes.save_config action (now retur
 validate.py messages now carry field paths (Issues.detailed(): {path, message}) via a
 context-var (_here/_sub) — callers still get plain lists. changes.py = pure "what changed, in
 words". model.BEHAVIOUR_INFO + label/help/unit per param feed the forms.
-Next: step 2 — the Zones tab in the sidebar page.
+**Step 2, Zones tab (0.21.x, 2026-10-21):** frontend/sb-modes-editor.js, loaded by the page only
+at /sb-modes/edit (page bar: Status | Edit; the card's ⋮ menu has "Edit modes & zones" for
+admins). Zone chips (+ Zone / Delete zone), basics via ha-form (name, areas, own lights /
+occupancy / light sensors), "Behaviour by mode" rows (All modes + each mode) with a behaviour
+picker and forms built from the schema; custom light-settings table (on / off / at least, %, K,
+add, remove, "Use the lights as they are now", Try it) and wake-step editor. Field edits never
+redraw (focus); the draft is stored 0.5 s after the last edit; errors go to the deepest section
+whose path matches, scalar-param errors onto the ha-form field. ha-form is pulled in through
+loadCardHelpers → an entities card editor. Tested headless: edit → "Draft · 1 change" → Review
+→ out-of-range error disables Save → Discard (saved table untouched).
+Next: step 3 — Modes and Schedule tabs with the week preview.
 
 ## Cleanup 2026-10-21
 

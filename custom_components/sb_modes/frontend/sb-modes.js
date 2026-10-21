@@ -11,7 +11,7 @@
  *
  * Rows use the shared SB row style (window.SBKit, from the SB UI Kit integration).
  */
-const VERSION = "0.20.1";
+const VERSION = "0.21.3";
 const CARD = "sb-modes-card";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -364,7 +364,8 @@ class SbModesCard extends HTMLElement {
     const attention = errs.length ? 1 + zones.filter((z) => look(z.state, z.attr.status).tint === "warn").length
       : zones.filter((z) => look(z.state, z.attr.status).tint === "warn").length;
     const devCount = Number(this._deviations()?.state || 0);
-    const headMenu = !cfg.panel && this._menu === "__head" ? kit().menu("Card actions", [{ act: "page", icon: "mdi:open-in-app", label: "Open the SB Modes page" }]) : "";
+    const headMenu = !cfg.panel && this._menu === "__head" ? kit().menu("Card actions", [{ act: "page", icon: "mdi:open-in-app", label: "Open the SB Modes page" },
+      ...(this._hass.user?.is_admin ? [{ act: "edit", icon: "mdi:pencil", label: "Edit modes & zones" }] : [])]) : "";
     const head = `<div class="sbk-head sbk-hwrap"><h2>${esc(cfg.title || "")}</h2>
         <span class="sbk-count">${esc(nm(sel.state))}${sel.attributes.manual?.hold === "paused" ? ` <span style="color: var(--warning-color, #ffa600)">(paused)</span>` : sel.attributes.manual ? " (by hand)" : ""} · ${options.length} mode${options.length === 1 ? "" : "s"} · ${zones.length} zone${zones.length === 1 ? "" : "s"}${
           devCount ? ` · <span style="color: var(--warning-color, #ffa600)" title="Held or changed by hand — see sensor.sb_modes_deviations">${devCount} by hand</span>` : ""}${
@@ -644,7 +645,11 @@ class SbModesCard extends HTMLElement {
     root.querySelectorAll(".sbk-menu button").forEach((b) => b.addEventListener("click", async () => {
       const act = b.dataset.act, zone = b.closest("[data-z]")?.dataset.z;
       this._setMenu(null);
-      if (act === "page") { history.pushState(null, "", "/sb-modes"); window.dispatchEvent(new CustomEvent("location-changed")); return; }
+      if (act === "page" || act === "edit") {
+        history.pushState(null, "", act === "edit" ? "/sb-modes/edit" : "/sb-modes");
+        window.dispatchEvent(new CustomEvent("location-changed"));
+        return;
+      }
       try {
         if (act.startsWith("hold:")) {
           const h = act.slice(5);
@@ -687,10 +692,16 @@ if (!window.customCards.some((c) => c.type === CARD)) {
 }
 
 class SbModesPanel extends HTMLElement {
-  set hass(h) { this._hass = h; this._build(); this._card.hass = h; this._menu.hass = h; }
+  set hass(h) {
+    this._hass = h; this._build(); this._card.hass = h; this._menu.hass = h;
+    if (this._editor) this._editor.hass = h;
+  }
   set narrow(v) { this._narrow = v; if (this._menu) this._menu.narrow = v; }
-  set route(_v) {}
+  /** /sb-modes = status, /sb-modes/edit = the editor (its own module, loaded on first use). */
+  set route(r) { this._route = r; if (this._card) this._show(); }
   set panel(_v) {}
+
+  _editing() { return /^\/edit/.test(this._route?.path || ""); }
 
   _build() {
     if (this._card) return;
@@ -700,32 +711,59 @@ class SbModesPanel extends HTMLElement {
       .bar { display: flex; align-items: center; gap: 4px; height: var(--header-height, 56px); padding: 0 12px; box-sizing: border-box; position: sticky; top: 0; z-index: 2;
              background: var(--app-header-background-color, var(--primary-color)); color: var(--app-header-text-color, #fff); border-bottom: 1px solid var(--divider-color); }
       .title { font-size: 20px; flex: 1; margin-left: 4px; }
-      .bar a { color: inherit; font-size: 14px; opacity: .85; text-decoration: none; padding: 6px 10px; border-radius: 14px; }
+      .bar a { color: inherit; font-size: 14px; opacity: .8; text-decoration: none; padding: 6px 12px; border-radius: 14px; }
       .bar a:hover { background: rgba(127,127,127,.2); opacity: 1; }
+      .bar a.on { opacity: 1; background: rgba(127,127,127,.25); font-weight: 500; }
       .page { padding: 16px; } .col { max-width: 860px; margin: 0 auto; }
       .intro { color: var(--secondary-text-color); font-size: 14px; margin: 0 4px 12px; line-height: 1.5; }
       .ver { color: var(--secondary-text-color); font-size: 12px; margin: 12px 4px 0; }
+      [hidden] { display: none !important; }
     </style>
-    <div class="bar"><ha-menu-button></ha-menu-button><div class="title">SB Modes</div><a href="/config/integrations/integration/sb_modes">Integration page</a></div>
+    <div class="bar"><ha-menu-button></ha-menu-button><div class="title">SB Modes</div>
+      <a href="/sb-modes" data-nav="/sb-modes" class="nav-status">Status</a><a href="/sb-modes/edit" data-nav="/sb-modes/edit" class="nav-edit">Edit</a></div>
     <div class="page"><div class="col">
-      <div class="intro">The house is in one mode at a time; each zone runs one behaviour for it. Tap a mode to see what it does; switching is a separate, confirmed step because a mode acts at once. Tap a zone for its lights and sensors.</div>
-      <div class="slot"></div>
+      <div class="status">
+        <div class="intro">The house is in one mode at a time; each zone runs one behaviour for it. Tap a mode to see what it does; switching is a separate, confirmed step because a mode acts at once. Tap a zone for its lights and sensors.</div>
+        <div class="slot"></div></div>
+      <div class="edit" hidden><div class="intro">Changes go into a draft: nothing reaches the house until you review and save it, and every save can be undone.</div>
+        <div class="eslot"></div></div>
       <div class="ver">SB Modes ${VERSION}</div>
     </div></div>`;
     this._menu = root.querySelector("ha-menu-button");
     this._menu.narrow = this._narrow;
+    root.querySelectorAll("[data-nav]").forEach((a) => a.addEventListener("click", (e) => {
+      e.preventDefault();
+      history.pushState(null, "", a.dataset.nav);
+      window.dispatchEvent(new CustomEvent("location-changed"));
+    }));
     const card = document.createElement(CARD);
     card.setConfig({ title: "Modes", panel: true });
     root.querySelector(".slot").appendChild(card);
     this._card = card;
+    this._show();
+  }
+
+  async _show() {
+    const root = this.shadowRoot, edit = this._editing();
+    root.querySelector(".status").hidden = edit;
+    root.querySelector(".edit").hidden = !edit;
+    root.querySelector(".nav-status").classList.toggle("on", !edit);
+    root.querySelector(".nav-edit").classList.toggle("on", edit);
+    if (!edit || this._editor) return;
+    try {
+      const mod = await import(new URL(`./sb-modes-editor.js?v=${VERSION}`, import.meta.url).href);
+      mod.defineEditor();
+      const ed = document.createElement("sb-modes-editor");
+      ed.zone = new URLSearchParams(location.search).get("zone");
+      root.querySelector(".eslot").appendChild(ed);
+      this._editor = ed;
+      ed.hass = this._hass;
+    } catch (e) {
+      root.querySelector(".eslot").textContent = `Could not load the editor: ${e?.message || e}`;
+    }
   }
 }
-// Register the elements — and register them AGAIN if they go missing. Since HA 2026.10 the
-// frontend replaces window.customElements with a scoped-registry polyfill on dashboard pages,
-// after integration modules (add_extra_js_url) have already run, so a definition made at load
-// is lost and the card shows "Configuration error" (seen 2026-10-18). A fresh subclass is
-// defined each time: a constructor cannot be registered twice. HA's error card rebuilds itself
-// once the tag is defined in the current registry.
+
 const DEFS = [[CARD, SbModesCard], [`${CARD}-editor`, SbModesCardEditor], ["sb-modes-panel", SbModesPanel]];
 const ensureDefined = () => {
   for (const [tag, C] of DEFS) {
