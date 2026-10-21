@@ -1526,3 +1526,26 @@ async def test_mode_icons_reach_the_select(hass, kitchen) -> None:
     t["modes"][0]["icon"] = "sunny"
     with pytest.raises(ServiceValidationError, match="must look like mdi:"):
         await _save(hass, t)
+
+
+async def test_offline_sensor_does_not_block_empty(hass, kitchen, lights, freezer) -> None:
+    """Two presence sensors, one offline: the room empties on the other's say, counted from
+    no earlier than the moment the offline one dropped out. Both offline: nothing happens."""
+    hass.states.async_set("binary_sensor.k2", "on")
+    await _setup(hass)
+    t = _with("vacancy_off", {"lights": [SINK], "off_after_seconds": 60})
+    t["zones"][0]["occupancy"] = [OCC, "binary_sensor.k2"]
+    await _save(hass, t)
+    hass.states.async_set(SINK, "on", {"brightness": 200})
+    hass.states.async_set(OCC, "off")
+    await _tick(hass, freezer, seconds=600)
+    hass.states.async_set("binary_sensor.k2", "unavailable")          # the one seeing someone drops out
+    await _tick(hass, freezer, seconds=30)
+    assert lights["off"] == []                                         # not yet: 60 s from the dropout
+    await _tick(hass, freezer, seconds=40)
+    assert SINK in [c.data["entity_id"] for c in lights["off"]]
+    hass.states.async_set(OCC, "unavailable")                          # both offline: can't tell
+    hass.states.async_set(SINK, "on", {"brightness": 200})
+    lights["off"].clear()
+    await _tick(hass, freezer, seconds=600)
+    assert lights["off"] == [] and _zone(hass)["occupancy_state"] == "unknown"

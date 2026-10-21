@@ -159,7 +159,15 @@ day types incl. **Vacation**, and edits mainly in a browser.
   Always (follow bands, TV overlay states/holds/debounce, buttons per event type: hold N min / next
   / until released / release, flash, lights) · Devices (folded). Step 4 (extras) is included.
 - Status card's Schedule section lists day types' times + other rules.
-Open: how Vacation days are marked (an SB Scheduler day type from dates and/or a tagged
+**Vacation (2026-10-21):** SB Scheduler day type "Vacation" (`calendar.sb_vacation`, created via
+sb_scheduler.set_day_set with NO id): no weekdays, `base_dates` for dates the user enters, and
+`force_calendars [calendar.anderson]` + `force_match "calendar.anderson: #vac"` (tagged events).
+SB Modes day types: Vacation (first) → Workdays → Days off; Vacation starts with the Days-off
+times (version 3). **Offline sensors (0.24.3):** presence.vacant_since leaves out an
+unavailable occupancy sensor while another source reports; the empty clock starts no earlier
+than when it went offline; all offline → can't tell (as before). Prompted by the Living Room
+Shelves LWR02 going offline 13:56 and blocking the room's empty setting.
+Was open: how Vacation days are marked (an SB Scheduler day type from dates and/or a tagged
 calendar event) — then add the Vacation day type in Times.
 
 ## Cleanup 2026-10-21
