@@ -11,13 +11,17 @@ that its areas do not have is an error too.
 WARNINGS never block: an entity that is unavailable right now.
 
 Every message starts with where the problem is ("Zone Kitchen, Overnight: …"), so a
-list of them reads on its own in Repairs and in the editor.
+list of them reads on its own in Repairs and in the editor. The lists returned are Issues: each
+message also carries the PATH of the table field it belongs to (["zones", 2, "overrides",
+"evening", "params", "target_lux"]) for the editor to place it — `Issues.detailed()`.
 """
 
 from __future__ import annotations
 
+import contextvars
 import re
 from collections.abc import Callable
+from contextlib import contextmanager
 from typing import Any
 
 from .model import ALL_MODES, BEHAVIOURS, DAYS, DRIVER_DOMAINS, NEEDS, TARGET_KEYS, mode_ids, parse_at, parse_when, resolve
@@ -25,6 +29,38 @@ from .model import ALL_MODES, BEHAVIOURS, DAYS, DRIVER_DOMAINS, NEEDS, TARGET_KE
 UNAVAILABLE = ("unavailable", "unknown")
 NEED_LABELS = {"lights": "a light", "occupancy": "an occupancy sensor", "illuminance": "an illuminance sensor"}
 ID_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
+
+_PATH: contextvars.ContextVar[tuple] = contextvars.ContextVar("sb_modes_validate_path", default=())
+
+
+def _here(*parts) -> None:
+    """The table field the next messages belong to."""
+    _PATH.set(tuple(parts))
+
+
+@contextmanager
+def _sub(*parts):
+    """…and, inside this block, a field within it."""
+    token = _PATH.set(_PATH.get() + tuple(parts))
+    try:
+        yield
+    finally:
+        _PATH.reset(token)
+
+
+class Issues(list):
+    """Messages that also remember the path of the field each one belongs to."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.paths: list[list] = []
+
+    def append(self, message: str) -> None:
+        super().append(message)
+        self.paths.append(list(_PATH.get()))
+
+    def detailed(self) -> list[dict]:
+        return [{"path": p, "message": m} for m, p in zip(self, self.paths)]
 
 
 def check_config(
@@ -42,10 +78,18 @@ def check_config(
     found in those areas; None skips the needs check and the light-overlap check.
     day_set_exists(id) → whether SB Scheduler publishes that day set; None skips that check.
     """
-    errors: list[str] = []
-    warnings: list[str] = []
+    token = _PATH.set(())
+    try:
+        return _check_config(config, state_of, area_exists, zone_entities, day_set_exists)
+    finally:
+        _PATH.reset(token)
+
+
+def _check_config(config, state_of, area_exists, zone_entities, day_set_exists) -> tuple[Issues, Issues]:
+    errors, warnings = Issues(), Issues()
     if not isinstance(config, dict):
-        return ["The table must be an object."], []
+        errors.append("The table must be an object.")
+        return errors, warnings
 
     modes = config.get("modes")
     if not isinstance(modes, list) or not modes:
@@ -53,6 +97,7 @@ def check_config(
         modes = []
     names = {}
     for i, mode in enumerate(modes):
+        _here("modes", i)
         if not isinstance(mode, dict):
             errors.append(f"Mode {i + 1} must be an object.")
             continue
@@ -61,23 +106,28 @@ def check_config(
         if not mode.get("default"):
             errors.append(f"{where}: needs a default behaviour (a mode exists only through its default).")
         else:
-            _check_choice(mode["default"], f"{where}, default", state_of, errors, warnings, mode_ids(config))
+            with _sub("default"):
+                _check_choice(mode["default"], f"{where}, default", state_of, errors, warnings, mode_ids(config))
         names[mode.get("id")] = mode.get("name") or mode.get("id")
+    _here("modes")
     _check_unique([m.get("id") for m in modes if isinstance(m, dict)], "Mode", errors)
 
     ids = mode_ids(config)
     fallback = config.get("fallback_mode")
+    _here("fallback_mode")
     if not fallback:
         errors.append("Choose a fallback mode (used at startup and when the active mode is deleted).")
     elif fallback not in ids:
         errors.append(f"The fallback mode “{fallback}” is not a defined mode.")
 
     zones = config.get("zones") or []
+    _here("zones")
     if not isinstance(zones, list):
         errors.append("Zones must be a list.")
         zones = []
     claimed: dict[str, str] = {}                      # light → the zone that has it
     for i, zone in enumerate(zones):
+        _here("zones", i)
         if not isinstance(zone, dict):
             errors.append(f"Zone {i + 1} must be an object.")
             continue
@@ -85,6 +135,7 @@ def check_config(
         _check_id(zone.get("id"), where, errors)
         areas = zone.get("areas")
         areas_ok = isinstance(areas, list) and bool(areas)
+        _here("zones", i, "areas")
         if not areas_ok:
             errors.append(f"{where}: list at least one area.")
         else:
@@ -93,10 +144,12 @@ def check_config(
                     errors.append(f"{where}: area “{area}” does not exist.")
                     areas_ok = False
         overrides = zone.get("overrides") or {}
+        _here("zones", i, "overrides")
         if not isinstance(overrides, dict):
             errors.append(f"{where}: overrides must map a mode id to a behaviour.")
             continue
         for mode_id, choice in overrides.items():
+            _here("zones", i, "overrides", mode_id)
             if mode_id == ALL_MODES:
                 _check_choice(choice, f"{where}, all modes", state_of, errors, warnings, ids)
                 continue
@@ -105,12 +158,14 @@ def check_config(
                 continue
             _check_choice(choice, f"{where}, {names.get(mode_id, mode_id)}", state_of, errors, warnings, ids)
         follow = zone.get("follow")
+        _here("zones", i, "follow")
         if follow is not None:
             if not isinstance(follow, dict) or not follow.get("leader") or not isinstance(follow.get("bands"), list) or not follow["bands"]:
                 errors.append(f"{where}: follow needs a leader light and a list of bands {{min_pct, targets}}.")
             else:
                 _check_entity(follow["leader"], ["light", "switch"], f"{where}, follow leader", state_of, errors, warnings)
                 for n, band in enumerate(follow["bands"], 1):
+                    _here("zones", i, "follow", "bands", n - 1)
                     mp = band.get("min_pct") if isinstance(band, dict) else None
                     if isinstance(mp, bool) or not isinstance(mp, (int, float)) or not 0 <= mp <= 100:
                         errors.append(f"{where}, follow band {n}: min_pct must be 0–100.")
@@ -119,6 +174,7 @@ def check_config(
                     if follow["leader"] in (band.get("targets") or {}):
                         errors.append(f"{where}, follow band {n}: the leader cannot follow itself.")
         overlay = zone.get("overlay")
+        _here("zones", i, "overlay")
         if overlay is not None:
             ent, sts = (overlay.get("entity"), overlay.get("states")) if isinstance(overlay, dict) else (None, None)
             if not isinstance(ent, str) or "." not in ent or not isinstance(sts, dict) or not sts:
@@ -127,6 +183,7 @@ def check_config(
                 if state_of(ent) is None:
                     errors.append(f"{where}, overlay: {ent} does not exist.")
                 for st_name, cfg in sts.items():
+                    _here("zones", i, "overlay", "states", st_name)
                     if not isinstance(cfg, dict):
                         errors.append(f"{where}, overlay {st_name}: must be {{targets, holds}}.")
                         continue
@@ -134,6 +191,7 @@ def check_config(
                         errors.append(f"{where}, overlay {st_name}: holds must be true or false.")
                     if cfg.get("targets") is not None:
                         _check_param(cfg["targets"], {"type": "targets"}, f"{where}, overlay {st_name}", state_of, errors, warnings)
+                _here("zones", i, "overlay")
                 if "presence" in overlay and not isinstance(overlay["presence"], bool):
                     errors.append(f"{where}, overlay: presence must be true or false.")
                 for key in ("debounce_seconds", "unavailable_cooldown_seconds"):
@@ -141,11 +199,13 @@ def check_config(
                     if v is not None and (isinstance(v, bool) or not isinstance(v, (int, float)) or not 0 <= v <= 3600):
                         errors.append(f"{where}, overlay: {key} must be 0–3600.")
         buttons = zone.get("buttons")
+        _here("zones", i, "buttons")
         if buttons is not None:
             if not isinstance(buttons, dict) or not buttons:
                 errors.append(f"{where}: buttons must be {{event entity: {{event type: action}}}}.")
             else:
                 for ent, acts in buttons.items():
+                    _here("zones", i, "buttons", ent)
                     if not isinstance(ent, str) or not ent.startswith("event."):
                         errors.append(f"{where}, buttons: {ent} is not an event entity.")
                         continue
@@ -155,6 +215,7 @@ def check_config(
                         errors.append(f"{where}, buttons {ent}: must be {{event type: action}}.")
                         continue
                     for etype, act in acts.items():
+                        _here("zones", i, "buttons", ent, etype)
                         at = f"{where}, buttons {ent} {etype}"
                         if act == "release":
                             continue
@@ -174,17 +235,20 @@ def check_config(
                             else:
                                 _check_param(act["targets"], {"type": "targets"}, at, state_of, errors, warnings)
         enter = zone.get("on_enter")
+        _here("zones", i, "on_enter")
         if enter is not None:
             if not isinstance(enter, dict):
                 errors.append(f"{where}: on_enter must map a mode id to targets.")
             else:
                 for mode_id, targets in enter.items():
+                    _here("zones", i, "on_enter", mode_id)
                     if mode_id not in ids:
                         errors.append(f"{where}: on_enter names mode “{mode_id}”, which is not defined.")
                         continue
                     _check_param(targets, {"type": "targets"}, f"{where}, when {names.get(mode_id, mode_id)} begins",
                                  state_of, errors, warnings)
         own = zone.get("lights")
+        _here("zones", i, "lights")
         if own is not None:
             if not isinstance(own, list) or not own:
                 errors.append(f"{where}: lights must be a list of light entity ids (or left out to use the areas' lights).")
@@ -194,6 +258,7 @@ def check_config(
                     _check_entity(eid, ["light", "switch"], f"{where}, lights", state_of, errors, warnings)
         own_sensors = {}
         for key, domain in (("occupancy", "binary_sensor"), ("illuminance", "sensor")):
+            _here("zones", i, key)
             lst = zone.get(key)
             if lst is None:
                 continue
@@ -208,13 +273,17 @@ def check_config(
             if own:
                 found["lights"] = list(own)
             found.update(own_sensors)
+            _here("zones", i)
             _check_needs(config, zone, ids, names, found, where, errors)
+            _here("zones", i, "lights")
             for light in found.get("lights", []):
                 other = claimed.get(light)
                 if other is not None and other != where:
                     errors.append(f"{where}: {light} is also in {other} — give one of them its own `lights` list.")
                 claimed.setdefault(light, where)
+    _here("zones")
     _check_unique([z.get("id") for z in zones if isinstance(z, dict)], "Zone", errors)
+    _here("schedule")
     _check_schedule(config.get("schedule"), ids, names, errors, day_set_exists)
     return errors, warnings
 
@@ -228,6 +297,7 @@ def _check_schedule(schedule: Any, ids: list[str], names: dict, errors: list[str
         return
     seen: dict[tuple[str, str], str] = {}
     for i, rule in enumerate(schedule):
+        _here("schedule", i)
         where = f"Schedule rule {i + 1}"
         if not isinstance(rule, dict):
             errors.append(f"{where} must be an object.")
@@ -302,14 +372,16 @@ def _check_choice(choice: Any, where: str, state_of, errors: list[str], warnings
         return
     for key in params:
         if key not in schema:
-            errors.append(f"{where}: {name} has no parameter “{key}”.")
+            with _sub("params", key):
+                errors.append(f"{where}: {name} has no parameter “{key}”.")
     for key, spec in schema.items():
         value = params.get(key)
-        if value is None or value == "" or value == {}:
-            if spec.get("required"):
-                errors.append(f"{where}: {name} needs “{key}”.")
-            continue
-        _check_param(value, spec, f"{where}, {key}", state_of, errors, warnings, ids)
+        with _sub("params", key):
+            if value is None or value == "" or value == {}:
+                if spec.get("required"):
+                    errors.append(f"{where}: {name} needs “{key}”.")
+                continue
+            _check_param(value, spec, f"{where}, {key}", state_of, errors, warnings, ids)
 
 
 def _check_param(value: Any, spec: dict, where: str, state_of, errors: list[str], warnings: list[str], ids=None) -> None:
@@ -323,13 +395,16 @@ def _check_param(value: Any, spec: dict, where: str, state_of, errors: list[str]
             errors.append(f"{where}: must be a list of steps {{after_minutes, targets}}.")
             return
         for n, step in enumerate(value, 1):
-            if not isinstance(step, dict):
-                errors.append(f"{where} {n}: must be an object.")
-                continue
-            am = step.get("after_minutes")
-            if isinstance(am, bool) or not isinstance(am, (int, float)) or not 0 <= am <= 720:
-                errors.append(f"{where} {n}: after_minutes must be 0–720.")
-            _check_param(step.get("targets"), {"type": "targets"}, f"{where} {n}, targets", state_of, errors, warnings)
+            with _sub(n - 1):
+                if not isinstance(step, dict):
+                    errors.append(f"{where} {n}: must be an object.")
+                    continue
+                am = step.get("after_minutes")
+                if isinstance(am, bool) or not isinstance(am, (int, float)) or not 0 <= am <= 720:
+                    with _sub("after_minutes"):
+                        errors.append(f"{where} {n}: after_minutes must be 0–720.")
+                with _sub("targets"):
+                    _check_param(step.get("targets"), {"type": "targets"}, f"{where} {n}, targets", state_of, errors, warnings)
         return
     if kind == "number":
         if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -352,29 +427,34 @@ def _check_param(value: Any, spec: dict, where: str, state_of, errors: list[str]
             errors.append(f"{where}: must map entity ids to their target states.")
             return
         for eid, target in value.items():
-            _check_entity(eid, None, where, state_of, errors, warnings)
-            if not isinstance(target, dict):
-                errors.append(f"{where}, {eid}: target must be an object.")
-                continue
-            for k in target:
-                if k not in TARGET_KEYS:
-                    errors.append(f"{where}, {eid}: unknown target key “{k}”.")
-            if target.get("state") not in (None, "on", "off"):
-                errors.append(f"{where}, {eid}: state must be on or off.")
-            if eid.split(".", 1)[0] == "number" if isinstance(eid, str) else False:
-                v = target.get("value")
-                if isinstance(v, bool) or not isinstance(v, (int, float)):
-                    errors.append(f"{where}, {eid}: a number entity needs a numeric value.")
-                continue
-            hs = target.get("hs_color")
-            if hs is not None and not (isinstance(hs, list) and len(hs) == 2 and all(isinstance(x, (int, float)) for x in hs)):
-                errors.append(f"{where}, {eid}: hs_color must be [hue, saturation].")
-            for key in ("brightness_pct", "min_brightness_pct"):
-                pct = target.get(key)
-                if pct is not None and (isinstance(pct, bool) or not isinstance(pct, (int, float)) or not 0 <= pct <= 100):
-                    errors.append(f"{where}, {eid}: {key} must be 0–100.")
-            if "min_brightness_pct" in target and ({"brightness_pct", "state"} & set(target)):
-                errors.append(f"{where}, {eid}: min_brightness_pct goes alone (it means: on, at least that bright).")
+            with _sub(eid):
+                _check_target(eid, target, where, state_of, errors, warnings)
+
+
+def _check_target(eid, target, where: str, state_of, errors, warnings) -> None:
+    _check_entity(eid, None, where, state_of, errors, warnings)
+    if not isinstance(target, dict):
+        errors.append(f"{where}, {eid}: target must be an object.")
+        return
+    for k in target:
+        if k not in TARGET_KEYS:
+            errors.append(f"{where}, {eid}: unknown target key “{k}”.")
+    if target.get("state") not in (None, "on", "off"):
+        errors.append(f"{where}, {eid}: state must be on or off.")
+    if eid.split(".", 1)[0] == "number" if isinstance(eid, str) else False:
+        v = target.get("value")
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            errors.append(f"{where}, {eid}: a number entity needs a numeric value.")
+        return
+    hs = target.get("hs_color")
+    if hs is not None and not (isinstance(hs, list) and len(hs) == 2 and all(isinstance(x, (int, float)) for x in hs)):
+        errors.append(f"{where}, {eid}: hs_color must be [hue, saturation].")
+    for key in ("brightness_pct", "min_brightness_pct"):
+        pct = target.get(key)
+        if pct is not None and (isinstance(pct, bool) or not isinstance(pct, (int, float)) or not 0 <= pct <= 100):
+            errors.append(f"{where}, {eid}: {key} must be 0–100.")
+    if "min_brightness_pct" in target and ({"brightness_pct", "state"} & set(target)):
+        errors.append(f"{where}, {eid}: min_brightness_pct goes alone (it means: on, at least that bright).")
 
 
 def _check_entity(eid: Any, domains: list[str] | None, where: str, state_of, errors: list[str], warnings: list[str],

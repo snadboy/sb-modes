@@ -54,13 +54,14 @@ def async_register(hass: HomeAssistant) -> None:
         return {"errors": errors, "warnings": warnings}
 
     async def save_config(call: ServiceCall) -> ServiceResponse:
+        from .editor import TableError, async_save_table   # the editor's save: validated and versioned
         rt = _runtime(hass)
-        errors, _ = rt.validate(call.data["config"])
-        if errors:
-            raise ServiceValidationError("Not saved: " + " ".join(errors))
-        warnings = await rt.async_save(call.data["config"])
-        hass.config_entries.async_schedule_reload(rt.entry.entry_id)
-        return {"warnings": warnings}
+        user = await hass.auth.async_get_user(call.context.user_id) if call.context.user_id else None
+        try:
+            result = await async_save_table(hass, rt, call.data["config"], user.name if user else None, "sb_modes.save_config")
+        except TableError as err:
+            raise ServiceValidationError(str(err)) from err
+        return {"warnings": result["warnings"], "version": result["version"]}
 
     async def set_mode(call: ServiceCall) -> None:
         try:

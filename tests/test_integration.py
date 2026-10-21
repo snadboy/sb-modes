@@ -124,7 +124,7 @@ async def test_save_makes_zone_sensors_and_keeps_the_mode(hass: HomeAssistant, k
     await _setup(hass)
     await _mode(hass, "overnight")
     since = hass.states.get(SELECT).attributes["since"]
-    assert await _save(hass, _table()) == {"warnings": []}
+    assert await _save(hass, _table()) == {"warnings": [], "version": 2}   # 1 = the table before it
     assert hass.states.get(SELECT).attributes["options"] == ["day", "evening", "overnight"]
     assert hass.states.get(SELECT).state == "overnight"  # restored across the reload
     assert hass.states.get(SELECT).attributes["since"] == since                   # …and when it began
@@ -1413,3 +1413,81 @@ async def test_tv_off_blip_is_not_a_turn_on(hass, kitchen, lights, freezer) -> N
     await _tv(hass, freezer, "off", wait=1)                    # a one-second "off" mid-show
     await _tv(hass, freezer, "playing")
     assert SINK in _rt(hass).keeper.overridden("kitchen")
+
+
+# ── editor backend (websocket) ──────────────────────────────────────────────
+
+async def _ws(hass, hass_ws_client, **msg):
+    client = await hass_ws_client(hass)
+    await client.send_json_auto_id(msg)
+    return await client.receive_json()
+
+
+async def test_editor_schema_and_check(hass, kitchen, hass_ws_client) -> None:
+    await _setup(hass)
+    r = await _ws(hass, hass_ws_client, type="sb_modes/schema")
+    assert r["success"] and r["result"]["behaviours"]["presence_lux"]["label"] == "Presence + light level"
+    assert r["result"]["behaviours"]["presence_lux"]["params"]["target_lux"]["unit"] == "lx"
+    bad = _table()
+    bad["zones"][0]["overrides"]["overnight"]["params"]["delay"] = 999
+    r = await _ws(hass, hass_ws_client, type="sb_modes/check", config=bad)
+    assert r["result"]["errors"] == [{"path": ["zones", 0, "overrides", "overnight", "params", "delay"],
+                                      "message": "Zone Kitchen, Overnight, delay: 999 is outside 1–240."}]
+
+
+async def test_editor_draft_save_versions_revert(hass, kitchen, hass_ws_client) -> None:
+    await _setup(hass)
+    await _save(hass, _table())                                       # version 2 (1 = what was there)
+    client = await hass_ws_client(hass)
+    async def ws(**m):
+        await client.send_json_auto_id(m)
+        return await client.receive_json()
+    t = _table()
+    t["modes"][1]["name"] = "Night-ish"
+    r = await ws(type="sb_modes/draft/set", config=t)
+    assert r["result"]["changes"] == ["Mode Evening renamed Night-ish"] and r["result"]["errors"] == []
+    r = await ws(type="sb_modes/draft/get")
+    assert r["result"]["draft"] == t and r["result"]["stale"] is False and r["result"]["base_version"] == 2
+    r = await ws(type="sb_modes/save")
+    assert r["success"] and r["result"]["version"] == 3 and r["result"]["changes"] == ["Mode Evening renamed Night-ish"]
+    await hass.async_block_till_done()
+    assert hass.states.get(SELECT).attributes["mode_names"]["evening"] == "Night-ish"
+    assert (await ws(type="sb_modes/draft/get"))["result"]["draft"] is None            # saved → draft gone
+    vs = (await ws(type="sb_modes/versions"))["result"]["versions"]
+    assert [v["version"] for v in vs] == [3, 2, 1] and "config" not in vs[0]
+    r = await ws(type="sb_modes/revert", version=2)
+    assert r["success"] and r["result"]["version"] == 4 and r["result"]["changes"] == ["Mode Night-ish renamed Evening"]
+    await hass.async_block_till_done()
+    assert hass.states.get(SELECT).attributes["mode_names"]["evening"] == "Evening"
+
+
+async def test_editor_stale_draft_and_errors_block_save(hass, kitchen, hass_ws_client) -> None:
+    await _setup(hass)
+    client = await hass_ws_client(hass)
+    async def ws(**m):
+        await client.send_json_auto_id(m)
+        return await client.receive_json()
+    t = _table()
+    t["modes"][0]["name"] = "Daytime"
+    await ws(type="sb_modes/draft/set", config=t)                     # began at version 0
+    await _save(hass, _table())                                       # someone else saves meanwhile
+    assert (await ws(type="sb_modes/draft/get"))["result"]["stale"] is True
+    r = await ws(type="sb_modes/save")
+    assert not r["success"] and "saved elsewhere" in r["error"]["message"]
+    assert (await ws(type="sb_modes/save", force=True))["success"]
+    bad = _table()
+    bad["fallback_mode"] = "party"
+    r = await ws(type="sb_modes/save", config=bad)
+    assert not r["success"] and "not a defined mode" in r["error"]["message"]
+
+
+async def test_editor_try_it(hass, kitchen, lights, hass_ws_client) -> None:
+    await _setup(hass)
+    await _save(hass, _table())
+    r = await _ws(hass, hass_ws_client, type="sb_modes/try", zone="kitchen", targets={SINK: {"brightness_pct": 40}})
+    assert r["success"] and r["result"]["held_minutes"] == 15
+    await hass.async_block_till_done()
+    assert _rt(hass).keeper.held("kitchen")["hold"] == "timed"
+    assert lights["on"][-1].data == {"entity_id": SINK, "brightness_pct": 40}
+    r = await _ws(hass, hass_ws_client, type="sb_modes/try", zone="kitchen", targets={SINK: {"brightness_pct": 400}})
+    assert not r["success"]

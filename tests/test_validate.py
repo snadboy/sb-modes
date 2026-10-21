@@ -27,6 +27,7 @@ def _load(name):
 M = _load("model")
 V = _load("validate")
 MAN = _load("manual")
+CH = _load("changes")
 
 STATES = {
     "light.kitchen_aux_sink": "on",
@@ -363,6 +364,71 @@ def test_zone_lights_must_not_overlap():
 
 def test_not_an_object():
     assert check([]) == (["The table must be an object."], [])
+
+
+def test_messages_carry_field_paths():
+    cfg = copy.deepcopy(GOOD)
+    k = cfg["zones"][0]["overrides"]["overnight"]["params"]
+    k["delay"] = 999                                                # out of range
+    k["nightlight"]["light.kitchen_aux_sink"] = {"brightness_pct": 150}
+    cfg["modes"][0]["default"] = {"behaviour": "hands_off", "params": {"bogus": 1}}
+    cfg["zones"][1]["areas"] = ["attic"]
+    cfg["schedule"] = [{"days": ["mon"], "at": "25:00", "mode": "day"}]
+    cfg["fallback_mode"] = "party"
+    e, w = check(cfg)
+    got = {tuple(d["path"]) for d in e.detailed()}
+    assert ("zones", 0, "overrides", "overnight", "params", "delay") in got, got
+    assert ("zones", 0, "overrides", "overnight", "params", "nightlight", "light.kitchen_aux_sink") in got, got
+    assert ("modes", 0, "default", "params", "bogus") in got, got
+    assert ("zones", 1, "areas") in got, got
+    assert ("schedule", 0) in got, got
+    assert ("fallback_mode",) in got, got
+    # warnings too, and the plain lists still read as before
+    assert any(d["path"] == ["zones", 0, "overrides", "overnight", "params", "nightlight", "light.kitchen_aux_cabinet"]
+               for d in w.detailed()) is False                  # off is not unavailable
+    assert all(isinstance(m, str) for m in e)
+
+
+def test_paths_do_not_leak_between_checks():
+    e, _ = check(copy.deepcopy(GOOD))
+    assert e == [] and V._PATH.get() == ()
+
+
+NAMES = {"light.kitchen_aux_sink": "Aux Sink", "light.kitchen_aux_cabinet": "Cabinet", "light.ceiling": "Ceiling"}
+
+
+def test_changes_in_words():
+    a = copy.deepcopy(GOOD)
+    a["schedule"] = [{"days": ["mon"], "at": "06:00", "mode": "day"}]
+    b = copy.deepcopy(a)
+    assert CH.describe(a, b, NAMES.get) == []
+    b["modes"][0]["name"] = "Daytime"
+    b["modes"].append({"id": "party", "name": "Party", "default": {"behaviour": "hands_off"}})
+    b["fallback_mode"] = "overnight"
+    k = b["zones"][0]
+    k["overrides"]["overnight"]["params"]["delay"] = 5
+    k["overrides"]["overnight"]["params"]["nightlight"] = {"light.kitchen_aux_sink": {"brightness_pct": 20}}
+    k["overrides"]["*"] = {"behaviour": "presence_lux", "params": {"target_lux": 50, "occupied": {"light.ceiling": {"brightness_pct": 100}}}}
+    k["on_enter"] = {"day": {"light.kitchen_aux_cabinet": {"state": "on"}}}
+    b["zones"][1]["name"] = "Dining"
+    b["schedule"] = [{"days": ["mon", "tue"], "at": "06:00", "mode": "day"}]
+    lines = CH.describe(a, b, lambda e: NAMES.get(e, e))
+    assert "Mode Day renamed Daytime" in lines, lines
+    assert "Mode Party added (default: Hands off)" in lines, lines
+    assert "Fallback mode: Daytime → Overnight" in lines, lines
+    assert "Kitchen · Overnight · Dark after empty: 10 min → 5 min" in lines, lines
+    assert "Kitchen · Overnight · Nightlight: Aux Sink 10%, Cabinet on → Aux Sink 20%" in lines, lines
+    assert "Kitchen · All modes: now Presence + light level (Dark below 50 lx)" in lines, lines
+    assert "Kitchen · when Daytime begins: — → Cabinet on" in lines, lines
+    assert "Zone Dining Room renamed Dining" in lines, lines
+    assert "Schedule · added: mon, tue 06:00 → Daytime" in lines and "Schedule · removed: mon 06:00 → Daytime" in lines, lines
+    # removing a zone setting, and a behaviour swap
+    c = copy.deepcopy(b)
+    del c["zones"][0]["overrides"]["overnight"]
+    c["zones"][0]["overrides"]["*"] = {"behaviour": "vacancy_off", "params": {"lights": ["light.ceiling"]}}
+    lines = CH.describe(b, c, lambda e: NAMES.get(e, e))
+    assert "Kitchen · Overnight: own setting removed (All modes or the mode's setting applies)" in lines, lines
+    assert "Kitchen · All modes: Presence + light level (Dark below 50 lx) → Off when empty" in lines, lines
 
 
 if __name__ == "__main__":

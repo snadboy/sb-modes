@@ -42,34 +42,55 @@ from typing import Any
 BEHAVIOURS: dict[str, dict[str, dict[str, Any]]] = {
     "hands_off": {},
     "static": {
-        "targets": {"type": "targets", "required": True},
+        "targets": {"type": "targets", "required": True, "label": "Lights",
+                    "help": "Set once when the mode begins (and after a restart)."},
     },
     "nightlight_then_dark": {
-        "nightlight": {"type": "targets"},
-        "delay": {"type": "number", "min": 1, "max": 240, "default": 10},
+        "nightlight": {"type": "targets", "label": "Nightlight",
+                       "help": "Set when someone comes in; leave empty for dark only."},
+        "delay": {"type": "number", "min": 1, "max": 240, "default": 10, "unit": "min", "label": "Dark after empty",
+                  "help": "Minutes the zone must be empty before every light goes off."},
     },
     "vacancy_off": {
-        "lights": {"type": "entities", "domains": ["light", "switch"], "required": True},
-        "off_after_seconds": {"type": "number", "min": 0, "max": 3600, "default": 60},
-        "max_on_minutes": {"type": "number", "min": 0, "max": 1440, "default": 0},
-        "on_when_occupied": {"type": "bool", "default": False},
+        "lights": {"type": "entities", "domains": ["light", "switch"], "required": True, "label": "Lights to turn off"},
+        "off_after_seconds": {"type": "number", "min": 0, "max": 3600, "default": 60, "unit": "s", "label": "Off after empty",
+                              "help": "Seconds empty before the lights go off."},
+        "max_on_minutes": {"type": "number", "min": 0, "max": 1440, "default": 0, "unit": "min", "label": "Longest on while empty",
+                           "help": "Turn a light off once it has been on this long with nobody seen (0 = no limit)."},
+        "on_when_occupied": {"type": "bool", "default": False, "label": "On when someone comes in"},
     },
     "occupied_vacant": {
-        "occupied": {"type": "targets", "required": True},
-        "vacant": {"type": "targets", "required": True},
-        "vacant_after_minutes": {"type": "number", "min": 0, "max": 240, "default": 0},
+        "occupied": {"type": "targets", "required": True, "label": "Occupied"},
+        "vacant": {"type": "targets", "required": True, "label": "Empty"},
+        "vacant_after_minutes": {"type": "number", "min": 0, "max": 240, "default": 0, "unit": "min", "label": "Empty after",
+                                 "help": "Minutes with nobody seen before the empty setting."},
     },
     "wake_sequence": {
-        "after_mode": {"type": "mode", "required": True},
-        "steps": {"type": "steps", "required": True},
+        "after_mode": {"type": "mode", "required": True, "label": "After this mode ends",
+                       "help": "The steps count from the start of the mode that follows it."},
+        "steps": {"type": "steps", "required": True, "label": "Steps"},
     },
     "presence_lux": {
-        "target_lux": {"type": "number", "min": 1, "max": 2000, "required": True},
-        "occupied": {"type": "targets", "required": True},
-        "vacant": {"type": "targets"},
-        "vacant_bright": {"type": "targets"},
-        "vacant_after_minutes": {"type": "number", "min": 1, "max": 240, "default": 15},
+        "target_lux": {"type": "number", "min": 1, "max": 2000, "required": True, "unit": "lx", "label": "Dark below",
+                       "help": "Below this light level (with the lights off) the zone counts as dark."},
+        "occupied": {"type": "targets", "required": True, "label": "Occupied and dark"},
+        "vacant": {"type": "targets", "label": "Empty, dark",
+                   "help": "Leave empty to turn the occupied lights off."},
+        "vacant_bright": {"type": "targets", "label": "Empty, light",
+                          "help": "Leave empty to use the dark setting."},
+        "vacant_after_minutes": {"type": "number", "min": 1, "max": 240, "default": 15, "unit": "min", "label": "Empty after"},
     },
+}
+
+# Names and one-line descriptions for the editor and the review text (the card has the same names).
+BEHAVIOUR_INFO: dict[str, dict[str, str]] = {
+    "hands_off": {"label": "Hands off", "help": "SB Modes leaves the zone alone."},
+    "static": {"label": "Static", "help": "One fixed setting."},
+    "nightlight_then_dark": {"label": "Nightlight, then dark", "help": "A nightlight when someone comes in; dark once empty."},
+    "vacancy_off": {"label": "Off when empty", "help": "Lights off after the zone has been empty a while."},
+    "occupied_vacant": {"label": "Occupied / empty", "help": "One setting with someone there, another once empty."},
+    "wake_sequence": {"label": "Wake-up", "help": "Timed steps after a mode ends (bedside lamps in the morning)."},
+    "presence_lux": {"label": "Presence + light level", "help": "Lights on when someone is there and it is dark; an empty setting for dark and light."},
 }
 
 # What a behaviour needs from its zone's areas. A zone that runs it in any mode without

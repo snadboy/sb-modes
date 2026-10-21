@@ -78,6 +78,14 @@ the entity leaves it; others are set once and the behaviour carries on. A zone h
 changed by hand beat the overlay; when they end, the overlay's current setting comes back.
 Targets may carry `transition` (seconds, lights).
 
+## Editor backend (0.20.0)
+
+Websocket commands for the sidebar editor (admin only): `sb_modes/schema`, `check` (errors and
+warnings with the path of their field), `diff` (changes in words), `draft/get|set|discard`
+(one shared draft), `save`, `versions`, `revert`, `try` (set lights now and hold the zone 15
+min). Every save — editor, revert or the `sb_modes.save_config` action — is validated, described
+and kept as a version (last 20).
+
 ## Activity (0.19.0)
 
 Every decision SB Modes makes is an `sb_modes_activity` event, shown in HA's Logbook as

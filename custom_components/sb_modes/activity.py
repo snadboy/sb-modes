@@ -11,6 +11,7 @@ Kinds:
   hand      a light changed by hand was noticed / hand_end: that ended
   hold      a zone held / release: its hold ended
   mode      the house mode changed
+  table     the table was saved (editor, revert or the save_config action)
 """
 
 from __future__ import annotations
@@ -33,6 +34,7 @@ ICONS = {
     "hold": "mdi:pause-circle-outline",
     "release": "mdi:play-circle-outline",
     "mode": "mdi:swap-horizontal",
+    "table": "mdi:table-edit",
 }
 
 

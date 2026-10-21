@@ -26,7 +26,7 @@ from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.loader import async_get_integration
 
-from . import services
+from . import editor, services
 from .const import DOMAIN, ISSUE_ID, PANEL_URL, STATIC_URL
 from .runtime import Runtime
 
@@ -39,6 +39,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     version = str(integration.version) if integration.version else "0"
     hass.data[DOMAIN] = {"version": version}
     services.async_register(hass)
+    editor.async_register(hass)
     try:
         await hass.http.async_register_static_paths(
             [StaticPathConfig(STATIC_URL, str(Path(__file__).parent / "frontend"), False)])

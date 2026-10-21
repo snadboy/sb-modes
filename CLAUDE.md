@@ -109,6 +109,21 @@ Scheduler) are unaffected.
 - Rules now: workday 06:00 morning · not-workday 08:00 morning · daily 09:00 day ·
   daily sunset−01:00 evening · eve-of-workday 23:00 overnight · not-workday 00:30 overnight.
 
+## Editor — step 1, backend (0.20.0, 2026-10-21)
+
+Spec: the design doc's "Editor" section (sidebar page only; card gets an Edit button; draft →
+check → review → save → revert). Built: editor.py websocket commands (admin only)
+sb_modes/schema, check, diff, draft/get|set|discard, save, versions, revert, try. One shared
+draft in .storage/sb_modes.draft (cleared by saving `{}` — the test harness's mock storage
+ignores async_remove); versions (last 20, with the review text) in .storage/sb_modes.versions;
+the first save also records the table as it was (version 1). EVERY save goes through
+editor.async_save_table — including the sb_modes.save_config action (now returns
+{warnings, version}); a draft whose base version is behind is refused unless force.
+validate.py messages now carry field paths (Issues.detailed(): {path, message}) via a
+context-var (_here/_sub) — callers still get plain lists. changes.py = pure "what changed, in
+words". model.BEHAVIOUR_INFO + label/help/unit per param feed the forms.
+Next: step 2 — the Zones tab in the sidebar page.
+
 ## Cleanup 2026-10-21
 
 Removed (restore point on HA: /config/cleanup-2026-10-21/ — automations/scripts/scenes yaml,
