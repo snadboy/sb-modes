@@ -167,6 +167,8 @@ times (version 3). **Offline sensors (0.24.3):** presence.vacant_since leaves ou
 unavailable occupancy sensor while another source reports; the empty clock starts no earlier
 than when it went offline; all offline → can't tell (as before). Prompted by the Living Room
 Shelves LWR02 going offline 13:56 and blocking the room's empty setting.
+Kitchen "dark below" 50 → **60 lx** (version 4, 2026-10-21 16:2x): it came on at 45 lx in passing
+clouds and the user wanted it earlier.
 Was open: how Vacation days are marked (an SB Scheduler day type from dates and/or a tagged
 calendar event) — then add the Vacation day type in Times.
 
