@@ -11,7 +11,7 @@
  *
  * Rows use the shared SB row style (window.SBKit, from the SB UI Kit integration).
  */
-const VERSION = "0.19.0";
+const VERSION = "0.19.1";
 const CARD = "sb-modes-card";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -202,6 +202,7 @@ const STYLE = `
 button.zt { display: flex; align-items: center; gap: 6px; width: 100%; border: none; border-top: 1px solid var(--divider-color); background: none; cursor: pointer;
             text-align: left; font-family: inherit; padding-top: 10px; }
 button.zt .cnt { text-transform: none; letter-spacing: 0; font-weight: 400; }
+button.zt.zones { border-top: none; }
 button.zt ha-icon { margin-left: auto; --mdc-icon-size: 20px; }
 .rules { padding: 0 16px 10px; }
 .actf { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 0 8px; }
@@ -374,13 +375,27 @@ class SbModesCard extends HTMLElement {
       <div class="modes" role="group" aria-label="See a mode">${chips}</div>
       ${banner}
       ${problems}
-      <div class="zh">Zones${previewing ? ` in ${esc(nm(viewed))} <span class="pvtag">preview</span>` : ""}</div>
-      ${rows || `<div class="sbk-empty">No zones yet. Add them to the table with the <code>sb_modes.save_config</code> action.</div>`}
+      ${this._zonesHead(zones, previewing, nm(viewed))}
+      ${!this._zonesOpen() ? "" : rows || `<div class="sbk-empty">No zones yet. Add them to the table with the <code>sb_modes.save_config</code> action.</div>`}
       ${this._scheduleHtml(sel, nm)}
       ${this._activityHtml()}
       ${this._msg ? `<div class="sbk-note">${esc(this._msg)}</div>` : ""}`;
     this._wire();
     if (this._open.has("__activity") || zones.some((z) => this._open.has(z.id))) this._fetchActivity();
+  }
+
+  /** Zones are open unless folded; the choice is remembered per card (like the card's own fold). */
+  _zonesKey() { return foldKey(CARD, `${this._config.title || ""}:zones`); }
+  _zonesOpen() { return !foldGet(this._zonesKey()); }
+
+  _zonesHead(zones, previewing, viewedName) {
+    const open = this._zonesOpen();
+    const held = zones.filter((z) => z.attr.control && z.attr.control !== "auto").length;
+    const warn = zones.filter((z) => look(z.state, z.attr.status).tint === "warn").length;
+    const extra = open ? "" : [held ? `${held} held or by hand` : "", warn ? `${warn} need${warn === 1 ? "s" : ""} a look` : ""].filter(Boolean).join(" · ");
+    return `<button class="zh zt zones" data-x="__zones" aria-expanded="${open}">Zones${previewing ? ` in ${esc(viewedName)} <span class="pvtag">preview</span>` : ""}
+        <span class="cnt">${zones.length} zone${zones.length === 1 ? "" : "s"}${extra ? ` · <span style="color: var(--warning-color, #ffa600)">${esc(extra)}</span>` : ""}</span>
+        <ha-icon icon="${open ? "mdi:chevron-down" : "mdi:chevron-right"}"></ha-icon></button>`;
   }
 
   /** The last 24 h of SB Modes' Logbook entries (activity.py), refreshed every 30 s while shown. */
@@ -590,7 +605,10 @@ class SbModesCard extends HTMLElement {
       this._sig = ""; this._render();
     });
     root.querySelectorAll("button.zt").forEach((b) => b.addEventListener("click", (e) => {
-      const k = e.currentTarget.dataset.x; if (this._open.has(k)) this._open.delete(k); else this._open.add(k); this._render();
+      const k = e.currentTarget.dataset.x;
+      if (k === "__zones") foldSet(this._zonesKey(), this._zonesOpen());          // open by default; remembered
+      else if (this._open.has(k)) this._open.delete(k); else this._open.add(k);
+      this._render();
     }));
     root.querySelectorAll(".actf .actc").forEach((b) => b.addEventListener("click", () => { this._actZone = b.dataset.f; this._render(); }));
     root.querySelector(".ask .go")?.addEventListener("click", async () => {
