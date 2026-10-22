@@ -11,7 +11,7 @@
  *
  * Rows use the shared SB row style (window.SBKit, from the SB UI Kit integration).
  */
-const VERSION = "0.26.1";
+const VERSION = "0.27.1";
 const CARD = "sb-modes-card";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -503,6 +503,32 @@ class SbModesCard extends HTMLElement {
     return `${flash}${hold}${act.targets ? ` at ${this._targets(act.targets)}` : ""}`;
   }
 
+  /** One add-on in the room's details: name, what it does, and its live status. */
+  _addonLine(x, status) {
+    const t = x.trigger || {}, w = x.when || {}, mn = (m) => this._modeName?.(m) || m;
+    let what;
+    if (x.type === "lights") {
+      const trig = "at" in t ? `at ${fmtTimes(t.at)}` : t.mode_begins ? `when ${t.mode_begins.map(mn).join(" or ")} begins`
+        : t.mode_ends ? `when ${t.mode_ends.map(mn).join(" or ")} ends` : t.entity ? `when ${this._name(t.entity)} becomes ${t.to}` : "";
+      what = `${trig}: ` + (x.steps || []).map((st) => `${st.after_minutes ? `+${st.after_minutes} min ` : ""}${
+        st.script ? `run ${this._name(st.script)}` : st.release || "hold" in st ? this._buttonAct(st) : this._targets(st.targets)}`).join(" · ");
+    } else if (x.type === "while") {
+      what = `while ${this._name(x.entity)} is ` + Object.entries(x.states || {})
+        .map(([st, c]) => `${st} → ${this._targets(c.targets || {}) || "nothing"}${c.holds ? " (holds the room)" : ""}`).join(" · ");
+    } else if (x.type === "button") {
+      what = `${this._name(x.entity)}: ` + Object.entries(x.presses || {}).map(([k, act]) => `${PRESS[k] || k} → ${this._buttonAct(act)}`).join(", ");
+    } else if (x.type === "follow") {
+      what = `follows ${this._name(x.leader)}: ` + [...(x.bands || [])].sort((p, q) => (q.min_pct || 0) - (p.min_pct || 0))
+        .map((b) => `${b.min_pct ? `≥${b.min_pct}%` : "off / low"} → ${this._targets(b.targets)}`).join(" · ");
+    } else {
+      what = `${(x.lights || []).map((e) => this._name(e)).join(", ")} off${x.with_empty ? " with the empty setting" : ""}${x.on_minutes ? `${x.with_empty ? ", or" : ""} once on ${x.on_minutes} min with the room empty` : ""}`;
+    }
+    const when = [w.modes?.length ? `in ${w.modes.map(mn).join(", ")}` : "", w.days?.length ? `only on ${w.days.join(", ")}` : "",
+      w.not_days?.length ? `never on ${w.not_days.join(", ")}` : "", w.between?.length === 2 ? `${w.between[0]}–${w.between[1]}` : ""].filter(Boolean).join(", ");
+    return `<div${x.enabled === false ? ' style="opacity:.55"' : ""}><b>${esc(x.name || x.id)}</b>${when ? ` (${esc(when)})` : ""} ${esc(what)}${
+      x.enabled === false ? " · off" : status ? ` · <i>${esc(status)}</i>` : ""}</div>`;
+  }
+
   _targets(targets) {
     return Object.entries(targets || {}).map(([e, t]) => `${this._name(e)} ${
       t.value != null ? t.value : t.state === "off" ? "off" : t.min_brightness_pct != null ? `≥${t.min_brightness_pct}%` : t.brightness_pct != null ? `${t.brightness_pct}%` : "on"}${t.effect ? ` (${t.effect})` : ""}`).join(", ");
@@ -543,8 +569,8 @@ class SbModesCard extends HTMLElement {
     const a = z.attr;
     const pick = (a.by_mode || {})[viewed] || { behaviour: z.state, params: a.params, source: a.source };
     const beh = pick.behaviour;
-    const enter = (a.on_enter || {})[viewed];
-    const what = this._describe(beh, pick.params) + (enter ? ` · when ${modeName} begins: ${this._targets(enter)}` : "");
+    const begins = (a.addons || []).filter((x) => x.type === "lights" && x.enabled !== false && (x.trigger?.mode_begins || []).includes(viewed));
+    const what = this._describe(beh, pick.params) + begins.map((x) => ` · when ${modeName} begins: ${x.name}`).join("");
     const held = !previewing && String(a.status || "").startsWith("held");
     // live: "Vacant since 12:12 PM · lights off" — occupancy first, then what the behaviour is doing
     const occ = a.occupancy_state === "occupied" ? `Occupied since ${hhmm(a.occupancy_since)}`
@@ -568,14 +594,7 @@ class SbModesCard extends HTMLElement {
     const detail = open ? `<div class="detail">
         <div><b>In ${esc(modeName)}</b> ${esc(what)} <span class="src">(${esc(src)})</span></div>
         <div><b>Areas</b> ${esc((a.areas || []).join(", "))}</div>
-        ${a.follow ? `<div><b>Follows ${esc(this._name(a.follow.leader))}</b> (every mode) ${[...a.follow.bands].sort((x, y) => (y.min_pct || 0) - (x.min_pct || 0))
-            .map((b) => `${b.min_pct ? `≥${b.min_pct}%` : "off / low"} → ${esc(this._targets(b.targets))}`).join(" · ")}</div>` : ""}
-        ${a.overlay_config ? `<div><b>${esc(this._name(a.overlay_config.entity))}</b> (every mode, once a state lasts ${esc(a.overlay_config.debounce_seconds ?? 5)} s) ${Object.entries(a.overlay_config.states || {})
-            .map(([st, c]) => `${esc(st)} → ${esc(this._targets(c.targets || {}) || "nothing")}${c.holds ? " (holds the zone)" : ""}`).join(" · ")}</div>` : ""}
-        ${a.buttons ? `<div><b>Buttons</b> ${Object.entries(a.buttons).map(([ent, acts]) => `${esc(this._name(ent))}: ${Object.entries(acts)
-            .map(([t, act]) => `${esc(PRESS[t] || t)} → ${esc(this._buttonAct(act))}`).join(", ")}`).join(" · ")}</div>` : ""}
-        ${a.wake_up ? `<div><b>Wake-up</b> (after ${esc(this._modeName?.(a.wake_up.after_mode) || a.wake_up.after_mode)} ends${a.wake_up_status ? ` · ${esc(a.wake_up_status)}` : ""}) ${(a.wake_up.steps || [])
-            .map((st) => `+${st.after_minutes} min → ${esc(this._targets(st.targets || {}))}`).join(" · ")}</div>` : ""}
+        ${(a.addons || []).map((x) => this._addonLine(x, (a.addon_status || {})[x.id])).join("")}
         ${(a.occupancy || []).length ? `<div><b>Occupancy</b> ${a.occupancy.map((e) => ent(e, "occ")).join("")}</div>` : ""}
         ${(a.lights || []).length ? `<div><b>Lights</b> ${a.lights.map((e) => ent(e, "light")).join("")}</div>` : ""}
         ${previewing ? "" : this._recentHtml(z)}

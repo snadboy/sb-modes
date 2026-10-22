@@ -16,7 +16,7 @@
  * Light settings ("targets") live in several places; a LOC says which:
  *   {k:"choice", owner, key, step?}  a behaviour's param (owner: {kind:"zone", zone, mode} or
  *                                    {kind:"mode", mode} for a mode's default)
- *   {k:"enter", zone, mode}          set when that mode begins (on_enter)
+ *   {k:"step"|"band"|"overlay"|"button", zone, addon, …}   an add-on's step / follow band / TV state / press
  *   {k:"band", zone, band}           a follow band
  *   {k:"overlay", zone, state}       a TV state
  *   {k:"button", zone, ent, etype}   a button press that holds
@@ -36,6 +36,43 @@ const DAY_NAMES = { mon: "Mon", tue: "Tue", wed: "Wed", thu: "Thu", fri: "Fri", 
 const MODE_FILL = ["#3d2b5a", "#1f5a4f", "#5a2b44", "#4a4a2a"];          // for modes beyond the usual four
 const KNOWN_FILL = { overnight: "#2b3a5a", night: "#2b3a5a", morning: "#6a4f1f", day: "#56541b", evening: "#6b3a26", away: "#3a3a3a" };
 const OVERLAY_STATES = ["playing", "paused", "idle", "off"];
+
+const ADDON_LEGACY = ["overlay", "buttons", "follow", "auto_off", "wake_up", "on_enter"];
+/** An older table's per-room keys as add-on instances (model.zone_addons in Python). */
+function toAddons(z) {
+  if (Array.isArray(z.addons) && !ADDON_LEGACY.some((k) => k in z)) return z;
+  const out = Array.isArray(z.addons) ? [...z.addons] : [];
+  if (!Array.isArray(z.addons)) {
+    if (z.overlay) out.push({ id: "tv", name: "TV lighting", type: "while", ...z.overlay });
+    const bt = Object.entries(z.buttons || {});
+    bt.forEach(([entity, presses], n) => out.push({ id: `button-${n + 1}`, name: bt.length === 1 ? "Hold button" : `Button ${n + 1}`, type: "button", entity, presses }));
+    if (z.follow) out.push({ id: "follow", name: "Follow", type: "follow", ...z.follow });
+    (z.auto_off || []).forEach((r, n) => out.push({ id: `auto-off-${n + 1}`, name: "Auto-off", type: "auto_off", ...r }));
+    if (z.wake_up) out.push({ id: "wake-up", name: "Wake-up", type: "lights", trigger: { mode_ends: [z.wake_up.after_mode] }, steps: z.wake_up.steps || [] });
+    const groups = [];
+    for (const [m, t] of Object.entries(z.on_enter || {})) {
+      const g = groups.find((x) => JSON.stringify(x[0]) === JSON.stringify(t));
+      if (g) g[1].push(m); else groups.push([t, [m]]);
+    }
+    groups.forEach(([targets, modes], n) => out.push({ id: `begins-${n + 1}`, name: "When the mode begins", type: "lights",
+      trigger: { mode_begins: modes }, steps: [{ after_minutes: 0, targets }] }));
+  }
+  const y = { ...z };
+  ADDON_LEGACY.forEach((k) => delete y[k]);
+  if (out.length) y.addons = out; else delete y.addons;
+  return y;
+}
+const ADDON_NEW = [
+  ["time", "Lights at a time of day"], ["begins", "Lights when a mode begins"], ["ends", "Lights when a mode ends"],
+  ["state", "When a device changes (lights or a script)"], ["while", "TV lighting (while a device is …)"],
+  ["button", "Hold / release button"], ["follow", "Follow a leader light"], ["auto_off", "Auto-off (lights turned on by hand)"],
+];
+const KIND_LABEL = { lights: "Lights", while: "While", button: "Button", follow: "Follow", auto_off: "Auto-off" };
+const PRESS = { multi_press_1: "Press", multi_press_2: "Double press", multi_press_3: "Triple press", long_press: "Hold", long_release: "Hold (on release)" };
+const HOLD_OPTS = [["m15", "hold 15 min"], ["m30", "hold 30 min"], ["m60", "hold 60 min"], ["next", "hold until the next mode"], ["paused", "hold until released"]];
+const holdKey = (a) => !a ? "" : a === "release" || a.release ? "release" : a.hold === "next" ? "next" : a.hold === "paused" ? "paused" : a.hold != null ? `m${a.hold}` : "";
+const holdVal = (k) => k === "next" || k === "paused" ? k : Number(k.slice(1));
+const newId = (list, base) => { let n = 1; while (list.some((a) => a.id === `${base}-${n}`)) n += 1; return `${base}-${n}`; };
 const slug = (name) => name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").replace(/^(\d)/, "x_$1").slice(0, 32) || "item";
 const uniqueId = (name, taken) => { let id = slug(name); for (let n = 2; taken.has(id); n++) id = `${slug(name)}_${n}`; return id; };
 
@@ -192,6 +229,23 @@ table.tg input[type=number] { width: 64px; }
   .mbody { grid-template-columns: 1fr; padding-left: 0; }
   .band .bn { width: 80px; } .stops, .axis { margin-left: 0; }
 }
+.acard { border: 1px solid var(--divider-color); border-radius: 10px; margin-bottom: 8px; background: var(--secondary-background-color, rgba(127,127,127,.06)); }
+.acard.open { border-color: var(--primary-color); }
+.acard.off .amain { opacity: .55; }
+.ahead { display: grid; grid-template-columns: 40px minmax(0, 1fr) 150px auto; gap: 10px; align-items: center; padding: 10px 12px; }
+.ahead .an { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ahead .an b { font-weight: 500; font-size: 15px; }
+.kind { font-size: 11.5px; padding: 1px 7px; border-radius: 8px; background: rgba(127,127,127,.18); color: var(--secondary-text-color); }
+.pills { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; font-size: 12.5px; }
+.pill { padding: 2px 8px; border-radius: 6px; border: 1px solid var(--divider-color); background: var(--card-background-color); max-width: 100%; box-sizing: border-box; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pill i { font-style: normal; color: var(--secondary-text-color); margin-right: 4px; }
+.anext { font-size: 12.5px; color: var(--secondary-text-color); }
+.actl { display: flex; gap: 4px; align-items: center; }
+.abody { padding: 4px 14px 12px; border-top: 1px solid var(--divider-color); }
+.abody h4 { margin: 12px 0 4px; font-size: 12px; font-weight: 500; letter-spacing: .06em; text-transform: uppercase; color: var(--secondary-text-color); }
+.abody .nm { display: flex; gap: 10px; align-items: center; margin-top: 8px; }
+.abody .nm input { flex: 1; }
+@media (max-width: 700px) { .ahead { grid-template-columns: 36px minmax(0, 1fr) auto; } .ahead .anext { grid-column: 2; } }
 `;
 
 export class SbModesEditor extends HTMLElement {
@@ -233,6 +287,7 @@ export class SbModesEditor extends HTMLElement {
     this._saved = r.saved;
     this._version = r.version;
     this._draft = clone(r.draft || r.saved);
+    this._draft.zones = (this._draft.zones || []).map(toAddons);   // older per-room keys → add-on instances
     this._hasDraft = !!r.draft;
     this._stale = !!r.stale;
     this._changes = r.changes || [];
@@ -341,20 +396,15 @@ export class SbModesEditor extends HTMLElement {
       if (loc.step != null) { const st = ch.params[loc.key][loc.step]; return (st.targets ||= {}); }
       return (ch.params[loc.key] ||= {});
     }
-    if (loc.k === "enter") return ((z.on_enter ||= {})[loc.mode] ||= {});
-    if (loc.k === "band") return (z.follow.bands[loc.band].targets ||= {});
-    if (loc.k === "overlay") return (z.overlay.states[loc.state].targets ||= {});
-    if (loc.k === "button") return (z.buttons[loc.ent][loc.etype].targets ||= {});
-    if (loc.k === "wake") return (z.wake_up.steps[loc.step].targets ||= {});
+    const a = (z?.addons || []).find((x) => x.id === loc.addon);
+    if (!a) return {};
+    if (loc.k === "band") return (a.bands[loc.band].targets ||= {});
+    if (loc.k === "overlay") return (a.states[loc.state].targets ||= {});
+    if (loc.k === "button") return (a.presses[loc.etype].targets ||= {});
+    if (loc.k === "step") return (a.steps[loc.step].targets ||= {});
     return {};
   }
-  /** After an edit: drop empty containers the table should not keep (an empty on_enter). */
-  _tidy(d, loc) {
-    if (loc.k !== "enter") return;
-    const z = d.zones.find((q) => q.id === loc.zone);
-    if (z.on_enter && !Object.keys(z.on_enter[loc.mode] || {}).length) delete z.on_enter[loc.mode];
-    if (z.on_enter && !Object.keys(z.on_enter).length) delete z.on_enter;
-  }
+  _tidy() {}
   _lookTargets(loc) { try { return this._targetsRef(clone(this._draft), loc); } catch (e) { return {}; } }
   _locPath(loc) {
     const zi = this._zoneIndex(this._zoneOf(loc));
@@ -362,11 +412,12 @@ export class SbModesEditor extends HTMLElement {
       const p = [...this._ownerPath(loc.owner), "params", loc.key];
       return loc.step != null ? [...p, loc.step, "targets"] : p;
     }
-    if (loc.k === "enter") return ["zones", zi, "on_enter", loc.mode];
-    if (loc.k === "band") return ["zones", zi, "follow", "bands", loc.band];
-    if (loc.k === "overlay") return ["zones", zi, "overlay", "states", loc.state];
-    if (loc.k === "button") return ["zones", zi, "buttons", loc.ent, loc.etype];
-    if (loc.k === "wake") return ["zones", zi, "wake_up", "steps", loc.step];
+    const ai = (this._zoneObj(this._zoneOf(loc))?.addons || []).findIndex((x) => x.id === loc.addon);
+    const base = ["zones", zi, "addons", ai];
+    if (loc.k === "band") return [...base, "bands", loc.band];
+    if (loc.k === "overlay") return [...base, "states", loc.state];
+    if (loc.k === "button") return [...base, "presses", loc.etype];
+    if (loc.k === "step") return [...base, "steps", loc.step];
     return [];
   }
 
@@ -448,22 +499,20 @@ export class SbModesEditor extends HTMLElement {
         const what = own ? `<span class="own">${esc(this._sayChoice(own, z.id, true))}</span>`
           : fallback && fallback.behaviour !== "hands_off" ? `<span class="usual">Mode default: ${esc(this._beh(fallback.behaviour).label)}</span>`
           : usual ? `<span class="usual">Usual</span>` : `<span class="usual">Not controlled</span>`;
-        const beg = (z.on_enter || {})[m.id];
-        return `<td class="cell" data-cell="${esc(z.id)}|${esc(m.id)}">${what}${beg ? `<span class="beg">▸ ${esc(this._sayTargets(beg, z.id))}</span>` : ""}</td>`;
+        const begs = (z.addons || []).filter((a) => a.type === "lights" && a.enabled !== false && (a.trigger?.mode_begins || []).includes(m.id));
+        return `<td class="cell" data-cell="${esc(z.id)}|${esc(m.id)}">${what}${begs.map((a) => `<span class="beg">▸ ${esc(a.name || a.id)}</span>`).join("")}</td>`;
       }).join("");
-      const addons = [z.follow && ["follow", `Follows ${this._short(z.follow.leader, z.id)}`], z.overlay && ["overlay", "TV overlay"],
-        z.buttons && ["buttons", "Hold button"], z.wake_up && ["wake_up", `Wake-up after ${this._modeName(z.wake_up.after_mode)}`],
-        z.auto_off && ["auto_off", `Auto-off: ${z.auto_off.flatMap((r) => r.lights || []).map((e) => this._short(e, z.id)).join(", ")}`]].filter(Boolean);
+      const addons = (z.addons || []).map((a) => [a.id, (a.name || a.id) + ("at" in (a.trigger || {}) ? ` · ${this._clock(a.trigger.at)}` : "") + (a.enabled === false ? " (off)" : "")]);
       const nerr = this._errorsAt(["zones", this._zoneIndex(z.id)]).length;
       return `<tr><td class="room"><button data-room="${esc(z.id)}">${esc(z.name || z.id)} ›</button>${nerr ? `<span class="dot" title="Has errors"></span>` : ""}
           <span class="us">${esc(usual ? this._sayChoice(usual, z.id) : "No usual setting")}</span></td>${cells}<td class="alw">${addons.map(([k, t]) => `<button class="lk" data-addon="${esc(z.id)}|${k}">${esc(t)}</button>`).join("<br>")}</td></tr>`;
     }).join("");
     return `${this._modePanelHtml()}
       <div class="card"><div class="grid"><table>
-        <thead><tr><th class="lbl">Room · usually</th>${head}<th class="lbl">Add-ons</th></tr></thead>
+        <thead><tr><th class="lbl">Room · room modes</th>${head}<th class="lbl">Add-ons</th></tr></thead>
         <tbody>${rows || `<tr><td colspan="${modes.length + 2}" class="empty">No rooms yet.</td></tr>`}</tbody></table></div></div>
-      <div class="legend"><span>Usual = the room's normal behaviour (left)</span><span><span class="own" style="padding:1px 7px">Own</span> = something else in that mode</span>
-        <span style="color:var(--primary-color)">▸ set once when the mode begins</span><span>Tap a room or a cell to edit · tap a mode for its name, icon and order</span></div>
+      <div class="legend"><span>Usual = the room's rule in every mode (its Room modes, left)</span><span><span class="own" style="padding:1px 7px">Own</span> = a mode exception</span>
+        <span style="color:var(--primary-color)">▸ an add-on that runs when the mode begins</span><span>Tap a room or a cell to edit · tap a mode for its name, icon and order</span></div>
       <div class="tools" style="margin-bottom:12px"><button class="b add" data-act="add-zone">+ Room</button><button class="b add" data-act="add-mode">+ Mode</button>
         <span class="grow" style="flex:1"></span><span class="form" data-form="fallback" style="min-width:260px"></span></div>`;
   }
@@ -496,10 +545,10 @@ export class SbModesEditor extends HTMLElement {
     return `<div class="crumb"><button class="lk" data-view="house">‹ House</button><h2>${esc(z.name || z.id)}</h2>
         <span class="live">${esc(zs ? zs.attributes.status || "" : "new — saved rooms show their live state here")}</span></div>
       <div class="errs-slot" data-path='${esc(JSON.stringify(["zones", zi]))}'></div>
-      <div class="card"><div class="sec"><h3>1 · Usually<span class="sub">what ${esc(z.name || z.id)} does unless a mode says otherwise</span></h3>
+      <div class="card"><div class="sec"><h3>1 · Room modes<span class="sub">what ${esc(z.name || z.id)} does in every mode, unless an exception below</span></h3>
         ${this._choiceEditorHtml({ kind: "zone", zone: z.id, mode: ALL }, usual)}</div></div>
-      <div class="card"><div class="sec"><h3>2 · By mode<span class="sub">each mode: same as usual or its own, and anything set once when it begins</span></h3>${modeRows}</div></div>
-      <div class="card"><div class="sec"><h3>3 · Add-ons<span class="sub">in every mode, on top of the above</span></h3>${this._addonsHtml(z)}</div></div>
+      <div class="card"><div class="sec"><h3>2 · Mode exceptions<span class="sub">a different rule in a mode</span></h3>${modeRows}</div></div>
+      <div class="card"><div class="sec"><h3>3 · Add-ons<span class="sub">each runs when its trigger fires and its When matches — in any mode unless it names some</span></h3>${this._addonsHtml(z)}</div></div>
       <div class="card"><div class="sec"><details class="devices" ${this._open.has(`dev|${z.id}`) ? "open" : ""} data-dev="${esc(z.id)}"><summary>4 · Devices
           <span class="sub">${esc(this._sayDevices(z, zs))}</span></summary><div class="form" data-form="basics" style="margin-top:10px"></div></details>
         <div class="tools"><button class="b sm danger" data-act="del-zone">Delete room</button></div></div></div>`;
@@ -514,93 +563,148 @@ export class SbModesEditor extends HTMLElement {
 
   _roomModeRowHtml(z, m) {
     const ov = (z.overrides || {})[m.id], key = `${z.id}|${m.id}`, open = this._open.has(key);
-    const beg = (z.on_enter || {})[m.id];
-    const what = ov ? this._sayChoice(ov, z.id, true) : (z.overrides || {})[ALL] ? "Same as usual" : `Mode default: ${this._beh(m.default?.behaviour).label}`;
-    const nerr = this._errorsAt(["zones", this._zoneIndex(z.id), "overrides", m.id]).length + this._errorsAt(["zones", this._zoneIndex(z.id), "on_enter", m.id]).length;
+    const begs = (z.addons || []).filter((a) => a.type === "lights" && (a.trigger?.mode_begins || []).includes(m.id));
+    const what = ov ? this._sayChoice(ov, z.id, true) : (z.overrides || {})[ALL] ? "Same as the room modes" : `Mode default: ${this._beh(m.default?.behaviour).label}`;
+    const nerr = this._errorsAt(["zones", this._zoneIndex(z.id), "overrides", m.id]).length;
     return `<div class="mrow"><button class="mhead" data-row="${esc(key)}" aria-expanded="${open}">
         <span class="mn">${esc(m.name || m.id)}<small>${esc(this._modeTimes(m.id))}</small></span>
         <span class="what ${ov ? "own" : ""}">${esc(what)}${nerr ? ` <span class="err">· ${nerr} error${nerr === 1 ? "" : "s"}</span>` : ""}</span>
-        <span class="beg">${beg ? `▸ ${esc(this._sayTargets(beg, z.id))}` : ""}</span>
+        <span class="beg">${begs.map((a) => `▸ ${esc(a.name || a.id)}`).join(" · ")}</span>
         <ha-icon icon="${open ? "mdi:chevron-down" : "mdi:chevron-right"}"></ha-icon></button>
-      ${open ? `<div class="mbody"><div class="col"><h4>Behaviour</h4>${this._choiceEditorHtml({ kind: "zone", zone: z.id, mode: m.id }, ov)}</div>
-        <div class="col"><h4>When ${esc(m.name || m.id)} begins</h4>
-          ${this._targetsHtml({ k: "enter", zone: z.id, mode: m.id }, beg || {}, { label: "", help: "Set once, the moment this mode starts (not after a restart)." })}</div></div>` : ""}</div>`;
+      ${open ? `<div class="mbody"><div class="col"><h4>Behaviour</h4>${this._choiceEditorHtml({ kind: "zone", zone: z.id, mode: m.id }, ov)}</div></div>` : ""}</div>`;
   }
+
+  // ── add-ons ────────────────────────────────────────────────────────────
+  _dayName(id) {
+    return this._types().find((t) => t.id === id)?.name || (this._schema.day_sets || []).find((s) => s.id === id)?.name || id;
+  }
+  _sayStep(st, zid) {
+    const lead = st.after_minutes ? `+${st.after_minutes} min ` : "";
+    if (st.script) return `${lead}run ${this._name(st.script)}`;
+    if (st.release) return `${lead}release${st.flash ? `, flash ×${st.flash}` : ""}`;
+    if ("hold" in st) return `${lead}${HOLD_OPTS.find(([k]) => k === holdKey(st))?.[1] || `hold ${st.hold} min`}${st.targets && Object.keys(st.targets).length ? `, ${this._sayTargets(st.targets, zid)}` : ""}`;
+    return lead + (this._sayTargets(st.targets, zid) || "no lights yet");
+  }
+  /** {kind, trigger, when, then} — the words on an add-on's card. */
+  _addonParts(a, zid) {
+    const t = a.trigger || {}, w = a.when || {};
+    const when = [w.modes?.length ? `in ${w.modes.map((m) => this._modeName(m)).join(", ")}` : "",
+      w.days?.length ? `only on ${w.days.map((d) => this._dayName(d)).join(", ")}` : "",
+      w.not_days?.length ? `never on ${w.not_days.map((d) => this._dayName(d)).join(", ")}` : "",
+      w.between?.length === 2 ? `between ${this._clock(w.between[0])} and ${this._clock(w.between[1])}` : ""].filter(Boolean).join(" · ") || "any time";
+    if (a.type === "lights") {
+      const trigger = "at" in t ? this._clock(t.at) : t.mode_begins ? `${t.mode_begins.map((m) => this._modeName(m)).join(" or ")} begins`
+        : t.mode_ends ? `${t.mode_ends.map((m) => this._modeName(m)).join(" or ")} ends` : t.entity ? `${this._short(t.entity, zid)} becomes ${t.to || "?"}` : "not set";
+      const script = (a.steps || []).some((s) => s.script);
+      return { kind: script ? "Script" : "Lights", trigger, when, then: (a.steps || []).map((s) => this._sayStep(s, zid)).join(" · ") || "nothing yet" };
+    }
+    if (a.type === "while") {
+      return { kind: "While", trigger: `while ${a.entity ? this._short(a.entity, zid) : "?"} is …`, when,
+        then: Object.entries(a.states || {}).map(([s, c]) => `${s}${c.holds ? " (holds)" : ""}: ${this._sayTargets(c.targets, zid) || "—"}`).join(" · ") };
+    }
+    if (a.type === "button") {
+      return { kind: "Button", trigger: a.entity ? this._short(a.entity, zid) : "no button yet", when,
+        then: Object.entries(a.presses || {}).map(([et, p]) => `${PRESS[et] || et}: ${this._sayStep(p === "release" ? { release: true } : p, zid)}`).join(" · ") || "nothing yet" };
+    }
+    if (a.type === "follow") {
+      return { kind: "Follow", trigger: `${a.leader ? this._short(a.leader, zid) : "?"} changes`, when, then: `${(a.bands || []).length} brightness bands` };
+    }
+    return { kind: "Auto-off", trigger: "a light turned on by hand", when,
+      then: `${(a.lights || []).map((e) => this._short(e, zid)).join(", ") || "?"} off${a.with_empty ? " with the empty setting" : ""}${a.on_minutes ? `${a.with_empty ? ", or" : ""} once on ${a.on_minutes} min with the room empty` : ""}` };
+  }
+  _addonOpen(zid, aid) { return this._openAddon === `${zid}|${aid}`; }
 
   _addonsHtml(z) {
-    const parts = [];
-    if (z.follow) {
-      const bands = (z.follow.bands || []).map((b, i) => ({ b, i })).sort((x, y) => (y.b.min_pct || 0) - (x.b.min_pct || 0));
-      parts.push(`<div class="box" data-box="follow"><div class="bh"><b>Follow</b><button class="b sm" data-rm-extra="follow">Remove</button></div>
-        <div class="help">Lights that track a leader light in every mode (the band its brightness falls in sets them).</div>
-        <div class="form" data-form="follow"></div>
-        <div class="errs-slot" data-path='${esc(JSON.stringify(["zones", this._zoneIndex(z.id), "follow"]))}'></div>
-        ${bands.map(({ b, i }) => `<div class="brow"><div><label class="help" style="display:block">Leader at or above</label>
-            <input class="in" type="number" min="0" max="100" data-band-pct="${i}" value="${esc(b.min_pct ?? 0)}" style="width:64px"> %
-            <button class="ic" data-band-rm="${i}" title="Remove band" aria-label="Remove band">×</button></div>
-          <div>${this._targetsHtml({ k: "band", zone: z.id, band: i }, b.targets || {}, { label: "" })}</div></div>`).join("")}
-        <div class="tools"><button class="b sm" data-band-add="1">+ Band</button></div></div>`);
-    }
-    if (z.overlay) {
-      const st = z.overlay.states || {};
-      parts.push(`<div class="box" data-box="overlay"><div class="bh"><b>TV overlay</b><button class="b sm" data-rm-extra="overlay">Remove</button></div>
-        <div class="help">Lights set from the TV's state. A state that holds the zone replaces its behaviour while it lasts; a hold or a hand change still wins.</div>
-        <div class="form" data-form="overlay"></div>
-        <div class="errs-slot" data-path='${esc(JSON.stringify(["zones", this._zoneIndex(z.id), "overlay"]))}'></div>
-        ${OVERLAY_STATES.map((s) => `<div class="brow"><div><label><input type="checkbox" data-ov-on="${s}" ${st[s] ? "checked" : ""}> <b style="font-weight:500">${s}</b></label>
-            ${st[s] ? `<label class="help" style="display:block;margin-top:4px"><input type="checkbox" data-ov-holds="${s}" ${st[s].holds ? "checked" : ""}> holds the zone</label>` : ""}</div>
-          <div>${st[s] ? this._targetsHtml({ k: "overlay", zone: z.id, state: s }, st[s].targets || {}, { label: "" }) : `<span class="help">Not used.</span>`}</div></div>`).join("")}</div>`);
-    }
-    if (z.buttons) {
-      parts.push(`<div class="box" data-box="buttons"><div class="bh"><b>Hold button</b><button class="b sm" data-rm-extra="buttons">Remove all</button></div>
-        <div class="help">A press holds the zone (optionally setting lights, with a flash as the cue) or releases it.</div>
-        <div class="errs-slot" data-path='${esc(JSON.stringify(["zones", this._zoneIndex(z.id), "buttons"]))}'></div>
-        ${Object.entries(z.buttons).map(([ent, acts]) => this._buttonHtml(z, ent, acts)).join("")}
-        <div class="tools"><div class="add" data-btn-picker="1"></div></div></div>`);
-    }
-    if (z.wake_up) {
-      const steps = z.wake_up.steps || [];
-      parts.push(`<div class="box" data-box="wake_up"><div class="bh"><b>Wake-up</b><button class="b sm" data-rm-extra="wake_up">Remove</button></div>
-        <div class="help">Timed steps after a mode ends — each counts from when the next mode began (the bedside bulbs after Overnight). A hold or a hand change still wins.</div>
-        <div class="form" data-form="wake"></div>
-        <div class="errs-slot" data-path='${esc(JSON.stringify(["zones", this._zoneIndex(z.id), "wake_up"]))}'></div>
-        ${steps.map((st, i) => `<div class="brow"><div><label class="help" style="display:block">After</label>
-            <input class="in" type="number" min="0" max="720" data-wk-step="${i}" value="${esc(st.after_minutes ?? 0)}" style="width:64px" aria-label="Minutes after"> min
-            <button class="ic" data-wk-rm="${i}" title="Remove step" aria-label="Remove step">×</button></div>
-          <div>${this._targetsHtml({ k: "wake", zone: z.id, step: i }, st.targets || {}, { label: `Step ${i + 1}` })}</div></div>`).join("")}
-        <div class="tools"><button class="b sm" data-wk-add="1">+ Step</button></div></div>`);
-    }
-    if (z.auto_off) {
-      parts.push(`<div class="box" data-box="auto_off"><div class="bh"><b>Auto-off</b><button class="b sm" data-rm-extra="auto_off">Remove</button></div>
-        <div class="help">Lights someone turns on by hand that SB Modes only ever turns off: with the room's empty setting, or once on a while with the room empty.</div>
-        <div class="errs-slot" data-path='${esc(JSON.stringify(["zones", this._zoneIndex(z.id), "auto_off"]))}'></div>
-        ${z.auto_off.map((r, i) => `<div class="brow"><div><b style="font-weight:500">Rule ${i + 1}</b><br><button class="ic" data-ao-rm="${i}" style="font-size:13px;padding:0">remove</button></div>
-          <div><div class="form" data-form="autooff" data-i="${i}"></div>
-            <div class="errs-slot" data-path='${esc(JSON.stringify(["zones", this._zoneIndex(z.id), "auto_off", i]))}'></div></div></div>`).join("")}
-        <div class="tools"><button class="b sm" data-ao-add="1">+ Rule</button></div></div>`);
-    }
-    const add = [!z.auto_off && `<button class="b add" data-add-extra="auto_off">+ Auto-off (lights turned on by hand)</button>`,
-      !z.follow && `<button class="b add" data-add-extra="follow">+ Follow a leader light</button>`,
-      !z.overlay && `<button class="b add" data-add-extra="overlay">+ TV overlay</button>`,
-      !z.buttons && `<button class="b add" data-add-extra="buttons">+ Hold / release button</button>`,
-      !z.wake_up && `<button class="b add" data-add-extra="wake_up">+ Wake-up (timed steps after a mode ends)</button>`].filter(Boolean).join("");
-    return `${parts.join("")}${add ? `<div class="tools">${add}</div>` : ""}`;
+    const zi = this._zoneIndex(z.id), list = z.addons || [];
+    const zs = Object.values(this._hass.states).find((s) => s.attributes.sb_modes_zone === z.id);
+    const live = zs?.attributes.addon_status || {};
+    const cards = list.map((a, ai) => {
+      const p = this._addonParts(a, z.id), open = this._addonOpen(z.id, a.id);
+      const nerr = this._errorsAt(["zones", zi, "addons", ai]).length;
+      const pill = (label, text) => `<span class="pill" title="${esc(text)}"><i>${label}</i>${esc(text)}</span>`;
+      return `<div class="acard ${open ? "open" : ""} ${a.enabled === false ? "off" : ""}" data-box="${esc(a.id)}">
+        <div class="ahead"><ha-switch data-ad-on="${esc(a.id)}" ${a.enabled === false ? "" : "checked"} title="On / off"></ha-switch>
+          <div class="amain"><div class="an"><b>${esc(a.name || a.id)}</b><span class="kind">${esc(p.kind)}</span>${nerr ? `<span class="err">${nerr} error${nerr === 1 ? "" : "s"}</span>` : ""}</div>
+            <div class="pills">${pill("Trigger", p.trigger)}${pill("When", p.when)}${pill("Then", p.then)}</div></div>
+          <div class="anext">${esc(live[a.id] || "")}</div>
+          <div class="actl"><button class="ic" data-ad-move="${ai}" data-dir="-1" ${ai ? "" : "disabled"} title="Move up" aria-label="Move up">▲</button>
+            <button class="ic" data-ad-move="${ai}" data-dir="1" ${ai < list.length - 1 ? "" : "disabled"} title="Move down" aria-label="Move down">▼</button>
+            <button class="lk" data-ad-open="${esc(a.id)}">${open ? "Done" : "Edit"}</button></div></div>
+        ${open ? `<div class="abody">${this._addonBodyHtml(z, a, ai)}</div>` : ""}</div>`;
+    }).join("");
+    return `${cards || `<div class="help">No add-ons yet.</div>`}
+      <div class="tools"><select class="b add" data-add-addon aria-label="Add an add-on"><option value="">+ Add-on…</option>
+        ${ADDON_NEW.map(([k, l]) => `<option value="${k}">${esc(l)}</option>`).join("")}</select>
+        <span class="help" style="margin:0">Order matters only when two add-ons set the same light at the same moment: the lower one wins. A hold or a hand change still wins over any add-on.</span></div>`;
   }
 
-  _buttonHtml(z, ent, acts) {
-    const types = this._hass.states[ent]?.attributes.event_types || Object.keys(acts);
-    const PRESS = { multi_press_1: "Press", multi_press_2: "Double press", multi_press_3: "Triple press", long_press: "Hold", long_release: "Hold (on release)" };
-    const actKey = (a) => !a ? "" : a === "release" || a.release ? "release" : a.hold === "next" ? "next" : a.hold === "paused" ? "paused" : `m${a.hold}`;
-    const rows = types.map((et) => {
-      const a = acts[et], k = actKey(a), id = esc(JSON.stringify({ ent, et }));
-      return `<div class="stop" style="margin:4px 0"><span style="width:130px">${esc(PRESS[et] || et)}</span>
-        <select data-btn='${id}' data-f="act">${[["", "nothing"], ["m15", "hold 15 min"], ["m30", "hold 30 min"], ["m60", "hold 60 min"], ["next", "hold until the next mode"],
-          ["paused", "hold until released"], ["release", "release"], ...(k && /^m\d+$/.test(k) && !["m15", "m30", "m60"].includes(k) ? [[k, `hold ${k.slice(1)} min`]] : [])]
+  _addonBodyHtml(z, a, ai) {
+    const zi = this._zoneIndex(z.id), base = ["zones", zi, "addons", ai];
+    const slot = (p) => `<div class="errs-slot" data-path='${esc(JSON.stringify([...base, ...p]))}'></div>`;
+    let trig = "", then = "";
+    if (a.type === "lights") {
+      trig = `<div class="form" data-form="ad-trigger"></div>${slot(["trigger"])}`;
+      then = `${(a.steps || []).map((st, i) => this._stepHtml(z, a, st, i)).join("")}
+        <div class="tools"><button class="b sm" data-st-add="1">+ Step</button></div>${slot(["steps"])}`;
+    } else if (a.type === "while") {
+      const st = a.states || {};
+      trig = `<div class="form" data-form="ad-while"></div>`;
+      then = OVERLAY_STATES.map((s) => `<div class="brow"><div><label><input type="checkbox" data-ov-on="${s}" ${st[s] ? "checked" : ""}> <b style="font-weight:500">${s}</b></label>
+          ${st[s] ? `<label class="help" style="display:block;margin-top:4px"><input type="checkbox" data-ov-holds="${s}" ${st[s].holds ? "checked" : ""}> holds the room</label>` : ""}</div>
+        <div>${st[s] ? this._targetsHtml({ k: "overlay", zone: z.id, addon: a.id, state: s }, st[s].targets || {}, { label: "" }) : `<span class="help">Not used.</span>`}</div></div>`).join("") + slot(["states"]);
+    } else if (a.type === "button") {
+      trig = `<div class="form" data-form="ad-button"></div>`;
+      const types = (a.entity && this._hass.states[a.entity]?.attributes.event_types) || Object.keys(a.presses || {});
+      then = types.length ? types.map((et) => this._pressHtml(z, a, et)).join("") : `<div class="help">Choose the button first.</div>`;
+      then += slot(["presses"]);
+    } else if (a.type === "follow") {
+      trig = `<div class="form" data-form="ad-follow"></div>`;
+      const bands = (a.bands || []).map((b, i) => ({ b, i })).sort((x, y) => (y.b.min_pct || 0) - (x.b.min_pct || 0));
+      then = bands.map(({ b, i }) => `<div class="brow"><div><label class="help" style="display:block">Leader at or above</label>
+            <input class="in" type="number" min="0" max="100" data-band-pct="${i}" value="${esc(b.min_pct ?? 0)}" style="width:64px"> %
+            <button class="ic" data-band-rm="${i}" title="Remove band" aria-label="Remove band">×</button></div>
+          <div>${this._targetsHtml({ k: "band", zone: z.id, addon: a.id, band: i }, b.targets || {}, { label: "" })}</div></div>`).join("")
+        + `<div class="tools"><button class="b sm" data-band-add="1">+ Band</button></div>`;
+    } else {
+      trig = `<div class="help">A light someone turns on by hand. SB Modes only ever turns these off.</div>`;
+      then = `<div class="form" data-form="ad-autooff"></div>`;
+    }
+    return `<div class="nm"><input class="in" data-ad-name value="${esc(a.name || "")}" aria-label="Name" placeholder="Name">
+        <button class="b sm danger" data-ad-rm="${esc(a.id)}">Remove add-on</button></div>
+      ${slot([])}
+      <h4>Trigger</h4>${trig}
+      <h4>When</h4><div class="form" data-form="ad-when"></div>${slot(["when"])}
+      <h4>Then</h4>${then}`;
+  }
+
+  _stepHtml(z, a, st, i) {
+    const act = st.script !== undefined ? "script" : st.release ? "release" : "hold" in st ? "hold" : "lights";
+    const flash = (n) => `<label class="help">flash <select data-st-flash="${i}">${[0, 1, 2, 3].map((k) => `<option value="${k}" ${(n || 0) === k ? "selected" : ""}>${k ? `×${k}` : "none"}</option>`).join("")}</select></label>`;
+    let body = "";
+    if (act === "lights") body = this._targetsHtml({ k: "step", zone: z.id, addon: a.id, step: i }, st.targets || {}, { label: "" });
+    else if (act === "hold") {
+      const k = holdKey(st);
+      body = `<div class="stop"><select data-st-hold="${i}">${[...HOLD_OPTS, ...(/^m\d+$/.test(k) && !HOLD_OPTS.some(([x]) => x === k) ? [[k, `hold ${k.slice(1)} min`]] : [])]
+        .map(([v, l]) => `<option value="${v}" ${v === k ? "selected" : ""}>${l}</option>`).join("")}</select>${flash(st.flash)}</div>
+        ${this._targetsHtml({ k: "step", zone: z.id, addon: a.id, step: i }, st.targets || {}, { label: "", help: "Lights to set as it holds (leave empty to keep them as they are)." })}`;
+    } else if (act === "release") body = `<div class="stop">${flash(st.flash)}<span class="help">ends the hold; the room's own rule (or a TV add-on) takes over</span></div>`;
+    else body = `<div class="form" data-form="ad-script" data-i="${i}"></div><div class="help">The script gets: zone, zone_name, mode, occupied, held, changed_by_hand, addon.</div>`;
+    return `<div class="brow"><div><label class="help" style="display:block">${i ? "Then after" : "At the trigger, after"}</label>
+        <input class="in" type="number" min="0" max="1440" data-st-min="${i}" value="${esc(st.after_minutes ?? 0)}" style="width:64px"> min
+        <button class="ic" data-st-rm="${i}" title="Remove step" aria-label="Remove step" ${(a.steps || []).length > 1 ? "" : "disabled"}>×</button>
+        <select data-st-act="${i}" style="display:block;margin-top:6px">${[["lights", "Set lights"], ["hold", "Hold the room"], ["release", "Release the room"], ["script", "Run a script"]]
+          .map(([v, l]) => `<option value="${v}" ${v === act ? "selected" : ""}>${l}</option>`).join("")}</select></div>
+      <div>${body}</div></div>`;
+  }
+
+  _pressHtml(z, a, et) {
+    const p = (a.presses || {})[et], k = holdKey(p);
+    return `<div class="brow"><div><b style="font-weight:500">${esc(PRESS[et] || et)}</b></div><div>
+      <div class="stop"><select data-pr-act="${esc(et)}"><option value="" ${k ? "" : "selected"}>nothing</option>
+        ${[...HOLD_OPTS, ["release", "release"], ...(/^m\d+$/.test(k) && !HOLD_OPTS.some(([x]) => x === k) ? [[k, `hold ${k.slice(1)} min`]] : [])]
           .map(([v, l]) => `<option value="${v}" ${v === k ? "selected" : ""}>${l}</option>`).join("")}</select>
-        ${k ? `<label class="help">flash <select data-btn='${id}' data-f="flash">${[0, 1, 2, 3].map((n) => `<option value="${n}" ${(a.flash || 0) === n ? "selected" : ""}>${n ? `×${n}` : "none"}</option>`).join("")}</select></label>` : ""}</div>
-        ${k && k !== "release" ? `<div style="margin-left:140px">${this._targetsHtml({ k: "button", zone: z.id, ent, etype: et }, a.targets || {}, { label: "", help: "Lights to set when it holds (leave empty to keep them as they are)." })}</div>` : ""}`;
-    }).join("");
-    return `<div class="brow"><div><b style="font-weight:500">${esc(this._short(ent, z.id))}</b><br><button class="ic" data-btn-rm="${esc(ent)}" title="Remove button" style="font-size:13px;padding:0">remove</button></div><div>${rows}</div></div>`;
+        ${k ? `<label class="help">flash <select data-pr-flash="${esc(et)}">${[0, 1, 2, 3].map((n) => `<option value="${n}" ${((p && p.flash) || 0) === n ? "selected" : ""}>${n ? `×${n}` : "none"}</option>`).join("")}</select></label>` : ""}</div>
+      ${k && k !== "release" ? this._targetsHtml({ k: "button", zone: z.id, addon: a.id, etype: et }, p.targets || {}, { label: "", help: "Lights to set when it holds (leave empty to keep them as they are)." }) : ""}</div></div>`;
   }
 
   // ── the behaviour editor ───────────────────────────────────────────────
@@ -824,39 +928,82 @@ export class SbModesEditor extends HTMLElement {
       }), { name: "Name", areas: "Areas", lights: "Own lights", occupancy: "Own presence sensors", illuminance: "Own light sensors" },
       { lights: "Leave empty to use every light in the areas.", occupancy: "Leave empty to use the areas' presence sensors.", illuminance: "Leave empty to use (the average of) the areas' light sensors." }));
     }
-    const follow = root.querySelector('[data-form="follow"]');
-    if (follow && z) follow.appendChild(this._form([{ name: "leader", selector: { entity: { filter: { domain: ["light", "switch"] } } } }], { leader: z.follow.leader || "" },
-      (v) => this._edit((d) => { d.zones.find((q) => q.id === z.id).follow.leader = v.leader; }), { leader: "Leader light" }));
-    root.querySelectorAll('[data-form="autooff"]').forEach((slot) => {
-      const i = Number(slot.dataset.i), r = z.auto_off[i];
-      slot.appendChild(this._form([
-        { name: "lights", selector: { entity: { multiple: true, filter: { domain: ["light", "switch"] } } } },
-        { name: "with_empty", selector: { boolean: {} } },
-        { name: "on_minutes", selector: { number: { min: 0, max: 1440, mode: "box", unit_of_measurement: "min" } } },
-      ], { lights: r.lights || [], with_empty: !!r.with_empty, on_minutes: r.on_minutes || 0 },
-      (v) => this._edit((d) => {
-        const x = d.zones.find((q) => q.id === z.id).auto_off[i];
-        x.lights = v.lights || [];
-        if (v.with_empty) x.with_empty = true; else delete x.with_empty;
-        if (v.on_minutes) x.on_minutes = v.on_minutes; else delete x.on_minutes;
-      }), { lights: "Lights", with_empty: "Off with the room's empty setting (when it turns other lights off)", on_minutes: "Or once on this long while the room is empty" },
-      { on_minutes: "0 = only with the empty setting. “Empty” means empty for the room's usual delay, so a sensor's blink doesn't count." }));
+    const ad = z && this._openAddon?.startsWith(`${z.id}|`) ? (z.addons || []).find((x) => `${z.id}|${x.id}` === this._openAddon) : null;
+    const adEdit = (fn, redraw = false) => this._edit((d) => { const x = d.zones.find((q) => q.id === z.id).addons.find((y) => y.id === ad.id); fn(x); }, redraw);
+    const when = root.querySelector('[data-form="ad-when"]');
+    if (when && ad) {
+      const w = ad.when || {};
+      const dayOpts = [...this._types().map((t) => ({ value: t.id, label: `${t.name || t.id} (day type)` })),
+        ...(this._schema.day_sets || []).filter((s) => !this._types().some((t) => t.id === s.id)).map((s) => ({ value: s.id, label: s.name || s.id }))];
+      when.appendChild(this._form([
+        { name: "modes", selector: { select: { multiple: true, mode: "dropdown", options: modeOpts() } } },
+        { name: "days", selector: { select: { multiple: true, mode: "dropdown", options: dayOpts } } },
+        { name: "not_days", selector: { select: { multiple: true, mode: "dropdown", options: dayOpts } } },
+        { name: "from", selector: { time: {} } }, { name: "to", selector: { time: {} } },
+      ], { modes: w.modes || [], days: w.days || [], not_days: w.not_days || [], from: w.between?.[0] || "", to: w.between?.[1] || "" },
+      (v) => adEdit((x) => {
+        const n = {};
+        if (v.modes?.length) n.modes = v.modes;
+        if (v.days?.length) n.days = v.days;
+        if (v.not_days?.length) n.not_days = v.not_days;
+        if (v.from && v.to) n.between = [v.from.slice(0, 5), v.to.slice(0, 5)];
+        if (Object.keys(n).length) x.when = n; else delete x.when;
+      }), { modes: "Only in these modes", days: "Only on", not_days: "Never on", from: "Only between", to: "and" },
+      { modes: "Empty = any mode.", days: "Day types (Workdays, Days off, Vacation) or SB Scheduler calendars. Empty = every day.", from: "Leave both empty for any time." }));
+    }
+    const trig = root.querySelector('[data-form="ad-trigger"]');
+    if (trig && ad) {
+      const t = ad.trigger || {}, kind = "at" in t ? "time" : t.mode_begins ? "begins" : t.mode_ends ? "ends" : t.entity !== undefined ? "state" : "time";
+      const schema = [{ name: "kind", selector: { select: { mode: "dropdown", options: [{ value: "time", label: "A time of day" },
+        { value: "begins", label: "A mode begins" }, { value: "ends", label: "A mode ends" }, { value: "state", label: "A device reaches a state" }] } } }];
+      if (kind === "time") schema.push({ name: "at", selector: { text: {} } });
+      if (kind === "begins" || kind === "ends") schema.push({ name: "modes", selector: { select: { multiple: true, mode: "dropdown", options: modeOpts() } } });
+      if (kind === "state") schema.push({ name: "entity", selector: { entity: {} } }, { name: "to", selector: { text: {} } });
+      trig.appendChild(this._form(schema, { kind, at: t.at || "", modes: t.mode_begins || t.mode_ends || [], entity: t.entity || "", to: t.to || "" },
+        (v) => adEdit((x) => {
+          if (v.kind !== kind) {
+            x.trigger = v.kind === "time" ? { at: "06:30" } : v.kind === "begins" ? { mode_begins: [] } : v.kind === "ends" ? { mode_ends: [] } : { entity: "", to: "on" };
+            return;
+          }
+          if (kind === "time") x.trigger = { at: v.at || "" };
+          else if (kind === "begins") x.trigger = { mode_begins: v.modes || [] };
+          else if (kind === "ends") x.trigger = { mode_ends: v.modes || [] };
+          else x.trigger = { entity: v.entity || "", to: v.to || "" };
+        }, v.kind !== kind), { kind: "Trigger", at: "At", modes: "Mode", entity: "Device", to: "Reaches the state" },
+        { at: "HH:MM (06:30), or sunrise / sunset ± HH:MM (sunset-01:00).", to: "As HA shows it, e.g. playing, on, open." }));
+    }
+    root.querySelectorAll('[data-form="ad-script"]').forEach((slot) => {
+      const i = Number(slot.dataset.i);
+      slot.appendChild(this._form([{ name: "script", selector: { entity: { filter: { domain: "script" } } } }], { script: ad.steps[i].script || "" },
+        (v) => adEdit((x) => { x.steps[i].script = v.script || ""; }), { script: "Script" }));
     });
-    const wake = root.querySelector('[data-form="wake"]');
-    if (wake && z) wake.appendChild(this._form([{ name: "after_mode", required: true, selector: { select: { mode: "dropdown", options: modeOpts() } } }],
-      { after_mode: z.wake_up.after_mode || "" }, (v) => this._edit((d) => { d.zones.find((q) => q.id === z.id).wake_up.after_mode = v.after_mode; }),
-      { after_mode: "After this mode ends" }));
-    const overlay = root.querySelector('[data-form="overlay"]');
-    if (overlay && z) overlay.appendChild(this._form([
+    const wh = root.querySelector('[data-form="ad-while"]');
+    if (wh && ad) wh.appendChild(this._form([
       { name: "entity", selector: { entity: { filter: { domain: "media_player" } } } },
       { name: "debounce_seconds", selector: { number: { min: 0, max: 3600, mode: "box", unit_of_measurement: "s" } } },
       { name: "unavailable_cooldown_seconds", selector: { number: { min: 0, max: 3600, mode: "box", unit_of_measurement: "s" } } },
       { name: "presence", selector: { boolean: {} } },
-    ], { entity: z.overlay.entity || "", debounce_seconds: z.overlay.debounce_seconds ?? 5, unavailable_cooldown_seconds: z.overlay.unavailable_cooldown_seconds ?? 60, presence: z.overlay.presence ?? true },
-    (v) => this._edit((d) => { const o = d.zones.find((q) => q.id === z.id).overlay; Object.assign(o, v); if (o.presence === true) delete o.presence; }),
+    ], { entity: ad.entity || "", debounce_seconds: ad.debounce_seconds ?? 5, unavailable_cooldown_seconds: ad.unavailable_cooldown_seconds ?? 60, presence: ad.presence ?? true },
+    (v) => adEdit((x) => { Object.assign(x, v); if (x.presence === true) delete x.presence; }),
     { entity: "TV", debounce_seconds: "A state counts after", unavailable_cooldown_seconds: "Ignore changes after a drop-out for", presence: "Watching counts as someone in the room" }));
-    root.querySelectorAll("[data-btn-picker]").forEach((slot) => this._picker(slot, { entity: { filter: { domain: "event" } } }, "Add a button",
-      (eid) => this._edit((d) => { const x = d.zones.find((q) => q.id === z.id); (x.buttons ||= {})[eid] ||= {}; }, true)));
+    const bt = root.querySelector('[data-form="ad-button"]');
+    if (bt && ad) bt.appendChild(this._form([{ name: "entity", selector: { entity: { filter: { domain: "event" } } } }], { entity: ad.entity || "" },
+      (v) => adEdit((x) => { x.entity = v.entity || ""; }, true), { entity: "Button" }));
+    const fo = root.querySelector('[data-form="ad-follow"]');
+    if (fo && ad) fo.appendChild(this._form([{ name: "leader", selector: { entity: { filter: { domain: ["light", "switch"] } } } }], { leader: ad.leader || "" },
+      (v) => adEdit((x) => { x.leader = v.leader || ""; }), { leader: "Leader light" }));
+    const ao = root.querySelector('[data-form="ad-autooff"]');
+    if (ao && ad) ao.appendChild(this._form([
+      { name: "lights", selector: { entity: { multiple: true, filter: { domain: ["light", "switch"] } } } },
+      { name: "with_empty", selector: { boolean: {} } },
+      { name: "on_minutes", selector: { number: { min: 0, max: 1440, mode: "box", unit_of_measurement: "min" } } },
+    ], { lights: ad.lights || [], with_empty: !!ad.with_empty, on_minutes: ad.on_minutes || 0 },
+    (v) => adEdit((x) => {
+      x.lights = v.lights || [];
+      if (v.with_empty) x.with_empty = true; else delete x.with_empty;
+      if (v.on_minutes) x.on_minutes = v.on_minutes; else delete x.on_minutes;
+    }), { lights: "Lights", with_empty: "Off with the room's empty setting (when it turns other lights off)", on_minutes: "Or once on this long while the room is empty" },
+    { on_minutes: "0 = only with the empty setting. “Empty” means empty for the room's usual delay, so a sensor's blink doesn't count." }));
     root.querySelectorAll('[data-form="pick"]').forEach((slot) => {
       const owner = JSON.parse(slot.dataset.owner), ch = this._choice(this._draft, owner);
       const NONE = "__none__";
@@ -974,49 +1121,80 @@ export class SbModesEditor extends HTMLElement {
       list.push({ after_minutes: (list.at(-1)?.after_minutes ?? 0) + 10, targets: {} });
     }, true)));
     // Add-ons
-    q("[data-add-extra]", (b) => b.addEventListener("click", () => this._edit((d) => {
-      const x = zone(d), k = b.dataset.addExtra;
-      if (k === "follow") x.follow = { leader: "", bands: [{ min_pct: 50, targets: {} }, { min_pct: 0, targets: {} }] };
-      if (k === "overlay") x.overlay = { entity: "", states: { playing: { holds: true, targets: {} }, paused: { holds: true, targets: {} }, off: { targets: {} } } };
-      if (k === "buttons") x.buttons = {};
-      if (k === "auto_off") x.auto_off = [{ lights: [], with_empty: true, on_minutes: 15 }];
-      if (k === "wake_up") x.wake_up = { after_mode: (this._modes().find((m) => m.id === "overnight") || this._modes().at(-1))?.id, steps: [{ after_minutes: 30, targets: {} }] };
-    }, true)));
-    q("[data-rm-extra]", (b) => b.addEventListener("click", () => {
-      const label = { overlay: "TV overlay", auto_off: "auto-off rules", wake_up: "wake-up", buttons: "hold buttons" }[b.dataset.rmExtra] || b.dataset.rmExtra;
-      if (!confirm(`Remove the ${label} from this room (in the draft)?`)) return;
-      this._edit((d) => { delete zone(d)[b.dataset.rmExtra]; }, true);
+    const openId = () => (this._openAddon || "").split("|").slice(1).join("|");
+    const inst = (d) => (zone(d).addons || []).find((a) => a.id === openId());
+    q("[data-add-addon]", (sel) => sel.addEventListener("change", () => {
+      const k = sel.value;
+      if (!k) return;
+      let id;
+      this._edit((d) => {
+        const x = zone(d), list = (x.addons ||= []);
+        const base = { time: "wake", begins: "begins", ends: "ends", state: "device", while: "tv", button: "button", follow: "follow", auto_off: "auto-off" }[k];
+        id = newId(list, base);
+        const name = { time: "At a time", begins: "When a mode begins", ends: "When a mode ends", state: "When a device changes", while: "TV lighting",
+          button: "Hold button", follow: "Follow", auto_off: "Auto-off" }[k];
+        const lights = (trigger) => ({ id, name, type: "lights", trigger, steps: [{ after_minutes: 0, targets: {} }] });
+        list.push(k === "time" ? lights({ at: "06:30" }) : k === "begins" ? lights({ mode_begins: [] }) : k === "ends" ? lights({ mode_ends: [] })
+          : k === "state" ? lights({ entity: "", to: "on" })
+          : k === "while" ? { id, name, type: "while", entity: "", states: { playing: { holds: true, targets: {} }, paused: { holds: true, targets: {} }, off: { targets: {} } } }
+          : k === "button" ? { id, name, type: "button", entity: "", presses: {} }
+          : k === "follow" ? { id, name, type: "follow", leader: "", bands: [{ min_pct: 50, targets: {} }, { min_pct: 0, targets: {} }] }
+          : { id, name, type: "auto_off", lights: [], with_empty: true, on_minutes: 15 });
+        this._openAddon = `${x.id}|${id}`;
+      }, true);
     }));
-    q("[data-wk-step]", (inp) => inp.addEventListener("input", () => this._edit((d) => { zone(d).wake_up.steps[Number(inp.dataset.wkStep)].after_minutes = Number(inp.value || 0); })));
-    q("[data-wk-rm]", (b) => b.addEventListener("click", () => this._edit((d) => { zone(d).wake_up.steps.splice(Number(b.dataset.wkRm), 1); }, true)));
-    q("[data-wk-add]", (b) => b.addEventListener("click", () => this._edit((d) => {
-      const list = (zone(d).wake_up.steps ||= []); list.push({ after_minutes: (list.at(-1)?.after_minutes ?? 0) + 10, targets: {} });
+    q("[data-ad-open]", (b) => b.addEventListener("click", () => {
+      const key = `${room}|${b.dataset.adOpen}`;
+      this._openAddon = this._openAddon === key ? null : key;
+      this._render();
+    }));
+    q("[data-ad-on]", (sw) => sw.addEventListener("change", () => this._edit((d) => {
+      const a = (zone(d).addons || []).find((x) => x.id === sw.dataset.adOn);
+      if (sw.checked) delete a.enabled; else a.enabled = false;
     }, true)));
-    q("[data-ao-add]", (b) => b.addEventListener("click", () => this._edit((d) => { zone(d).auto_off.push({ lights: [], with_empty: true, on_minutes: 15 }); }, true)));
-    q("[data-ao-rm]", (b) => b.addEventListener("click", () => this._edit((d) => {
-      const x = zone(d); x.auto_off.splice(Number(b.dataset.aoRm), 1); if (!x.auto_off.length) delete x.auto_off;
+    q("[data-ad-move]", (b) => b.addEventListener("click", () => this._edit((d) => {
+      const list = zone(d).addons, i = Number(b.dataset.adMove), j = i + Number(b.dataset.dir);
+      [list[i], list[j]] = [list[j], list[i]];
     }, true)));
-    q("[data-band-pct]", (inp) => inp.addEventListener("input", () => this._edit((d) => { zone(d).follow.bands[Number(inp.dataset.bandPct)].min_pct = Number(inp.value || 0); })));
-    q("[data-band-rm]", (b) => b.addEventListener("click", () => this._edit((d) => { zone(d).follow.bands.splice(Number(b.dataset.bandRm), 1); }, true)));
-    q("[data-band-add]", (b) => b.addEventListener("click", () => this._edit((d) => { zone(d).follow.bands.push({ min_pct: 0, targets: {} }); }, true)));
+    q("[data-ad-rm]", (b) => b.addEventListener("click", () => {
+      if (!confirm("Remove this add-on (in the draft)?")) return;
+      this._openAddon = null;
+      this._edit((d) => { const x = zone(d); x.addons = x.addons.filter((a) => a.id !== b.dataset.adRm); if (!x.addons.length) delete x.addons; }, true);
+    }));
+    q("[data-ad-name]", (inp) => inp.addEventListener("input", () => this._edit((d) => { inst(d).name = inp.value; })));
+    q("[data-st-add]", (b) => b.addEventListener("click", () => this._edit((d) => {
+      const list = (inst(d).steps ||= []); list.push({ after_minutes: (list.at(-1)?.after_minutes ?? 0) + 10, targets: {} });
+    }, true)));
+    q("[data-st-rm]", (b) => b.addEventListener("click", () => this._edit((d) => { inst(d).steps.splice(Number(b.dataset.stRm), 1); }, true)));
+    q("[data-st-min]", (inp) => inp.addEventListener("input", () => this._edit((d) => { inst(d).steps[Number(inp.dataset.stMin)].after_minutes = Number(inp.value || 0); })));
+    q("[data-st-act]", (sel) => sel.addEventListener("change", () => this._edit((d) => {
+      const steps = inst(d).steps, i = Number(sel.dataset.stAct), after = steps[i].after_minutes || 0;
+      steps[i] = sel.value === "lights" ? { after_minutes: after, targets: {} } : sel.value === "hold" ? { after_minutes: after, hold: 30 }
+        : sel.value === "release" ? { after_minutes: after, release: true } : { after_minutes: after, script: "" };
+    }, true)));
+    q("[data-st-hold]", (sel) => sel.addEventListener("change", () => this._edit((d) => { inst(d).steps[Number(sel.dataset.stHold)].hold = holdVal(sel.value); }, true)));
+    q("[data-st-flash]", (sel) => sel.addEventListener("change", () => this._edit((d) => {
+      const s = inst(d).steps[Number(sel.dataset.stFlash)], n = Number(sel.value); if (n) s.flash = n; else delete s.flash;
+    })));
+    q("[data-pr-act]", (sel) => sel.addEventListener("change", () => this._edit((d) => {
+      const presses = (inst(d).presses ||= {}), et = sel.dataset.prAct, cur = presses[et], v = sel.value;
+      if (!v) { delete presses[et]; return; }
+      const keep = cur && typeof cur === "object" ? { ...(cur.flash ? { flash: cur.flash } : {}), ...(cur.targets && v !== "release" ? { targets: cur.targets } : {}) } : {};
+      presses[et] = v === "release" ? { release: true, ...keep } : { hold: holdVal(v), ...keep };
+    }, true)));
+    q("[data-pr-flash]", (sel) => sel.addEventListener("change", () => this._edit((d) => {
+      const p = inst(d).presses[sel.dataset.prFlash], n = Number(sel.value); if (n) p.flash = n; else delete p.flash;
+    })));
+    q("[data-band-pct]", (inp) => inp.addEventListener("input", () => this._edit((d) => { inst(d).bands[Number(inp.dataset.bandPct)].min_pct = Number(inp.value || 0); })));
+    q("[data-band-rm]", (b) => b.addEventListener("click", () => this._edit((d) => { inst(d).bands.splice(Number(b.dataset.bandRm), 1); }, true)));
+    q("[data-band-add]", (b) => b.addEventListener("click", () => this._edit((d) => { inst(d).bands.push({ min_pct: 0, targets: {} }); }, true)));
     q("[data-ov-on]", (cb) => cb.addEventListener("change", () => this._edit((d) => {
-      const st = (zone(d).overlay.states ||= {});
+      const st = (inst(d).states ||= {});
       if (cb.checked) st[cb.dataset.ovOn] = { targets: {} }; else delete st[cb.dataset.ovOn];
     }, true)));
     q("[data-ov-holds]", (cb) => cb.addEventListener("change", () => this._edit((d) => {
-      const s = zone(d).overlay.states[cb.dataset.ovHolds]; if (cb.checked) s.holds = true; else delete s.holds;
+      const s = inst(d).states[cb.dataset.ovHolds]; if (cb.checked) s.holds = true; else delete s.holds;
     })));
-    q("[data-btn]", (el) => el.addEventListener("change", () => this._edit((d) => {
-      const { ent, et } = JSON.parse(el.dataset.btn), acts = zone(d).buttons[ent], cur = acts[et];
-      if (el.dataset.f === "flash") { const n = Number(el.value); if (n) cur.flash = n; else delete cur.flash; return; }
-      const v = el.value;
-      if (!v) { delete acts[et]; return; }
-      const keep = cur && typeof cur === "object" ? { ...(cur.flash ? { flash: cur.flash } : {}), ...(cur.targets && v !== "release" ? { targets: cur.targets } : {}) } : {};
-      acts[et] = v === "release" ? { release: true, ...keep } : { hold: v === "next" || v === "paused" ? v : Number(v.slice(1)), ...keep };
-    }, true)));
-    q("[data-btn-rm]", (b) => b.addEventListener("click", () => this._edit((d) => {
-      const x = zone(d); delete x.buttons[b.dataset.btnRm]; if (!Object.keys(x.buttons).length) delete x.buttons;
-    }, true)));
     // Times
     q("[data-dt]", (row) => {
       const i = Number(row.dataset.dt);
@@ -1039,7 +1217,9 @@ export class SbModesEditor extends HTMLElement {
   }
 
   _goRoom(id, box = null) {
-    this._room = id; this._view = "room"; this._modePanel = null; this._render();
+    this._room = id; this._view = "room"; this._modePanel = null;
+    if (box) this._openAddon = `${id}|${box}`;
+    this._render();
     const el = box && this.shadowRoot.querySelector(`[data-box="${box}"]`);
     if (el) el.scrollIntoView({ block: "start", behavior: "smooth" }); else window.scrollTo({ top: 0 });
   }
@@ -1149,7 +1329,11 @@ export class SbModesEditor extends HTMLElement {
     const d = this._draft, uses = [], blocks = [];
     for (const z of d.zones || []) {
       if ((z.overrides || {})[id]) uses.push(`${z.name || z.id}: its own setting for this mode`);
-      if ((z.on_enter || {})[id]) uses.push(`${z.name || z.id}: lights set when it begins`);
+      for (const a of z.addons || []) {
+        const t = a.trigger || {};
+        if ((t.mode_begins || []).includes(id) || (t.mode_ends || []).includes(id) || (a.when?.modes || []).includes(id))
+          blocks.push(`${z.name || z.id}: the add-on “${a.name || a.id}” names this mode`);
+      }
       for (const [k, c] of Object.entries(z.overrides || {})) if (c?.params?.after_mode === id) blocks.push(`${z.name || z.id} (${this._modeName(k)}): a wake-up after this mode`);
     }
     for (const m of d.modes || []) if (m.id !== id && m.default?.params?.after_mode === id) blocks.push(`${m.name || m.id}: a wake-up after this mode`);
@@ -1164,7 +1348,6 @@ export class SbModesEditor extends HTMLElement {
       dd.modes = dd.modes.filter((m) => m.id !== id);
       for (const z of dd.zones || []) {
         if (z.overrides) { delete z.overrides[id]; if (!Object.keys(z.overrides).length) delete z.overrides; }
-        if (z.on_enter) { delete z.on_enter[id]; if (!Object.keys(z.on_enter).length) delete z.on_enter; }
       }
       for (const k of Object.keys(dd.times || {})) dd.times[k] = dd.times[k].filter((e) => e.mode !== id);
       if (dd.schedule) { dd.schedule = dd.schedule.filter((r) => r.mode !== id); if (!dd.schedule.length) delete dd.schedule; }

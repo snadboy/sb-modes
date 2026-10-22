@@ -631,7 +631,11 @@ def _check_lights_addon(a, at, ids, state_of, errors, warnings) -> None:
             if len(acts) != 1:
                 errors.append(f"{sat}: choose one action — set lights, hold, release or run a script.")
             elif acts[0] == "targets":
-                _check_param(st["targets"], {"type": "targets"}, sat, state_of, errors, warnings)
+                if not st["targets"]:
+                    with _sub("targets"):
+                        errors.append(f"{sat}: choose at least one light.")
+                else:
+                    _check_param(st["targets"], {"type": "targets"}, sat, state_of, errors, warnings)
             elif acts[0] == "script":
                 if not isinstance(st["script"], str) or not st["script"].startswith("script."):
                     errors.append(f"{sat}: choose a script.")

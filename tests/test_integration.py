@@ -1816,6 +1816,7 @@ async def test_addon_validation(hass, kitchen) -> None:
           {"id": "t2", "name": "TV 2", "type": "while", "entity": SINK, "states": {"on": {}}}], "one TV lighting"),
         ([{**good, "type": "party"}], "unknown add-on type"),
         ([{**good, "when": {"between": ["22:00"]}}], "between must be two times"),
+        ([{**good, "steps": [{"after_minutes": 0, "targets": {}}]}], "choose at least one light"),
     ]
     for addons, msg in cases:
         ctx, t = bad(addons, msg)
