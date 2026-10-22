@@ -47,6 +47,11 @@ class Overlay:
         self.rt = rt
         self.zone_id = zone["id"]
         self.entity = spec["entity"]
+        self.id = spec.get("id", "tv")
+        self.name = spec.get("name") or "TV lighting"
+        self.when = spec.get("when") or {}
+        self.presence = spec.get("presence", True)
+        self.active = True                               # its When matches (regate)
         self.states = spec.get("states") or {}
         self.debounce = spec.get("debounce_seconds", 5)
         self.cooldown = spec.get("unavailable_cooldown_seconds", 60)
@@ -66,7 +71,8 @@ class Overlay:
         if st is not None and st.state in OFF_STATES:
             self._off_since = st.last_changed            # off already at start (after a restart)
         # at start, only learn whether the zone is held — set nothing (the lights already are)
-        self.holding = bool((self.states.get(self.state) or {}).get("holds"))
+        self.active = self.rt.when_ok(self.when)
+        self.holding = self.active and bool((self.states.get(self.state) or {}).get("holds"))
         self._unsub = async_track_state_change_event(self.rt.hass, [self.entity], self._changed)
 
     @callback
@@ -76,6 +82,29 @@ class Overlay:
         if cfg.get("targets") and not self._quiet:
             st = self.rt.hass.states.get(self.entity)
             self.rt.apply(cfg["targets"], f"{st.name if st else self.entity} {self.state}", self.zone_id)
+
+    @callback
+    def regate(self, restart: bool = True) -> None:
+        """Its When opened or closed (a mode change, a day, a time window): a holding overlay that
+        no longer applies hands the room back; one that applies again takes the current state."""
+        ok = self.rt.when_ok(self.when)
+        if ok == self.active:
+            return
+        self.active = ok
+        cfg = self.states.get(self.state) or {}
+        if not ok:
+            self.rt.log("hand_end", self.zone_id, f"{self.name}: its When no longer matches — the room's own rule again")
+            if self.holding:
+                self.holding = False
+                if restart:
+                    self.rt.restart_zone(self.zone_id)
+            return
+        self.holding = bool(cfg.get("holds"))
+        if self.holding:
+            if restart:
+                self.rt.restart_zone(self.zone_id)       # Overlaid sets the targets
+        elif cfg.get("targets"):
+            self.apply_current()
 
     @callback
     def stop(self) -> None:
@@ -125,6 +154,8 @@ class Overlay:
         if cfg is None:
             return
         self.state = state
+        if not self.active:
+            return                                       # outside its When: noted, nothing done
         was = self.holding
         self.holding = bool(cfg.get("holds"))
         if self._turned_on is not None:

@@ -14,6 +14,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .entity import ModesEntity
+from .model import zone_addons
 
 
 SCHEDULE_STATES = ["on_schedule", "held_until_next", "held_timed", "paused", "no_schedule"]
@@ -108,13 +109,8 @@ class ZoneSensor(ModesEntity, SensorEntity):
             "hold": st.get("hold"),
             "overrides": st.get("overrides") or {},
             "by_mode": self._rt.zone_by_mode(self._zone_id),
-            "on_enter": zone.get("on_enter") or {},
-            "follow": zone.get("follow"),
             "overlay": st.get("overlay"),
-            "overlay_config": zone.get("overlay"),
-            "buttons": zone.get("buttons"),
-            "wake_up": zone.get("wake_up"),
-            "wake_up_status": self._rt.wake_status(self._zone_id),
-            "auto_off": zone.get("auto_off"),
+            "addons": zone_addons(zone),
+            "addon_status": self._rt.addon_status(self._zone_id),
             **{k: v for k, v in (st.get("entities") or {}).items()},
         }

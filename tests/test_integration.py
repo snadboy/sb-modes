@@ -733,42 +733,113 @@ async def test_wake_sequence_after_overnight_only(hass, kitchen, lights, freezer
     assert _zone(hass)["status"] == "only after Overnight"
 
 
-async def test_wake_up_addon_after_overnight_only(hass, kitchen, lights, freezer) -> None:
+def _st(hass, addon_id):
+    return _zone(hass)["addon_status"].get(addon_id)
+
+
+async def test_wake_up_kept_from_an_older_table(hass, kitchen, lights, freezer) -> None:
+    """An older table's wake_up key still runs, as a "lights" add-on after Overnight ends."""
     await _setup(hass)
     t = _with("vacancy_off", {"lights": [CEILING], "off_after_seconds": 300})   # the room's own rule, untouched
     t["zones"][0]["wake_up"] = WAKE
     await _save(hass, t)
     await _mode(hass, "overnight")
     await _mode(hass, "day")                                              # came from Overnight
-    assert _zone(hass)["wake_up_status"].startswith("next step at")
+    assert _st(hass, "wake-up") == "running"
     await _tick(hass, freezer, minutes=30, seconds=1)
     assert [c.data.get("brightness_pct") for c in lights["on"]] == [1]
     hass.states.async_set(SINK, "on", {"brightness": 3}, context=Context(id=_rt(hass).own_contexts[-1]))   # our own step
     await _tick(hass, freezer, minutes=10)
     assert [c.data.get("brightness_pct") for c in lights["on"]] == [1, 4]
-    assert _zone(hass)["wake_up_status"] == "done"
+    assert _st(hass, "wake-up") == ""
     await _mode(hass, "evening")                                          # from Day: not a wake-up
-    assert _zone(hass)["wake_up_status"] == "after Overnight ends"
+    await _tick(hass, freezer, minutes=45)
+    assert len(lights["on"]) == 2
 
 
-async def test_wake_up_addon_respects_a_hold(hass, kitchen, lights, freezer) -> None:
+def _clock_addon(at: str, when: dict | None = None, steps=None) -> dict:
+    return {"id": "wake", "name": "Workday wake-up", "type": "lights", "trigger": {"at": at}, **({"when": when} if when else {}),
+            "steps": steps or [{"after_minutes": 0, "targets": {SINK: {"brightness_pct": 1}}},
+                               {"after_minutes": 10, "targets": {SINK: {"brightness_pct": 4}}}]}
+
+
+async def test_lights_addon_at_a_clock_time_in_any_mode(hass, kitchen, lights, freezer) -> None:
+    from homeassistant.util import dt as dt_util
     await _setup(hass)
+    at = (dt_util.now() + timedelta(minutes=2)).strftime("%H:%M")
     t = _table()
-    t["zones"][0]["wake_up"] = WAKE
+    t["zones"][0]["addons"] = [_clock_addon(at)]
     await _save(hass, t)
-    await _mode(hass, "overnight")
+    await _mode(hass, "evening")                                          # any mode: the clock decides
+    assert _st(hass, "wake").startswith("next ")
+    await _tick(hass, freezer, minutes=2, seconds=5)
+    assert [c.data.get("brightness_pct") for c in lights["on"]] == [1]
+    assert _st(hass, "wake") == "running"
+    await _tick(hass, freezer, minutes=10)
+    assert [c.data.get("brightness_pct") for c in lights["on"]] == [1, 4]
+    assert _st(hass, "wake").startswith("next ")                          # tomorrow
+
+
+async def test_lights_addon_when_modes_not_matching_is_skipped(hass, kitchen, lights, freezer) -> None:
+    from homeassistant.util import dt as dt_util
+    await _setup(hass)
+    at = (dt_util.now() + timedelta(minutes=2)).strftime("%H:%M")
+    t = _table()
+    t["zones"][0]["addons"] = [_clock_addon(at, {"modes": ["overnight"]})]
+    await _save(hass, t)
     await _mode(hass, "day")
+    await _tick(hass, freezer, minutes=15)
+    assert lights["on"] == []
+
+
+async def test_lights_addon_respects_a_hold(hass, kitchen, lights, freezer) -> None:
+    from homeassistant.util import dt as dt_util
+    await _setup(hass)
+    at = (dt_util.now() + timedelta(minutes=2)).strftime("%H:%M")
+    t = _table()
+    t["zones"][0]["addons"] = [_clock_addon(at)]
+    await _save(hass, t)
     await hass.services.async_call(DOMAIN, "hold_zone", {"zone": "kitchen", "hold": 120}, blocking=True)
-    await _tick(hass, freezer, minutes=30, seconds=1)
+    await _tick(hass, freezer, minutes=2, seconds=5)
     assert lights["on"] == []                                             # held: the step is skipped
 
 
-async def test_wake_up_addon_is_checked(hass, kitchen) -> None:
+async def test_lights_addon_when_a_mode_begins_and_a_script(hass, kitchen, lights) -> None:
+    scripts = async_mock_service(hass, "script", "turn_on")
     await _setup(hass)
     t = _table()
-    t["zones"][0]["wake_up"] = {"after_mode": "weekend", "steps": [{"after_minutes": 900, "targets": {}}]}
-    with pytest.raises(ServiceValidationError, match="wake-up: mode “weekend”"):
-        await _save(hass, t)
+    t["zones"][0]["addons"] = [
+        {"id": "aux", "name": "Aux on", "type": "lights", "trigger": {"mode_begins": ["evening"]},
+         "steps": [{"after_minutes": 0, "targets": {SINK: {"brightness_pct": 30}}}]},
+        {"id": "fan", "name": "Fan", "type": "lights", "trigger": {"mode_ends": ["evening"]},
+         "steps": [{"after_minutes": 0, "script": "script.fan_quiet"}]},
+    ]
+    await _save(hass, t)
+    await _mode(hass, "evening")
+    assert [c.data.get("brightness_pct") for c in lights["on"]] == [30]
+    assert scripts == []
+    await _mode(hass, "overnight")
+    assert len(scripts) == 1 and scripts[0].data["entity_id"] == "script.fan_quiet"
+    v = scripts[0].data["variables"]
+    assert v["zone"] == "kitchen" and v["mode"] == "overnight" and v["addon"] == "Fan"
+
+
+async def test_overlay_when_modes(hass, kitchen, lights, freezer) -> None:
+    """A While add-on outside its When does nothing; the room keeps its own rule."""
+    await _setup(hass)
+    hass.states.async_set("media_player.tv", "off")
+    t = _table()
+    t["zones"][0]["addons"] = [{"id": "tv", "name": "TV lighting", "type": "while", "entity": "media_player.tv",
+                                "when": {"modes": ["evening"]},
+                                "states": {"playing": {"holds": True, "targets": {SINK: {"brightness_pct": 5}}}}}]
+    await _save(hass, t)
+    await _mode(hass, "day")
+    hass.states.async_set("media_player.tv", "playing")
+    await _tick(hass, freezer, seconds=6)
+    assert lights["on"] == [] and _st(hass, "tv") == "not now"
+    await _mode(hass, "evening")                                          # its When opens: it takes over
+    assert (SINK, 5) in [(c.data["entity_id"], c.data.get("brightness_pct")) for c in lights["on"]]
+    assert _st(hass, "tv").startswith("active")
 
 
 async def test_sunset_relative_rule(hass, kitchen) -> None:

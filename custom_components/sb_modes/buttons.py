@@ -37,10 +37,11 @@ FLASH_SECONDS = 0.7
 
 
 class Buttons:
-    def __init__(self, rt: Runtime, zone: dict, spec: dict) -> None:
+    def __init__(self, rt: Runtime, zone: dict, spec: dict, whens: dict | None = None) -> None:
         self.rt = rt
         self.zone_id = zone["id"]
         self.spec = spec
+        self.whens = whens or {}                         # event entity → its add-on's When
         self._pending: CALLBACK_TYPE | None = None
         self._task: asyncio.Task | None = None
         self._unsub: CALLBACK_TYPE | None = None
@@ -75,28 +76,31 @@ class Buttons:
         self._cancel()                                   # a newer event replaces a pending one
         if action is None:
             return
+        if not self.rt.when_ok(self.whens.get(event.data["entity_id"])):
+            self.rt.log("skipped", self.zone_id, f"{new.name or event.data['entity_id']} pressed — not now: its When does not match")
+            return
         self._pending = async_call_later(self.rt.hass, SETTLE_SECONDS,
                                          HassJob(partial(self._act, action), cancel_on_shutdown=True))
 
     @callback
-    def _act(self, action, _now=None) -> None:
+    def _act(self, action, _now=None, by: str = "button") -> None:
         self._pending = None
         if action == "release":
             action = {"release": True}
         if self._task and not self._task.done():
             self._task.cancel()                          # a newer press wins over a flash in progress
         if "hold" in action:
-            self.rt.keeper.hold(self.zone_id, action["hold"], by="button")   # first: nothing else sends meanwhile
-        self._task = self.rt.hass.async_create_task(self._run(action), f"sb_modes button {self.zone_id}")
+            self.rt.keeper.hold(self.zone_id, action["hold"], by=by)   # first: nothing else sends meanwhile
+        self._task = self.rt.hass.async_create_task(self._run(action, by), f"sb_modes button {self.zone_id}")
 
-    async def _run(self, action: dict) -> None:
+    async def _run(self, action: dict, by: str = "button") -> None:
         if action.get("flash"):
             await self._flash(self.rt.zone_lights(self.zone_id), action["flash"])
         if "hold" in action:
             if action.get("targets"):
-                self.rt.send(action["targets"], "held by button", self.zone_id)
+                self.rt.send(action["targets"], f"held by {by}", self.zone_id)
             return
-        self.rt.keeper.release(self.zone_id, by="button")
+        self.rt.keeper.release(self.zone_id, by=by)
         if (ov := self.rt.overlay_of(self.zone_id)) is not None and not ov.holding:
             ov.apply_current()                           # holding: the zone's restart already did
 

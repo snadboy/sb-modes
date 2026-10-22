@@ -213,7 +213,7 @@ def rule_day_sets(config: dict) -> set[str]:
     """Every SB Scheduler day set the schedule needs: other rules' and the day types'."""
     sets = {r["day_set"] for r in config.get("schedule") or [] if isinstance(r, dict) and r.get("day_set")}
     sets |= {t["day_set"] for t in config.get("day_types") or [] if isinstance(t, dict) and t.get("day_set")}
-    return sets
+    return sets | addon_day_sets(config)
 
 
 # ── day types ───────────────────────────────────────────────────────────────
@@ -307,3 +307,98 @@ def next_change(config: dict, now, in_set=None, sun=None):
     from datetime import timedelta
     nxt = occurrences(config, now + timedelta(microseconds=1), now + timedelta(days=8), in_set, sun)
     return nxt[0][::-1] if nxt else (None, None)
+
+
+# ── add-ons ─────────────────────────────────────────────────────────────────
+# A zone's `addons` is an ordered list of instances (2026-10-22), each
+#   {"id", "name", "type", "enabled"?, "when"?, …the type's own fields}
+# type "lights":   "trigger" {"at": "06:30" | "sunset-01:00"} | {"mode_begins": [ids]} |
+#                  {"mode_ends": [ids]} | {"entity": id, "to": state};
+#                  "steps" [{"after_minutes", one of "targets" | "hold" (+targets, flash) |
+#                  "release" (+flash) | "script"}]
+# type "while":    the TV overlay — "entity", "states" {state: {targets, holds}}, "debounce_seconds",
+#                  "unavailable_cooldown_seconds", "presence"
+# type "button":   "entity" (an event entity), "presses" {event type: hold/release action}
+# type "follow":   "leader", "bands"
+# type "auto_off": "lights", "with_empty", "on_minutes"
+# "when" (all optional, all must match): "modes" [ids], "days" / "not_days" [day type ids or SB
+# Scheduler day set ids], "between" ["HH:MM", "HH:MM"] (may cross midnight).
+# Older tables kept one of each as zone keys (overlay, buttons, follow, auto_off, wake_up) plus
+# on_enter; zone_addons() converts those on read, so every version still loads.
+
+ADDON_TYPES = ("lights", "while", "button", "follow", "auto_off")
+LEGACY_ADDON_KEYS = ("overlay", "buttons", "follow", "auto_off", "wake_up", "on_enter")
+
+
+def zone_addons(zone: dict) -> list[dict]:
+    """The zone's add-on instances: its `addons`, or its older keys converted."""
+    if isinstance(zone.get("addons"), list):
+        return [a for a in zone["addons"] if isinstance(a, dict)]
+    out: list[dict] = []
+    if isinstance(ov := zone.get("overlay"), dict):
+        out.append({"id": "tv", "name": "TV lighting", "type": "while", **ov})
+    if isinstance(bt := zone.get("buttons"), dict):
+        for n, (ent, presses) in enumerate(bt.items(), 1):
+            out.append({"id": f"button-{n}", "name": "Hold button" if len(bt) == 1 else f"Button {n}",
+                        "type": "button", "entity": ent, "presses": presses})
+    if isinstance(fo := zone.get("follow"), dict):
+        out.append({"id": "follow", "name": "Follow", "type": "follow", **fo})
+    for n, r in enumerate(zone.get("auto_off") or [], 1):
+        if isinstance(r, dict):
+            out.append({"id": f"auto-off-{n}", "name": "Auto-off", "type": "auto_off", **r})
+    if isinstance(wk := zone.get("wake_up"), dict):
+        out.append({"id": "wake-up", "name": "Wake-up", "type": "lights",
+                    "trigger": {"mode_ends": [wk.get("after_mode")]}, "steps": wk.get("steps") or []})
+    groups: list[tuple[dict, list[str]]] = []          # on_enter: modes with the same targets share one
+    for mode_id, targets in (zone.get("on_enter") or {}).items():
+        for t, modes in groups:
+            if t == targets:
+                modes.append(mode_id)
+                break
+        else:
+            groups.append((targets, [mode_id]))
+    for n, (targets, modes) in enumerate(groups, 1):
+        out.append({"id": f"begins-{n}", "name": "When the mode begins", "type": "lights",
+                    "trigger": {"mode_begins": modes}, "steps": [{"after_minutes": 0, "targets": targets}]})
+    return out
+
+
+def addon_day_sets(config: dict) -> set[str]:
+    """SB Scheduler day sets the add-ons' When names (anything that is not a day type id)."""
+    types = {t.get("id") for t in config.get("day_types") or [] if isinstance(t, dict)}
+    out: set[str] = set()
+    for zone in config.get("zones") or []:
+        if isinstance(zone, dict):
+            for a in zone_addons(zone):
+                when = a.get("when") if isinstance(a.get("when"), dict) else {}
+                out |= {d for key in ("days", "not_days") for d in when.get(key) or [] if isinstance(d, str) and d not in types}
+    return out
+
+
+def day_matches(config: dict, day_id: str, day, in_set) -> bool | None:
+    """Is `day` a day of `day_id` — a day type id, else an SB Scheduler day set? None: unknown."""
+    if any(isinstance(t, dict) and t.get("id") == day_id for t in config.get("day_types") or []):
+        t = day_type_of(config, day, in_set)
+        return None if t is None else t == day_id
+    return in_set(day_id, day) if in_set else None
+
+
+def when_matches(config: dict, when: dict | None, mode: str | None, now, in_set) -> bool:
+    """Does an add-on's When hold at `now` (a local datetime) in `mode`? Unknown days don't match."""
+    if not when:
+        return True
+    if when.get("modes") and mode not in when["modes"]:
+        return False
+    day = now.date()
+    if when.get("days") and not any(day_matches(config, d, day, in_set) for d in when["days"]):
+        return False
+    if any(day_matches(config, d, day, in_set) for d in when.get("not_days") or []):
+        return False
+    if (bw := when.get("between")) and isinstance(bw, list) and len(bw) == 2:
+        a, b = parse_at(bw[0]), parse_at(bw[1])
+        if a and b:
+            t = (now.hour, now.minute)
+            inside = a <= t < b if a <= b else (t >= a or t < b)
+            if not inside:
+                return False
+    return True

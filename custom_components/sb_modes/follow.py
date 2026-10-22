@@ -48,6 +48,7 @@ class Follower:
         self.rt = rt
         self.zone_id = zone["id"]
         self.leader = spec["leader"]
+        self.when = spec.get("when") or {}
         self.bands = spec.get("bands") or []
         self.followers = {e for b in self.bands for e in (b.get("targets") or {})}
         self._unsub: CALLBACK_TYPE | None = None
@@ -68,6 +69,8 @@ class Follower:
         pct, was = leader_pct(new), leader_pct(old)
         if pct is None or was is None:
             return                                       # to or from unavailable: not a real change
+        if not self.rt.when_ok(self.when):
+            return                                       # outside its When
         if pct == was and (old.state == new.state):
             return
         leader = new.name or self.leader

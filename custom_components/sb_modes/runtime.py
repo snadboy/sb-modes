@@ -36,7 +36,7 @@ from .behaviours import KINDS, Behaviour, HandsOff, Held, Overlaid
 from .bookkeeping import Keeper, describe_hold, release_delay
 from .follow import Follower
 from .autooff import AutoOff
-from .wake import WakeUp
+from .addons import LightsAddon
 from .buttons import Buttons
 from .overlay import Overlay
 from . import presence
@@ -44,7 +44,7 @@ from .const import (
     ALERT_GRACE_SECONDS, CHECK_SECONDS, DOMAIN, EVENT_MODE_CHANGED, ISSUE_ID, STARTUP_SETTLE_SECONDS, STORE_KEY,
     STORE_VERSION,
 )
-from .model import default_config, find, mode_ids, next_change, resolve, rule_day_sets, scheduled_mode
+from .model import default_config, find, mode_ids, next_change, resolve, rule_day_sets, scheduled_mode, when_matches, zone_addons
 from .validate import check_config
 from .zones import zone_entities
 
@@ -97,7 +97,7 @@ class Runtime:
         self._overlays: dict[str, Overlay] = {}
         self._buttons: dict[str, Buttons] = {}
         self._autooff: dict[str, AutoOff] = {}
-        self._wakes: dict[str, WakeUp] = {}
+        self._lights_addons: dict[str, list[LightsAddon]] = {}   # zone → its "lights" add-ons
         self.media_left: dict[str, datetime] = {}          # media player → when it stopped being watched
         self.daylight: dict[str, tuple] = {}              # zone → (last reading with its lights off, when)
         self._behaviours: dict[str, Behaviour] = {}
@@ -226,6 +226,8 @@ class Runtime:
     @callback
     def _tick(self, _now) -> None:
         self.check()
+        for ov in list(self._overlays.values()):         # an overlay's When window may open or close
+            ov.regate()
 
     @callback
     def stop(self) -> None:
@@ -245,13 +247,13 @@ class Runtime:
         self._cancel_grace()
         self._stop_behaviours()
         for f in [*self._followers.values(), *self._overlays.values(), *self._buttons.values(), *self._autooff.values(),
-                  *self._wakes.values()]:
+                  *(a for lst in self._lights_addons.values() for a in lst)]:
             f.stop()
         self._followers.clear()
         self._overlays.clear()
         self._buttons.clear()
         self._autooff.clear()
-        self._wakes.clear()
+        self._lights_addons.clear()
         self.keeper.stop()
 
     # ── the table ────────────────────────────────────────────────────────────
@@ -436,20 +438,10 @@ class Runtime:
                  + (f"; {ended}" if ended else ""))
         if restart:
             self._restart_behaviours()
-        self._apply_on_enter(mode_id)
+        for lst in list(self._lights_addons.values()):  # add-ons triggered by a mode beginning / ending
+            for a in lst:
+                a.mode_changed(old, mode_id)
         return True
-
-    @callback
-    def _apply_on_enter(self, mode_id: str) -> None:
-        """Each zone's `on_enter` targets for the mode that just began — once, on the change
-        itself (never on a restart or reload). Held zones are skipped; hand changes have just
-        ended with the mode change, as they always do."""
-        if not self.ready:
-            return
-        for zone in self.zones():
-            targets = (zone.get("on_enter") or {}).get(mode_id)
-            if targets:
-                self.apply(targets, f"{zone['id']}: {self.mode_name(mode_id)} begins", zone["id"])
 
     @callback
     def _catch_up(self, source: str = "schedule", restart: bool = True) -> bool:
@@ -506,16 +498,19 @@ class Runtime:
     @callback
     def _restart_behaviours(self) -> None:
         self._stop_behaviours()
-        if self.ready and not (self._followers or self._overlays or self._buttons or self._autooff or self._wakes):
+        if self.ready and not (self._followers or self._overlays or self._buttons or self._autooff or self._lights_addons):
             self._restart_followers()
+        for ov in self._overlays.values():               # a When that names modes: before the zones start
+            ov.regate(restart=False)
         if self.ready and self.mode:
             for zone in self.zones():
                 self._start_zone(zone)
         for a in self._autooff.values():                 # after the zones: they know their presence sensors
             a.stop()
             a.start()
-        for w in self._wakes.values():                   # each mode change: did the house just leave its mode?
-            w.start()
+        for lst in self._lights_addons.values():         # (re)armed: times, and sequences under way
+            for a in lst:
+                a.start()
         self._rewatch()
         self.notify()
 
@@ -531,8 +526,8 @@ class Runtime:
             kind = KINDS.get(picked.get("behaviour") or "", HandsOff)
         entities = zone_entities(self.hass, zone.get("areas") or [], zone.get("lights"),
                                  zone.get("occupancy"), zone.get("illuminance"))
-        if (spec := zone.get("overlay")) and spec.get("presence", True) and spec.get("entity"):
-            entities["occupancy"] = [*entities["occupancy"], spec["entity"]]   # the TV on = someone watching
+        if ov is not None and ov.presence and ov.entity:
+            entities["occupancy"] = [*entities["occupancy"], ov.entity]   # the TV on = someone watching
         b = kind(self, zone, picked.get("params") or {}, entities)
         self._behaviours[zone["id"]] = b
         b.start()
@@ -580,36 +575,36 @@ class Runtime:
         for f in self._followers.values():
             f.stop()
         self._followers.clear()
-        for o in [*self._overlays.values(), *self._buttons.values(), *self._autooff.values(), *self._wakes.values()]:
+        for o in [*self._overlays.values(), *self._buttons.values(), *self._autooff.values(),
+                  *(a for lst in self._lights_addons.values() for a in lst)]:
             o.stop()
         self._overlays.clear()
         self._buttons.clear()
         self._autooff.clear()
-        self._wakes.clear()
+        self._lights_addons.clear()
         if not self.ready:
             return
         for zone in self.zones():
-            if zone.get("wake_up"):
-                self._wakes[zone["id"]] = WakeUp(self, zone, zone["wake_up"])   # started with the behaviours
-        for zone in self.zones():
-            if zone.get("auto_off"):
-                a = AutoOff(self, zone, zone["auto_off"])
-                self._autooff[zone["id"]] = a
-        for zone in self.zones():
-            if zone.get("buttons"):
-                b = Buttons(self, zone, zone["buttons"])
-                self._buttons[zone["id"]] = b
+            addons = [a for a in zone_addons(zone) if a.get("enabled", True)]
+            of = lambda t: [a for a in addons if a.get("type") == t]   # noqa: E731
+            zid = zone["id"]
+            if rules := of("auto_off"):
+                self._autooff[zid] = AutoOff(self, zone, rules)          # started with the behaviours
+            if presses := of("button"):
+                b = Buttons(self, zone, {a["entity"]: a.get("presses") or {} for a in presses if a.get("entity")},
+                            {a["entity"]: a.get("when") for a in presses if a.get("entity")})
+                self._buttons[zid] = b
                 b.start()
-        for zone in self.zones():
-            if zone.get("overlay"):
-                o = Overlay(self, zone, zone["overlay"])
-                self._overlays[zone["id"]] = o
+            if whiles := of("while"):
+                o = Overlay(self, zone, whiles[0])                       # one per room (validation)
+                self._overlays[zid] = o
                 o.start()
-        for zone in self.zones():
-            if zone.get("follow"):
-                f = Follower(self, zone, zone["follow"])
-                self._followers[zone["id"]] = f
+            if follows := of("follow"):
+                f = Follower(self, zone, follows[0])
+                self._followers[zid] = f
                 f.start()
+            if lights := of("lights"):
+                self._lights_addons[zid] = [LightsAddon(self, zone, a) for a in lights]
 
     @callback
     def _occupancy_changed(self, _event) -> None:
@@ -681,9 +676,22 @@ class Runtime:
                 self._autooff[zone_id].empty_setting_applied()   # the lamp goes with the others
         return ctx
 
-    def wake_status(self, zone_id: str) -> str | None:
-        w = self._wakes.get(zone_id)
-        return w.status if w else None
+    def when_ok(self, when: dict | None) -> bool:
+        """Does an add-on's When hold now?"""
+        return when_matches(self.config, when, self.mode, dt_util.now(), self.in_set)
+
+    def addon_status(self, zone_id: str) -> dict[str, str]:
+        """Add-on id → a few words for the card: next run, running, active…"""
+        out = {a.id: a.status() for a in self._lights_addons.get(zone_id, [])}
+        if (ov := self._overlays.get(zone_id)) is not None:
+            out[ov.id] = ("active: " + (ov.state or "")) if ov.holding else ("" if ov.active else "not now")
+        return out
+
+    @callback
+    def hold_or_release(self, zone_id: str, action: dict, by: str) -> None:
+        """An add-on's hold / release step: as a button press does it (flash, then targets)."""
+        b = self._buttons.get(zone_id) or Buttons(self, {"id": zone_id}, {})
+        b._act(action, by=by)
 
     def zone_presence(self, zone_id: str) -> list[str]:
         b = self._behaviours.get(zone_id)

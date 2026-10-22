@@ -65,7 +65,8 @@ class AutoOff:
     @callback
     def empty_setting_applied(self) -> None:
         """Runtime.send: the zone's behaviour just turned lights off while the zone is vacant."""
-        out = [e for r in self.rules if r.get("with_empty") for e in r["lights"] if self._on(e)]
+        out = [e for r in self.rules if r.get("with_empty") and self.rt.when_ok(r.get("when"))
+               for e in r["lights"] if self._on(e)]
         if out:
             self._off(out, "with the empty setting")
 
@@ -80,7 +81,7 @@ class AutoOff:
         empty_from = vacant + timedelta(minutes=self.rt.zone_empty_delay(self.zone_id))
         now, due_now, nxt = dt_util.utcnow(), [], None
         for r in self.rules:
-            if not r.get("on_minutes"):
+            if not r.get("on_minutes") or not self.rt.when_ok(r.get("when")):
                 continue
             for e in r["lights"]:
                 st = self._on(e)
