@@ -651,7 +651,7 @@ class Runtime:
 
     def _changing(self, targets: dict[str, dict]) -> dict[str, dict]:
         """The targets that would actually change something (the driver's plan)."""
-        return {e: t for e, t in targets.items() if driver.plan(self.hass.states.get(e), t or {}) is not None}
+        return {e: t for e, t in targets.items() if driver.needs(self.hass, e, t or {})}
 
     @callback
     def send(self, targets: dict[str, dict], why: str, zone_id: str | None = None, note: str | None = None,

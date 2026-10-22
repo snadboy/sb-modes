@@ -446,4 +446,6 @@ on arrival the group came on at 25 % but two lamps kept a hand-set colour. Matte
 ColorControl commands while off, so driver._turn now turns an off light on first, then sends the
 colour. Separately, a colour set in the Govee app may not reach Matter: the east lamp reported
 3401 K while showing another colour, and a repeat of 3401 K was a no-op on the device; a nudge
-(3600 K, then 3401 K) fixed it. Offered the user an always-resend option; not chosen yet.
+(3600 K, then 3401 K) fixed it. User chose "check, then send if necessary" (0.27.10): light groups
+are checked and set lamp by lamp (driver.members / needs), so a lamp that differs from a group
+that matches on average gets its own call. A lamp that MISREPORTS (Govee app) still can't be caught.

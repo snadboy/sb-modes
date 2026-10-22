@@ -12,6 +12,10 @@ A light that is OFF and gets a colour (colour temperature, hs, effect) is turned
 given the colour in a second call: Matter lights ignore colour commands while off (ExecuteIfOff
 is not set), so one call turns them on in their OLD colour — the Office door and closet floor
 lamps kept a hand-set colour while the group came back on at 3401 K (2026-10-22).
+
+A LIGHT GROUP is checked and set lamp by lamp: a group's own state blends its members (an
+average colour, "on" if any is on), so one lamp left in another colour hid behind the rest and
+nothing was sent. Each member gets the group's target; only members that differ get a call.
 """
 
 from __future__ import annotations
@@ -88,10 +92,23 @@ def _matches(state: State, data: dict) -> bool:
     return True
 
 
+def members(hass: HomeAssistant, eid: str) -> list[str]:
+    """A light group's member lights (its entity_id attribute); [eid] for anything else."""
+    st = hass.states.get(eid)
+    m = st.attributes.get("entity_id") if st is not None and eid.startswith("light.") else None
+    return [x for x in m if isinstance(x, str) and x.startswith("light.")] if isinstance(m, (list, tuple)) and m else [eid]
+
+
+def needs(hass: HomeAssistant, eid: str, target: dict) -> bool:
+    """Would bringing `eid` (each lamp of a group) to `target` send anything?"""
+    return any(plan(hass.states.get(m), target or {}) is not None for m in members(hass, eid))
+
+
 async def apply(hass: HomeAssistant, targets: dict[str, dict], context: Context) -> list[str]:
-    """Bring every entity to its target; returns the entities a call was sent to."""
+    """Bring every entity to its target (a group lamp by lamp); returns the entities called."""
     calls = []
-    for eid, target in targets.items():
+    expanded = {m: t for eid, t in targets.items() for m in members(hass, eid)}
+    for eid, target in expanded.items():
         st = hass.states.get(eid)
         step = plan(st, target or {})
         if step is not None:

@@ -576,7 +576,7 @@ async def test_a_group_with_a_member_changed_by_hand_is_left_alone(hass, kitchen
     await _tick(hass, freezer, seconds=35)
     assert lights["off"] == []                          # the group's off would undo the sink
     await _tick(hass, freezer, minutes=5)
-    assert [c.data["entity_id"] for c in lights["off"]] == [GROUP]
+    assert [c.data["entity_id"] for c in lights["off"]] == [SINK]           # lamp by lamp: only the one that is on
 
 
 async def test_vacancy_off_max_on(hass, kitchen, lights, freezer) -> None:
@@ -1838,3 +1838,16 @@ async def test_off_light_given_a_colour_is_turned_on_first(hass, kitchen, lights
     _rt(hass).apply({SINK: {"brightness_pct": 25, "color_temp_kelvin": 3401}}, "test", "kitchen")
     await hass.async_block_till_done()
     assert [c.data for c in lights["on"]] == [{"entity_id": SINK, "brightness_pct": 25, "color_temp_kelvin": 3401}]
+
+
+
+async def test_group_checked_lamp_by_lamp(hass, kitchen, lights) -> None:
+    """A group that 'matches' on average can hide one lamp in another colour: that lamp gets a call."""
+    hass.states.async_set(SINK, "on", {"brightness": 64, "color_temp_kelvin": 3401})
+    hass.states.async_set(CEILING, "on", {"brightness": 64, "color_temp_kelvin": None})
+    hass.states.async_set(GROUP, "on", {"entity_id": [SINK, CEILING], "brightness": 64, "color_temp_kelvin": 3401})
+    await _setup(hass)
+    await _save(hass, _table())
+    _rt(hass).apply({GROUP: {"brightness_pct": 25, "color_temp_kelvin": 3401}}, "test", "kitchen")
+    await hass.async_block_till_done()
+    assert [c.data for c in lights["on"]] == [{"entity_id": CEILING, "brightness_pct": 25, "color_temp_kelvin": 3401}]
