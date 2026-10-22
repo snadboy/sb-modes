@@ -806,6 +806,7 @@ async def test_lights_addon_respects_a_hold(hass, kitchen, lights, freezer) -> N
 
 async def test_lights_addon_when_a_mode_begins_and_a_script(hass, kitchen, lights) -> None:
     scripts = async_mock_service(hass, "script", "turn_on")
+    hass.states.async_set("script.fan_quiet", "off")
     await _setup(hass)
     t = _table()
     t["zones"][0]["addons"] = [
@@ -994,7 +995,7 @@ async def test_on_enter_validation(hass, kitchen) -> None:
     await _setup(hass)
     t = _table()
     t["zones"][0]["on_enter"] = {"brunch": {SINK: {"state": "on"}}}
-    with pytest.raises(ServiceValidationError, match="on_enter names mode “brunch”"):
+    with pytest.raises(ServiceValidationError, match="trigger names mode “brunch”"):
         await _save(hass, t)
 
 
@@ -1342,7 +1343,7 @@ async def test_buttons_validation(hass, kitchen) -> None:
     await _setup(hass)
     t = _table()
     t["zones"][0]["buttons"] = {"sensor.x": {"multi_press_1": "release"}}
-    with pytest.raises(ServiceValidationError, match="not an event entity"):
+    with pytest.raises(ServiceValidationError, match="an event entity"):
         await _save(hass, t)
     t["zones"][0]["buttons"] = {BIG: {"multi_press_1": {"hold": "forever"}}}
     with pytest.raises(ServiceValidationError, match="action must be"):
@@ -1797,3 +1798,26 @@ async def test_auto_off_validation(hass, kitchen) -> None:
     t["zones"][0]["auto_off"] = [{"lights": [SINK]}]
     with pytest.raises(ServiceValidationError, match="choose when it turns off"):
         await _save(hass, t)
+
+
+async def test_addon_validation(hass, kitchen) -> None:
+    await _setup(hass)
+    def bad(addons, msg):
+        t = _table()
+        t["zones"][0]["addons"] = addons
+        return pytest.raises(ServiceValidationError, match=msg), t
+    good = {"id": "a", "name": "Wake", "type": "lights", "trigger": {"at": "06:30"}, "steps": [{"after_minutes": 0, "targets": {SINK: {"brightness_pct": 1}}}]}
+    cases = [
+        ([{**good, "when": {"modes": ["brunch"]}}], "When names mode “brunch”"),
+        ([{**good, "trigger": {"at": "6:30"}}], "is not a time"),
+        ([{**good, "steps": [{"after_minutes": 0, "targets": {SINK: {"state": "on"}}, "script": "script.x"}]}], "choose one action"),
+        ([good, {**good}], "used twice"),
+        ([{"id": "t1", "name": "TV", "type": "while", "entity": SINK, "states": {"on": {}}},
+          {"id": "t2", "name": "TV 2", "type": "while", "entity": SINK, "states": {"on": {}}}], "one TV lighting"),
+        ([{**good, "type": "party"}], "unknown add-on type"),
+        ([{**good, "when": {"between": ["22:00"]}}], "between must be two times"),
+    ]
+    for addons, msg in cases:
+        ctx, t = bad(addons, msg)
+        with ctx:
+            await _save(hass, t)

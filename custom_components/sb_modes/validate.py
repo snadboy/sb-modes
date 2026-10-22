@@ -24,7 +24,10 @@ from collections.abc import Callable
 from contextlib import contextmanager
 from typing import Any
 
-from .model import ALL_MODES, BEHAVIOURS, DAYS, DRIVER_DOMAINS, NEEDS, TARGET_KEYS, mode_ids, parse_at, parse_when, resolve
+from .model import (
+    ADDON_TYPES, ALL_MODES, BEHAVIOURS, DAYS, DRIVER_DOMAINS, NEEDS, TARGET_KEYS, mode_ids, parse_at, parse_when, resolve,
+    zone_addons,
+)
 
 UNAVAILABLE = ("unavailable", "unknown")
 NEED_LABELS = {"lights": "a light", "occupancy": "an occupancy sensor", "illuminance": "an illuminance sensor"}
@@ -161,129 +164,7 @@ def _check_config(config, state_of, area_exists, zone_entities, day_set_exists) 
                 errors.append(f"{where}: overrides mode “{mode_id}”, which is not defined.")
                 continue
             _check_choice(choice, f"{where}, {names.get(mode_id, mode_id)}", state_of, errors, warnings, ids)
-        follow = zone.get("follow")
-        _here("zones", i, "follow")
-        if follow is not None:
-            if not isinstance(follow, dict) or not follow.get("leader") or not isinstance(follow.get("bands"), list) or not follow["bands"]:
-                errors.append(f"{where}: follow needs a leader light and a list of bands {{min_pct, targets}}.")
-            else:
-                _check_entity(follow["leader"], ["light", "switch"], f"{where}, follow leader", state_of, errors, warnings)
-                for n, band in enumerate(follow["bands"], 1):
-                    _here("zones", i, "follow", "bands", n - 1)
-                    mp = band.get("min_pct") if isinstance(band, dict) else None
-                    if isinstance(mp, bool) or not isinstance(mp, (int, float)) or not 0 <= mp <= 100:
-                        errors.append(f"{where}, follow band {n}: min_pct must be 0–100.")
-                        continue
-                    _check_param(band.get("targets"), {"type": "targets"}, f"{where}, follow band {n}", state_of, errors, warnings)
-                    if follow["leader"] in (band.get("targets") or {}):
-                        errors.append(f"{where}, follow band {n}: the leader cannot follow itself.")
-        overlay = zone.get("overlay")
-        _here("zones", i, "overlay")
-        if overlay is not None:
-            ent, sts = (overlay.get("entity"), overlay.get("states")) if isinstance(overlay, dict) else (None, None)
-            if not isinstance(ent, str) or "." not in ent or not isinstance(sts, dict) or not sts:
-                errors.append(f"{where}: overlay needs an entity and states {{state: {{targets, holds}}}}.")
-            else:
-                if state_of(ent) is None:
-                    errors.append(f"{where}, overlay: {ent} does not exist.")
-                for st_name, cfg in sts.items():
-                    _here("zones", i, "overlay", "states", st_name)
-                    if not isinstance(cfg, dict):
-                        errors.append(f"{where}, overlay {st_name}: must be {{targets, holds}}.")
-                        continue
-                    if "holds" in cfg and not isinstance(cfg["holds"], bool):
-                        errors.append(f"{where}, overlay {st_name}: holds must be true or false.")
-                    if cfg.get("targets") is not None:
-                        _check_param(cfg["targets"], {"type": "targets"}, f"{where}, overlay {st_name}", state_of, errors, warnings)
-                _here("zones", i, "overlay")
-                if "presence" in overlay and not isinstance(overlay["presence"], bool):
-                    errors.append(f"{where}, overlay: presence must be true or false.")
-                for key in ("debounce_seconds", "unavailable_cooldown_seconds"):
-                    v = overlay.get(key)
-                    if v is not None and (isinstance(v, bool) or not isinstance(v, (int, float)) or not 0 <= v <= 3600):
-                        errors.append(f"{where}, overlay: {key} must be 0–3600.")
-        buttons = zone.get("buttons")
-        _here("zones", i, "buttons")
-        if buttons is not None:
-            if not isinstance(buttons, dict) or not buttons:
-                errors.append(f"{where}: buttons must be {{event entity: {{event type: action}}}}.")
-            else:
-                for ent, acts in buttons.items():
-                    _here("zones", i, "buttons", ent)
-                    if not isinstance(ent, str) or not ent.startswith("event."):
-                        errors.append(f"{where}, buttons: {ent} is not an event entity.")
-                        continue
-                    if state_of(ent) is None:
-                        errors.append(f"{where}, buttons: {ent} does not exist.")
-                    if not isinstance(acts, dict) or not acts:
-                        errors.append(f"{where}, buttons {ent}: must be {{event type: action}}.")
-                        continue
-                    for etype, act in acts.items():
-                        _here("zones", i, "buttons", ent, etype)
-                        at = f"{where}, buttons {ent} {etype}"
-                        if act == "release":
-                            continue
-                        hold = act.get("hold") if isinstance(act, dict) else None
-                        ok = isinstance(act, dict) and (
-                            (act.get("release") is True and "hold" not in act) or hold in ("next", "paused") or (
-                                isinstance(hold, int) and not isinstance(hold, bool) and 1 <= hold <= 1440))
-                        if not ok:
-                            errors.append(f"{at}: action must be {{release: true}} or {{hold: minutes | next | paused}}.")
-                            continue
-                        flash = act.get("flash")
-                        if flash is not None and (isinstance(flash, bool) or not isinstance(flash, int) or not 0 <= flash <= 5):
-                            errors.append(f"{at}: flash must be 0–5.")
-                        if act.get("targets") is not None:
-                            if "hold" not in act:
-                                errors.append(f"{at}: targets go with a hold.")
-                            else:
-                                _check_param(act["targets"], {"type": "targets"}, at, state_of, errors, warnings)
-        auto = zone.get("auto_off")
-        _here("zones", i, "auto_off")
-        if auto is not None:
-            if not isinstance(auto, list):
-                errors.append(f"{where}: auto_off must be a list of {{lights, with_empty, on_minutes}}.")
-            else:
-                for n, r in enumerate(auto):
-                    _here("zones", i, "auto_off", n)
-                    if not isinstance(r, dict) or not isinstance(r.get("lights"), list) or not r["lights"]:
-                        errors.append(f"{where}, auto-off {n + 1}: list the lights it turns off.")
-                        continue
-                    for eid in r["lights"]:
-                        _check_entity(eid, ["light", "switch"], f"{where}, auto-off {n + 1}", state_of, errors, warnings)
-                    if "with_empty" in r and not isinstance(r["with_empty"], bool):
-                        errors.append(f"{where}, auto-off {n + 1}: with_empty must be true or false.")
-                    m = r.get("on_minutes")
-                    if m is not None and (isinstance(m, bool) or not isinstance(m, (int, float)) or not 0 <= m <= 1440):
-                        errors.append(f"{where}, auto-off {n + 1}: on_minutes must be 0–1440.")
-                    if not r.get("with_empty") and not r.get("on_minutes"):
-                        errors.append(f"{where}, auto-off {n + 1}: choose when it turns off (with the empty setting, after some minutes, or both).")
-        wake = zone.get("wake_up")
-        _here("zones", i, "wake_up")
-        if wake is not None:
-            if not isinstance(wake, dict):
-                errors.append(f"{where}: wake_up must be {{after_mode, steps}}.")
-            else:
-                with _sub("after_mode"):
-                    if not wake.get("after_mode"):
-                        errors.append(f"{where}, wake-up: choose the mode it follows.")
-                    else:
-                        _check_param(wake["after_mode"], {"type": "mode"}, f"{where}, wake-up", state_of, errors, warnings, ids)
-                with _sub("steps"):
-                    _check_param(wake.get("steps"), {"type": "steps"}, f"{where}, wake-up step", state_of, errors, warnings)
-        enter = zone.get("on_enter")
-        _here("zones", i, "on_enter")
-        if enter is not None:
-            if not isinstance(enter, dict):
-                errors.append(f"{where}: on_enter must map a mode id to targets.")
-            else:
-                for mode_id, targets in enter.items():
-                    _here("zones", i, "on_enter", mode_id)
-                    if mode_id not in ids:
-                        errors.append(f"{where}: on_enter names mode “{mode_id}”, which is not defined.")
-                        continue
-                    _check_param(targets, {"type": "targets"}, f"{where}, when {names.get(mode_id, mode_id)} begins",
-                                 state_of, errors, warnings)
+        _check_addons(config, zone, i, where, ids, names, state_of, errors, warnings, day_set_exists)
         own = zone.get("lights")
         _here("zones", i, "lights")
         if own is not None:
@@ -578,3 +459,211 @@ def _check_entity(eid: Any, domains: list[str] | None, where: str, state_of, err
         errors.append(f"{where}: {eid} does not exist.")
     elif st in UNAVAILABLE:
         warnings.append(f"{where}: {eid} is {st}.")
+
+
+# ── add-ons ─────────────────────────────────────────────────────────────────
+def _num(v, lo, hi) -> bool:
+    return not isinstance(v, bool) and isinstance(v, (int, float)) and lo <= v <= hi
+
+
+def _check_hold_action(act, at: str, state_of, errors, warnings) -> None:
+    """A button press's or a step's hold / release."""
+    hold = act.get("hold") if isinstance(act, dict) else None
+    ok = act == "release" or isinstance(act, dict) and (
+        (act.get("release") is True and "hold" not in act) or hold in ("next", "paused") or (
+            isinstance(hold, int) and not isinstance(hold, bool) and 1 <= hold <= 1440))
+    if not ok:
+        errors.append(f"{at}: action must be release, or hold for minutes / until the next mode / until released.")
+        return
+    if act == "release":
+        return
+    flash = act.get("flash")
+    if flash is not None and (isinstance(flash, bool) or not isinstance(flash, int) or not 0 <= flash <= 5):
+        errors.append(f"{at}: flash must be 0–5.")
+    if act.get("targets") is not None:
+        if "hold" not in act:
+            errors.append(f"{at}: lights go with a hold.")
+        else:
+            _check_param(act["targets"], {"type": "targets"}, at, state_of, errors, warnings)
+
+
+def _check_addons(config, zone, i, where, ids, names, state_of, errors, warnings, day_set_exists) -> None:
+    raw = zone.get("addons")
+    _here("zones", i, "addons")
+    if raw is not None and not isinstance(raw, list):
+        errors.append(f"{where}: add-ons must be a list.")
+        return
+    types = {t.get("id") for t in config.get("day_types") or [] if isinstance(t, dict)}
+    seen: set = set()
+    count = {"while": 0, "follow": 0}
+    for n, a in enumerate(zone_addons(zone)):
+        _here("zones", i, "addons", n)
+        if not isinstance(a, dict):
+            errors.append(f"{where}, add-on {n + 1}: must be an object.")
+            continue
+        at = f"{where}, {a.get('name') or 'add-on ' + str(n + 1)}"
+        if not isinstance(a.get("id"), str) or not a["id"]:
+            errors.append(f"{at}: needs an id.")
+        elif a["id"] in seen:
+            errors.append(f"{at}: add-on id “{a['id']}” is used twice in this room.")
+        seen.add(a.get("id"))
+        kind = a.get("type")
+        if kind not in ADDON_TYPES:
+            errors.append(f"{at}: unknown add-on type {kind!r} (one of {', '.join(ADDON_TYPES)}).")
+            continue
+        if kind in count:
+            count[kind] += 1
+            if count[kind] == 2:
+                errors.append(f"{at}: a room can have one {'TV lighting (while)' if kind == 'while' else 'follow'} add-on.")
+        if "enabled" in a and not isinstance(a["enabled"], bool):
+            errors.append(f"{at}: enabled must be true or false.")
+        with _sub("when"):
+            _check_when(a.get("when"), at, ids, types, errors, day_set_exists)
+        if kind == "lights":
+            _check_lights_addon(a, at, ids, state_of, errors, warnings)
+        elif kind == "while":
+            _check_while_addon(a, at, state_of, errors, warnings)
+        elif kind == "button":
+            ent, presses = a.get("entity"), a.get("presses")
+            with _sub("entity"):
+                if not isinstance(ent, str) or not ent.startswith("event."):
+                    errors.append(f"{at}: choose the button (an event entity).")
+                elif state_of(ent) is None:
+                    errors.append(f"{at}: {ent} does not exist.")
+            if not isinstance(presses, dict) or not presses:
+                with _sub("presses"):
+                    errors.append(f"{at}: choose what at least one press does.")
+            else:
+                for etype, act in presses.items():
+                    with _sub("presses", etype):
+                        _check_hold_action(act, f"{at}, {etype}", state_of, errors, warnings)
+        elif kind == "follow":
+            if not a.get("leader") or not isinstance(a.get("bands"), list) or not a["bands"]:
+                errors.append(f"{at}: follow needs a leader light and a list of bands {{min_pct, targets}}.")
+            else:
+                with _sub("leader"):
+                    _check_entity(a["leader"], ["light", "switch"], f"{at}, leader", state_of, errors, warnings)
+                for b, band in enumerate(a["bands"], 1):
+                    with _sub("bands", b - 1):
+                        mp = band.get("min_pct") if isinstance(band, dict) else None
+                        if not _num(mp, 0, 100):
+                            errors.append(f"{at}, band {b}: min_pct must be 0–100.")
+                            continue
+                        _check_param(band.get("targets"), {"type": "targets"}, f"{at}, band {b}", state_of, errors, warnings)
+                        if a["leader"] in (band.get("targets") or {}):
+                            errors.append(f"{at}, band {b}: the leader cannot follow itself.")
+        elif kind == "auto_off":
+            if not isinstance(a.get("lights"), list) or not a["lights"]:
+                with _sub("lights"):
+                    errors.append(f"{at}: list the lights it turns off.")
+            else:
+                for eid in a["lights"]:
+                    with _sub("lights"):
+                        _check_entity(eid, ["light", "switch"], at, state_of, errors, warnings)
+            if "with_empty" in a and not isinstance(a["with_empty"], bool):
+                errors.append(f"{at}: with_empty must be true or false.")
+            m = a.get("on_minutes")
+            if m is not None and not _num(m, 0, 1440):
+                errors.append(f"{at}: on_minutes must be 0–1440.")
+            if not a.get("with_empty") and not a.get("on_minutes"):
+                errors.append(f"{at}: choose when it turns off (with the empty setting, after some minutes, or both).")
+
+
+def _check_when(when, at, ids, types, errors, day_set_exists) -> None:
+    if when is None:
+        return
+    if not isinstance(when, dict):
+        errors.append(f"{at}: When must be an object.")
+        return
+    for m in when.get("modes") or []:
+        if m not in ids:
+            with _sub("modes"):
+                errors.append(f"{at}: When names mode “{m}”, which is not defined.")
+    for key in ("days", "not_days"):
+        for d in when.get(key) or []:
+            if not isinstance(d, str) or (d not in types and day_set_exists is not None and not day_set_exists(d)):
+                with _sub(key):
+                    errors.append(f"{at}: When names “{d}”, which is neither a day type nor an SB Scheduler calendar.")
+    bw = when.get("between")
+    if bw is not None and (not isinstance(bw, list) or len(bw) != 2 or not all(parse_at(x) for x in bw)):
+        with _sub("between"):
+            errors.append(f"{at}: between must be two times, HH:MM.")
+
+
+def _check_lights_addon(a, at, ids, state_of, errors, warnings) -> None:
+    trig = a.get("trigger")
+    with _sub("trigger"):
+        if not isinstance(trig, dict) or not trig:
+            errors.append(f"{at}: choose a trigger.")
+        elif "at" in trig:
+            if parse_when(trig["at"]) is None:
+                errors.append(f"{at}: {trig['at']!r} is not a time (HH:MM, or sunrise / sunset ± HH:MM).")
+        elif "mode_begins" in trig or "mode_ends" in trig:
+            modes = trig.get("mode_begins") or trig.get("mode_ends")
+            if not isinstance(modes, list) or not modes:
+                errors.append(f"{at}: choose the mode(s).")
+            for m in modes or []:
+                if m not in ids:
+                    errors.append(f"{at}: trigger names mode “{m}”, which is not defined.")
+        elif "entity" in trig:
+            if not isinstance(trig["entity"], str) or state_of(trig["entity"]) is None:
+                errors.append(f"{at}: {trig.get('entity')} does not exist.")
+            if not isinstance(trig.get("to"), str) or not trig["to"]:
+                errors.append(f"{at}: choose the state that triggers it.")
+        else:
+            errors.append(f"{at}: choose a trigger (a time, a mode beginning or ending, or a device's state).")
+    steps = a.get("steps")
+    if not isinstance(steps, list) or not steps:
+        with _sub("steps"):
+            errors.append(f"{at}: add at least one step.")
+        return
+    for k, st in enumerate(steps, 1):
+        with _sub("steps", k - 1):
+            sat = f"{at}, step {k}"
+            if not isinstance(st, dict):
+                errors.append(f"{sat}: must be an object.")
+                continue
+            if not _num(st.get("after_minutes", 0), 0, 1440):
+                errors.append(f"{sat}: after_minutes must be 0–1440.")
+            acts = [x for x in ("targets", "hold", "release", "script") if x in st]
+            if "hold" in st and "targets" in st:
+                acts.remove("targets")
+            if len(acts) != 1:
+                errors.append(f"{sat}: choose one action — set lights, hold, release or run a script.")
+            elif acts[0] == "targets":
+                _check_param(st["targets"], {"type": "targets"}, sat, state_of, errors, warnings)
+            elif acts[0] == "script":
+                if not isinstance(st["script"], str) or not st["script"].startswith("script."):
+                    errors.append(f"{sat}: choose a script.")
+                elif state_of(st["script"]) is None:
+                    errors.append(f"{sat}: {st['script']} does not exist.")
+            else:
+                _check_hold_action({k2: v for k2, v in st.items() if k2 != "after_minutes"}, sat, state_of, errors, warnings)
+
+
+def _check_while_addon(a, at, state_of, errors, warnings) -> None:
+    ent, sts = a.get("entity"), a.get("states")
+    with _sub("entity"):
+        if not isinstance(ent, str) or "." not in ent:
+            errors.append(f"{at}: choose the device (a TV or media player).")
+        elif state_of(ent) is None:
+            errors.append(f"{at}: {ent} does not exist.")
+    if not isinstance(sts, dict) or not sts:
+        with _sub("states"):
+            errors.append(f"{at}: choose at least one state.")
+        return
+    for st_name, cfg in sts.items():
+        with _sub("states", st_name):
+            if not isinstance(cfg, dict):
+                errors.append(f"{at}, {st_name}: must be {{targets, holds}}.")
+                continue
+            if "holds" in cfg and not isinstance(cfg["holds"], bool):
+                errors.append(f"{at}, {st_name}: holds must be true or false.")
+            if cfg.get("targets") is not None:
+                _check_param(cfg["targets"], {"type": "targets"}, f"{at}, {st_name}", state_of, errors, warnings)
+    if "presence" in a and not isinstance(a["presence"], bool):
+        errors.append(f"{at}: presence must be true or false.")
+    for key in ("debounce_seconds", "unavailable_cooldown_seconds"):
+        v = a.get(key)
+        if v is not None and not _num(v, 0, 3600):
+            errors.append(f"{at}: {key} must be 0–3600.")

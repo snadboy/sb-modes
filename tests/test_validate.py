@@ -419,7 +419,7 @@ def test_changes_in_words():
     assert "Kitchen · Overnight · Dark after empty: 10 min → 5 min" in lines, lines
     assert "Kitchen · Overnight · Nightlight: Aux Sink 10%, Cabinet on → Aux Sink 20%" in lines, lines
     assert "Kitchen · All modes: now Presence + light level (Dark below 50 lx)" in lines, lines
-    assert "Kitchen · when Daytime begins: — → Cabinet on" in lines, lines
+    assert "Kitchen · add-on When the mode begins added: Daytime begins → Cabinet on" in lines, lines
     assert "Zone Dining Room renamed Dining" in lines, lines
     assert "Schedule: Daytime at 06:00 on Mon → Daytime at 06:00 on Mon, Tue" in lines, lines
     d = copy.deepcopy(b)
@@ -543,8 +543,22 @@ def test_auto_off_in_words():
     a = copy.deepcopy(GOOD)
     b = copy.deepcopy(a)
     b["zones"][0]["auto_off"] = [{"lights": ["light.kitchen_aux_sink"], "with_empty": True, "on_minutes": 15}]
-    assert CH.describe(a, b, NAMES.get) == ["Kitchen · auto-off · added: Aux Sink off with the empty setting, or once on 15 min with the room empty"]
+    assert CH.describe(a, b, NAMES.get) == ["Kitchen · add-on Auto-off added: Aux Sink off with the empty setting, or once on 15 min with the room empty"]
 
+
+
+def test_addon_summary_and_changes():
+    wake = {"id": "w", "name": "Workday wake-up", "type": "lights", "trigger": {"at": "06:30"}, "when": {"days": ["workday"]},
+            "steps": [{"after_minutes": 0, "targets": {"light.kitchen_aux_sink": {"brightness_pct": 1}}},
+                      {"after_minutes": 10, "targets": {"light.kitchen_aux_sink": {"brightness_pct": 4}}}]}
+    assert CH.addon_summary(wake, NAMES.get) == "at 06:30 → Aux Sink 1% · +10 min Aux Sink 4% · only on workday"
+    a = {"zones": [{"id": "k", "name": "Kitchen", "addons": [wake]}]}
+    b = copy.deepcopy(a)
+    b["zones"][0]["addons"][0]["trigger"] = {"at": "06:45"}
+    b["zones"][0]["addons"][0]["enabled"] = False
+    lines = CH.describe(a, b, NAMES.get)
+    assert "Kitchen · add-on Workday wake-up: turned off" in lines, lines
+    assert any(x.startswith("Kitchen · add-on Workday wake-up: at 06:30") and "at 06:45" in x for x in lines), lines
 
 if __name__ == "__main__":
     n = 0

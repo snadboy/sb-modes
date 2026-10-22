@@ -12,7 +12,7 @@ import re
 from collections.abc import Callable
 from typing import Any
 
-from .model import ALL_MODES, BEHAVIOUR_INFO, BEHAVIOURS
+from .model import ALL_MODES, BEHAVIOUR_INFO, BEHAVIOURS, zone_addons
 
 NONE = "—"
 
@@ -141,14 +141,7 @@ def _zone_changes(a: dict, b: dict, name_of, mode_name) -> list[str]:
             out.append(f"{where}: own setting removed ({'each mode' if mid == ALL_MODES else 'All modes or the mode'}'s setting applies)")
         else:
             out += _choice_changes(where, ao[mid], bo[mid], name_of, mode_name)
-    ae, be = a.get("on_enter") or {}, b.get("on_enter") or {}
-    for mid in _keys(ae, be):
-        if ae.get(mid) != be.get(mid):
-            out.append(f"{z} · when {mode_name(mid)} begins: {_targets(ae.get(mid), name_of)} → {_targets(be.get(mid), name_of)}")
-    for key, label in (("follow", "follow"), ("overlay", "TV overlay"), ("buttons", "hold button"), ("wake_up", "wake-up")):
-        out += _generic(f"{z} · {label}", a.get(key), b.get(key), name_of)
-    out += _paired(f"{z} · auto-off", [_auto(r, name_of) for r in a.get("auto_off") or []],
-                   [_auto(r, name_of) for r in b.get("auto_off") or []])
+    out += _addon_changes(z, zone_addons(a), zone_addons(b), name_of, mode_name)
     return out
 
 
@@ -312,3 +305,109 @@ def _keys(a: dict, b: dict) -> list:
 def _mode_names(old: dict, new: dict) -> Callable[[Any], str]:
     names = {m["id"]: _n(m) for m in [*(old.get("modes") or []), *(new.get("modes") or [])] if isinstance(m, dict) and m.get("id")}
     return lambda mid: NONE if mid is None else names.get(mid, str(mid))
+
+
+# ── add-ons ─────────────────────────────────────────────────────────────────
+def _hold_txt(act: Any, name_of) -> str:
+    if act == "release" or (isinstance(act, dict) and act.get("release")):
+        txt = "release"
+    elif isinstance(act, dict) and "hold" in act:
+        h = act["hold"]
+        txt = {"next": "hold until the next mode", "paused": "hold until released"}.get(h, f"hold {h} min")
+        if act.get("targets"):
+            txt += f", {_targets(act['targets'], name_of)}"
+    else:
+        return _compact(act, name_of)
+    if isinstance(act, dict) and act.get("flash"):
+        txt += f", flash ×{act['flash']}"
+    return txt
+
+
+def _trigger_txt(t: Any, name_of, mode_name) -> str:
+    t = t if isinstance(t, dict) else {}
+    if "at" in t:
+        return f"at {_at(t['at'])}"
+    if t.get("mode_begins"):
+        return " or ".join(mode_name(m) for m in t["mode_begins"]) + " begins"
+    if t.get("mode_ends"):
+        return " or ".join(mode_name(m) for m in t["mode_ends"]) + " ends"
+    if t.get("entity"):
+        return f"{name_of(t['entity'])} becomes {t.get('to', '?')}"
+    return NONE
+
+
+def _when_txt(w: Any, mode_name) -> str:
+    w = w if isinstance(w, dict) else {}
+    parts = []
+    if w.get("modes"):
+        parts.append("in " + ", ".join(mode_name(m) for m in w["modes"]))
+    if w.get("days"):
+        parts.append("only on " + ", ".join(w["days"]))
+    if w.get("not_days"):
+        parts.append("never on " + ", ".join(w["not_days"]))
+    if w.get("between"):
+        parts.append("between " + "–".join(w["between"]))
+    return " · ".join(parts)
+
+
+def _step_txt(st: Any, name_of) -> str:
+    if not isinstance(st, dict):
+        return str(st)
+    lead = f"+{st['after_minutes']:g} min " if st.get("after_minutes") else ""
+    if st.get("script"):
+        return f"{lead}run {st['script']}"
+    if "hold" in st or st.get("release"):
+        return lead + _hold_txt({k: v for k, v in st.items() if k != "after_minutes"}, name_of)
+    return lead + _targets(st.get("targets"), name_of)
+
+
+def addon_summary(a: dict, name_of=lambda e: e, mode_name=lambda m: m) -> str:
+    """One line for an add-on instance: what triggers it, when, and what it does."""
+    kind = a.get("type")
+    if kind == "lights":
+        txt = f"{_trigger_txt(a.get('trigger'), name_of, mode_name)} → " + " · ".join(_step_txt(s, name_of) for s in a.get("steps") or [])
+    elif kind == "while":
+        txt = f"while {name_of(a.get('entity') or '?')} is " + ", ".join(
+            f"{st}{' (holds)' if (c or {}).get('holds') else ''}" for st, c in (a.get("states") or {}).items())
+    elif kind == "button":
+        txt = f"{name_of(a.get('entity') or '?')}: " + ", ".join(
+            f"{et} → {_hold_txt(act, name_of)}" for et, act in (a.get("presses") or {}).items())
+    elif kind == "follow":
+        txt = f"follows {name_of(a.get('leader') or '?')} ({len(a.get('bands') or [])} bands)"
+    elif kind == "auto_off":
+        txt = _auto(a, name_of)
+    else:
+        txt = str(kind)
+    when = _when_txt(a.get("when"), mode_name)
+    return txt + (f" · {when}" if when else "") + ("" if a.get("enabled", True) else " · off")
+
+
+def _addon_changes(z: str, old: list, new: list, name_of, mode_name) -> list[str]:
+    oa = {a.get("id"): a for a in old if isinstance(a, dict)}
+    na = {a.get("id"): a for a in new if isinstance(a, dict)}
+    out = []
+    for aid, a in na.items():
+        if aid not in oa:
+            out.append(f"{z} · add-on {a.get('name') or aid} added: {addon_summary(a, name_of, mode_name)}")
+    for aid, a in oa.items():
+        if aid not in na:
+            out.append(f"{z} · add-on {a.get('name') or aid} removed")
+    for aid in [i for i in na if i in oa]:
+        a, b = oa[aid], na[aid]
+        if a == b:
+            continue
+        where = f"{z} · add-on {b.get('name') or aid}"
+        if a.get("name") != b.get("name"):
+            out.append(f"{z} · add-on {a.get('name') or aid} renamed {b.get('name')}")
+        if a.get("enabled", True) != b.get("enabled", True):
+            out.append(f"{where}: turned {'on' if b.get('enabled', True) else 'off'}")
+        rest_a = {k: v for k, v in a.items() if k not in ("name", "enabled")}
+        rest_b = {k: v for k, v in b.items() if k not in ("name", "enabled")}
+        if rest_a != rest_b:
+            out.append(f"{where}: {addon_summary({**a, 'enabled': True}, name_of, mode_name)} → "
+                       f"{addon_summary({**b, 'enabled': True}, name_of, mode_name)}")
+    shared = [i for i in oa if i in na]
+    if [i for i in na if i in oa] != shared:
+        out.append(f"{z} · add-on order: " + ", ".join(oa[i].get("name") or i for i in shared) + " → "
+                   + ", ".join(na[i].get("name") or i for i in na if i in oa))
+    return out
