@@ -1822,3 +1822,19 @@ async def test_addon_validation(hass, kitchen) -> None:
         ctx, t = bad(addons, msg)
         with ctx:
             await _save(hass, t)
+
+
+async def test_off_light_given_a_colour_is_turned_on_first(hass, kitchen, lights) -> None:
+    """Matter lights ignore colour while off: on (brightness) first, then the colour."""
+    await _setup(hass)
+    await _save(hass, _table())
+    _rt(hass).apply({SINK: {"brightness_pct": 25, "color_temp_kelvin": 3401}, CEILING: {"brightness_pct": 50}}, "test", "kitchen")
+    await hass.async_block_till_done()
+    sink = [c.data for c in lights["on"] if c.data["entity_id"] == SINK]
+    assert sink == [{"entity_id": SINK, "brightness_pct": 25}, {"entity_id": SINK, "brightness_pct": 25, "color_temp_kelvin": 3401}]
+    assert [c.data for c in lights["on"] if c.data["entity_id"] == CEILING] == [{"entity_id": CEILING, "brightness_pct": 50}]
+    hass.states.async_set(SINK, "on", {"brightness": 64, "color_temp_kelvin": 2700})        # on already: one call
+    lights["on"].clear()
+    _rt(hass).apply({SINK: {"brightness_pct": 25, "color_temp_kelvin": 3401}}, "test", "kitchen")
+    await hass.async_block_till_done()
+    assert [c.data for c in lights["on"]] == [{"entity_id": SINK, "brightness_pct": 25, "color_temp_kelvin": 3401}]

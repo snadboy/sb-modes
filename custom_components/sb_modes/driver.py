@@ -7,6 +7,11 @@ state means on — or {"value": n} for a number entity (number.set_value). An en
 unavailable or missing is skipped (validation reports it). Every call carries a
 Context the caller keeps, so later steps can tell SB Modes' own changes from a
 person's.
+
+A light that is OFF and gets a colour (colour temperature, hs, effect) is turned on first and
+given the colour in a second call: Matter lights ignore colour commands while off (ExecuteIfOff
+is not set), so one call turns them on in their OLD colour — the Office door and closet floor
+lamps kept a hand-set colour while the group came back on at 3401 K (2026-10-22).
 """
 
 from __future__ import annotations
@@ -19,6 +24,7 @@ from homeassistant.core import Context, HomeAssistant, State
 
 _LOGGER = logging.getLogger(__name__)
 SKIP = (STATE_UNAVAILABLE, STATE_UNKNOWN)
+COLOUR_KEYS = ("color_temp_kelvin", "hs_color", "effect")
 
 
 def plan(state: State | None, target: dict) -> tuple[str, dict] | None:
@@ -86,12 +92,21 @@ async def apply(hass: HomeAssistant, targets: dict[str, dict], context: Context)
     """Bring every entity to its target; returns the entities a call was sent to."""
     calls = []
     for eid, target in targets.items():
-        step = plan(hass.states.get(eid), target or {})
+        st = hass.states.get(eid)
+        step = plan(st, target or {})
         if step is not None:
-            calls.append((eid, *step))
+            calls.append((eid, *step, st is not None and st.state == STATE_OFF))
     if calls:
-        await asyncio.gather(*(_call(hass, eid, service, data, context) for eid, service, data in calls))
-    return [eid for eid, _, _ in calls]
+        await asyncio.gather(*(_turn(hass, eid, service, data, was_off, context) for eid, service, data, was_off in calls))
+    return [eid for eid, *_ in calls]
+
+
+async def _turn(hass: HomeAssistant, eid: str, service: str, data: dict, was_off: bool, context: Context) -> None:
+    """One entity's call — for an off light given a colour: on first, then the colour."""
+    if service == "turn_on" and was_off and eid.startswith("light.") and any(k in data for k in COLOUR_KEYS):
+        await _call(hass, eid, service, {k: v for k, v in data.items() if k not in COLOUR_KEYS}, context)
+        data = {k: v for k, v in data.items() if k != "transition"}
+    await _call(hass, eid, service, data, context)
 
 
 async def _call(hass: HomeAssistant, eid: str, service: str, data: dict, context: Context) -> None:
