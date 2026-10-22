@@ -190,6 +190,9 @@ someone after it, then the usual delay. The Basement Bath's FP300 (sensitivity w
 now "standard") missed the person ~100 s and vacancy_off turned the vanity off at 30 s, three
 times. Also: Runtime.apply leaves out a light GROUP target when any member is changed by hand
 (the bath's rule targets `light.basement_bath_lights`, so the override never protected it).
+Table version 6 (same evening): every empty delay under 5 min raised to **5 min** at the user's
+request ("30 s is too short") — kitchen 3, office 2, bedroom/laundry/bath 30 s, hallway 60 s.
+Left as they were: living room 15 min, Overnight dark 10 min, family room 5 min.
 Was open: how Vacation days are marked (an SB Scheduler day type from dates and/or a tagged
 calendar event) — then add the Vacation day type in Times.
 
