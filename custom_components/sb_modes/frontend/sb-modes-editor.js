@@ -270,6 +270,12 @@ table.tg input[type=number] { width: 64px; }
 .grid table.fixed { table-layout: fixed; }
 .grid table.fixed td, .grid table.fixed th { overflow: hidden; }
 .grid td.room { width: auto; }
+details.secd > summary { list-style: none; cursor: pointer; display: flex; align-items: baseline; gap: 6px; }
+details.secd > summary::-webkit-details-marker { display: none; }
+details.secd > summary h3 { margin: 0; flex: 1; }
+details.secd > summary ha-icon { --mdc-icon-size: 18px; color: var(--secondary-text-color); align-self: center; }
+details.secd[open] > summary { margin-bottom: 8px; }
+details.secd:not([open]) > summary .sub { color: var(--primary-text-color); }
 `;
 
 export class SbModesEditor extends HTMLElement {
@@ -621,14 +627,32 @@ export class SbModesEditor extends HTMLElement {
     return `<div class="crumb"><button class="lk" data-view="house">‹ House</button><h2>${esc(z.name || z.id)}</h2>
         <span class="live">${esc(zs ? zs.attributes.status || "" : "new — saved rooms show their live state here")}</span></div>
       <div class="errs-slot" data-path='${esc(JSON.stringify(["zones", zi]))}'></div>
-      <div class="card"><div class="sec"><h3>1 · Rule<span class="sub">what's in charge of ${esc(z.name || z.id)}'s lights — one at a time</span></h3>
-        <h4 style="margin:4px 0">Normal rule</h4>
+      ${this._secHtml("rule", "1 · Rule", `what's in charge of ${z.name || z.id}'s lights — one at a time`,
+        `${normal ? this._sayChoice(normal, z.id) : "no normal rule"}${(() => { const n = Object.keys(z.overrides || {}).filter((k) => k !== ALL).length; return n ? ` · ${n} mode${n === 1 ? "" : "s"} with a different rule` : ""; })()}`,
+        `<h4 style="margin:4px 0">Normal rule</h4>
         ${this._choiceEditorHtml({ kind: "zone", zone: z.id, mode: ALL }, normal)}
-        <h4 style="margin:14px 0 4px">In each mode</h4><div class="help">“Normal rule” unless the mode has a different one. Open a mode to give it its own.</div>${modeRows}</div></div>
-      <div class="card"><div class="sec"><h3>2 · Add-ons<span class="sub">extra actions on top of the rule — each row shows the modes it runs in</span></h3>${this._addonsHtml(z)}</div></div>
-      <div class="card"><div class="sec"><details class="devices" ${this._open.has(`dev|${z.id}`) ? "open" : ""} data-dev="${esc(z.id)}"><summary>3 · Devices
-          <span class="sub">${esc(this._sayDevices(z, zs))}</span></summary><div class="form" data-form="basics" style="margin-top:10px"></div></details>
-        <div class="tools"><button class="b sm danger" data-act="del-zone">Delete room</button></div></div></div>`;
+        <h4 style="margin:14px 0 4px">In each mode</h4><div class="help">“Normal rule” unless the mode has a different one. Open a mode to give it its own.</div>${modeRows}`)}
+      ${this._secHtml("addons", "2 · Add-ons", "extra actions on top of the rule — each row shows the modes it runs in",
+        (z.addons || []).length ? `${z.addons.length} add-on${z.addons.length === 1 ? "" : "s"}: ${z.addons.map((a) => a.name || a.id).join(", ")}` : "none",
+        this._addonsHtml(z))}
+      ${this._secHtml("devices", "3 · Devices", this._sayDevices(z, zs), this._sayDevices(z, zs),
+        `<div class="form" data-form="basics" style="margin-top:4px"></div>
+        <div class="tools"><button class="b sm danger" data-act="del-zone">Delete room</button></div>`)}`;
+  }
+
+  /** A collapsible room-page section: open → its description and body; closed → a one-line summary. */
+  _secOpen(key) {
+    if (!this._secs) {
+      try { this._secs = JSON.parse(localStorage.getItem("sb-modes-editor-sections") || "null"); } catch (e) { /* storage blocked */ }
+      this._secs ||= { rule: true, addons: true, devices: false };
+    }
+    return !!this._secs[key];
+  }
+  _secHtml(key, title, about, summary, body) {
+    const open = this._secOpen(key);
+    return `<div class="card"><div class="sec"><details class="secd" data-sec="${key}" ${open ? "open" : ""}>
+      <summary><ha-icon icon="${open ? "mdi:chevron-down" : "mdi:chevron-right"}"></ha-icon><h3>${esc(title)}<span class="sub">${esc(open ? about : summary)}</span></h3></summary>
+      <div class="secbody">${body}</div></details></div></div>`;
   }
 
   _sayDevices(z, zs) {
@@ -1195,7 +1219,12 @@ export class SbModesEditor extends HTMLElement {
     q("[data-cell]", (td) => td.addEventListener("click", () => { const [z, m] = td.dataset.cell.split("|"); this._open.add(`${z}|${m}`); this._goRoom(z); }));
     q("[data-mode-open]", (b) => b.addEventListener("click", () => { this._modePanel = this._modePanel === b.dataset.modeOpen ? null : b.dataset.modeOpen; this._render(); }));
     q("[data-row]", (b) => b.addEventListener("click", () => this._toggle(b.dataset.row)));
-    q("[data-dev]", (det) => det.addEventListener("toggle", () => { const k = `dev|${det.dataset.dev}`; if (det.open) this._open.add(k); else this._open.delete(k); }));
+    q("[data-sec]", (det) => det.addEventListener("toggle", () => {
+      if (this._secOpen(det.dataset.sec) === det.open) return;
+      this._secs[det.dataset.sec] = det.open;
+      try { localStorage.setItem("sb-modes-editor-sections", JSON.stringify(this._secs)); } catch (e) { /* storage blocked */ }
+      this._render();                                    // swap the description / summary line and the chevron
+    }));
     q("[data-act]", (b) => { if (!b.closest(".bar")) b.addEventListener("click", () => this._act(b.dataset.act)); });
     q("[data-move-mode]", (b) => b.addEventListener("click", () => this._edit((d) => {
       const i = Number(b.dataset.moveMode), j = i + Number(b.dataset.dir); [d.modes[i], d.modes[j]] = [d.modes[j], d.modes[i]];
@@ -1492,7 +1521,7 @@ export class SbModesEditor extends HTMLElement {
       const name = prompt("Name of the new room:");
       if (!name) return;
       const id = uniqueId(name, new Set(this._zones().map((z) => z.id)));
-      this._open.add(`dev|${id}`);
+      this._secOpen("devices"); this._secs.devices = true;   // a new room needs its areas first
       this._room = id; this._view = "room";
       this._edit((d) => { (d.zones ||= []).push({ id, name, areas: [], overrides: { [ALL]: { behaviour: "hands_off", params: {} } } }); }, true);
       return;
