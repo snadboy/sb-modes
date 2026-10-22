@@ -63,8 +63,8 @@ function toAddons(z) {
   return y;
 }
 const ADDON_NEW = [
-  ["time", "Lights at a time of day"], ["begins", "Lights when a mode begins"], ["ends", "Lights when a mode ends"],
-  ["state", "When a device changes (lights or a script)"], ["while", "TV lighting (while a device is …)"],
+  ["time", "At a time of day"], ["begins", "When a mode begins"], ["ends", "When a mode ends"],
+  ["state", "When a device changes"], ["while", "TV lighting (while a device is …)"],
   ["button", "Hold / release button"], ["follow", "Follow a leader light"], ["auto_off", "Auto-off (lights turned on by hand)"],
 ];
 const KIND_LABEL = { lights: "Lights", while: "While", button: "Button", follow: "Follow", auto_off: "Auto-off" };
@@ -670,8 +670,8 @@ export class SbModesEditor extends HTMLElement {
     if (a.type === "lights") {
       const trigger = "at" in t ? this._clock(t.at) : t.mode_begins ? `${t.mode_begins.map((m) => this._modeName(m)).join(" or ")} begins`
         : t.mode_ends ? `${t.mode_ends.map((m) => this._modeName(m)).join(" or ")} ends` : t.entity ? `${this._short(t.entity, zid)} becomes ${t.to || "?"}` : "not set";
-      const script = (a.steps || []).some((s) => s.script);
-      return { kind: script ? "Script" : "Lights", trigger, when, then: (a.steps || []).map((s) => this._sayStep(s, zid)).join(" · ") || "nothing yet" };
+      const steps = a.steps || [], script = steps.some((s) => s.script !== undefined), lights = steps.some((s) => s.script === undefined);
+      return { kind: script && lights ? "Lights + script" : script ? "Script" : "Lights", trigger, when, then: (a.steps || []).map((s) => this._sayStep(s, zid)).join(" · ") || "nothing yet" };
     }
     if (a.type === "while") {
       return { kind: "While", trigger: `while ${a.entity ? this._short(a.entity, zid) : "?"} is …`, when,
