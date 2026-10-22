@@ -412,3 +412,13 @@ Trade-off accepted by the user: holding the Bedroom now also pauses the wake-up.
 0.26.1: `draft/set` with a config equal to the live table keeps NO draft (returns `same`). An
 ha-form reporting its first value on load had stored a no-op copy of version 6; once version 7
 was saved it showed "5 changes · saved elsewhere" and Save would have undone the Bedside move.
+
+## NEXT: add-on instances (designed 2026-10-22, awaiting approval)
+
+Design doc "Add-ons" section (rev 38): per room, a list of instances = trigger (time / entity
+state / button press / mode begins-ends + delay) + When (modes, days only/never on day types or
+SB Scheduler calendars, time window) + action (set lights / hold / release / run a script) +
+steps. User decisions: wake-ups are CLOCK times independent of mode (Bedroom: 6:30/6:40 on
+Workdays; days off/Vacation 8:30/8:40 pending confirmation); later instance wins on a clash
+(editor warns); a While instance ends when its When stops matching; SB Scheduler light jobs move
+into SB Modes. Follow and Auto-off stay built-in but gain When. Not built yet.
