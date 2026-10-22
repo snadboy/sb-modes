@@ -175,6 +175,15 @@ Editor: Room → Always → "+ Auto-off". For the Office's Lutron "Floor Lamp Si
 the empty setting, or on 15 min while empty — the user sets it up in the editor (not yet saved).
 Kitchen "dark below" 50 → **60 lx** (version 4, 2026-10-21 16:2x): it came on at 45 lx in passing
 clouds and the user wanted it earlier.
+**Lux rule (0.25.2, 2026-10-21):** a zone's reading is the LOWEST of its light sensors that
+report (any one below target → dark); offline sensors are ignored; with none reporting, the
+last lights-off reading within the hour, else the sun (it used to be the mean, and "no reading"
+counted as dark — the Shelves LWR02 dropout lit the Living Room all afternoon). Table version 5:
+living_room lux = Shelves + Clock (60 lx), dining_room = Driveway + Pantry (50 lx).
+Deployed, NOT yet live: the restart waits for the dead Shelves node 186 to be removed from the
+Matter server (the re-pair is node 191 = 0xBF, merged into the same HA device by serial; the
+old entities were deleted and the new `_2` ones renamed back — a restart would re-create
+node 186's entities as `_2`, and removing the node deletes the shared HA device entry).
 Was open: how Vacation days are marked (an SB Scheduler day type from dates and/or a tagged
 calendar event) — then add the Vacation day type in Times.
 
