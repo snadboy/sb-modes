@@ -707,9 +707,10 @@ export class SbModesEditor extends HTMLElement {
     }).join("");
     return `${list.length ? `<div class="grid atable"><table class="fixed"><colgroup><col style="width:230px">${modes.map(() => "<col>").join("")}<col style="width:120px"></colgroup><thead><tr><th class="lbl">Add-on</th>${head}<th></th></tr></thead><tbody>${rows}</tbody></table></div>`
         : `<div class="help">No add-ons yet.</div>`}
-      <div class="tools"><select class="b add" data-add-addon aria-label="Add an add-on"><option value="">+ Add-on…</option>
+      <div class="tools"><select class="b add" data-add-addon aria-label="Create a new add-on"><option value="">+ Create new add-on — choose type…</option>
         ${ADDON_NEW.map(([k, l]) => `<option value="${k}">${esc(l)}</option>`).join("")}</select>
-        <span class="help" style="margin:0"><span class="mk clk">🕒</span> on the clock · <span class="mk beg">▸</span> when a mode begins · <span class="mk on">●</span> throughout the modes it's on in · order matters only when two set the same light at once (the lower wins)</span></div>`;
+        ${this._copyOptionsHtml(z)}</div>
+      <div class="tools" style="margin-top:0"><span class="help" style="margin:0"><span class="mk clk">🕒</span> on the clock · <span class="mk beg">▸</span> when a mode begins · <span class="mk on">●</span> throughout the modes it's on in · order matters only when two set the same light at once (the lower wins)</span></div>`;
   }
 
   _addonBodyHtml(z, a, ai) {
@@ -744,11 +745,19 @@ export class SbModesEditor extends HTMLElement {
       then = `<div class="form" data-form="ad-autooff"></div>`;
     }
     return `<div class="nm"><input class="in" data-ad-name value="${esc(a.name || "")}" aria-label="Name" placeholder="Name">
+        <button class="b sm" data-ad-dup="${esc(a.id)}" title="A copy of this add-on in this room, right below it">Duplicate</button>
         <button class="b sm danger" data-ad-rm="${esc(a.id)}">Remove add-on</button></div>
       ${slot([])}
       <h4>Trigger</h4>${trig}
       <h4>When</h4><div class="form" data-form="ad-when"></div>${slot(["when"])}
       <h4>Then</h4>${then}`;
+  }
+
+  /** "Copy an add-on from another room…": every other room's add-ons, grouped by room. */
+  _copyOptionsHtml(z) {
+    const groups = this._zones().filter((o) => o.id !== z.id && (o.addons || []).length)
+      .map((o) => `<optgroup label="${esc(o.name || o.id)}">${o.addons.map((a) => `<option value="${esc(o.id)}|${esc(a.id)}">${esc(a.name || a.id)}</option>`).join("")}</optgroup>`).join("");
+    return groups ? `<select class="b add" data-copy-addon aria-label="Copy an add-on from another room"><option value="">Copy an add-on from another room…</option>${groups}</select>` : "";
   }
 
   _stepHtml(z, a, st, i) {
@@ -1226,6 +1235,24 @@ export class SbModesEditor extends HTMLElement {
         this._openAddon = `${x.id}|${id}`;
       }, true);
     }));
+    const placeCopy = (x, src, name, after) => {
+      const list = (x.addons ||= []), copy = clone(src);
+      copy.id = newId(list, String(src.id).replace(/-\d+$/, "") || "addon");
+      copy.name = name;
+      if (after >= 0) list.splice(after + 1, 0, copy); else list.push(copy);
+      this._openAddon = `${x.id}|${copy.id}`;
+    };
+    q("[data-copy-addon]", (sel) => sel.addEventListener("change", () => {
+      if (!sel.value) return;
+      const [zid, aid] = sel.value.split("|");
+      const src = (this._zoneObj(zid)?.addons || []).find((a) => a.id === aid);
+      if (!src) return;
+      this._edit((d) => placeCopy(zone(d), src, src.name || src.id, -1), true);
+    }));
+    q("[data-ad-dup]", (b) => b.addEventListener("click", () => this._edit((d) => {
+      const x = zone(d), i = (x.addons || []).findIndex((a) => a.id === b.dataset.adDup);
+      if (i >= 0) placeCopy(x, x.addons[i], `${x.addons[i].name || x.addons[i].id} (copy)`, i);
+    }, true)));
     q("[data-ad-open]", (b) => b.addEventListener("click", () => {
       const key = `${room}|${b.dataset.adOpen}`;
       this._openAddon = this._openAddon === key ? null : key;
