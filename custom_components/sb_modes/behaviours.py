@@ -389,14 +389,15 @@ class PresenceLux(_Occupancy):
         return self.entities.get("illuminance", [])
 
     def _lux(self) -> float | None:
-        """The zone's light reading: the mean of its illuminance sensors that report a number."""
+        """The zone's light reading: the LOWEST of its illuminance sensors that report a number
+        (any one below target makes the zone dark); offline sensors are left out."""
         vals = []
         for eid in self._lux_sensors:
             try:
                 vals.append(float(self.hass.states.get(eid).state))
             except (AttributeError, TypeError, ValueError):
                 continue
-        return sum(vals) / len(vals) if vals else None
+        return min(vals) if vals else None
 
     DAYLIGHT_MAX_AGE = 3600            # seconds a lights-off reading stays usable
 
@@ -425,27 +426,28 @@ class PresenceLux(_Occupancy):
 
     def _daylight(self) -> tuple[float | None, str]:
         """(the reading to judge daylight by, where it came from): 'now' with the zone's lights
-        off, or even with them on when it is below target (lights only add light); else the
-        last lights-off reading within the hour ('earlier'); else (None, 'sun')."""
+        off, or even with them on when it is below target (lights only add light); else — the
+        lights on, or every sensor offline — the last lights-off reading within the hour
+        ('earlier'); else (None, 'sun')."""
         target = self.params.get("target_lux")
         now = self._lux()
-        if not self._lights_on() or (now is not None and now < target):
+        if now is not None and (not self._lights_on() or now < target):
             return now, "now"
         mem = self._memory()
         return (mem, "earlier") if mem is not None else (None, "sun")
 
     def _is_dark(self) -> bool:
-        """For both decisions: is the DAYLIGHT below target? With nothing to go on, the sun:
-        below the horizon counts as dark (a missing reading with lights off counts as dark)."""
+        """For both decisions: is the DAYLIGHT below target? With nothing to go on (no sensor
+        reporting, no recent memory), the sun: below the horizon counts as dark."""
         lux, src = self._daylight()
         if lux is None:
-            return src == "now" or not self.hass.states.is_state("sun.sun", "above_horizon")
+            return not self.hass.states.is_state("sun.sun", "above_horizon")
         return lux < self.params.get("target_lux")
 
     def _reading_txt(self) -> str:
         lux, src = self._daylight()
         if lux is None:
-            return "no reading" if src == "now" else "by the sun"
+            return "by the sun"
         return f"{lux:.0f} lx" + (" (with the lights off)" if src == "earlier" else "")
 
     def _vacant_targets(self) -> tuple[dict, str]:

@@ -610,6 +610,38 @@ async def test_presence_lux_turns_on_as_it_gets_dark(hass, kitchen, lights) -> N
     assert len(lights["on"]) == 1 and _zone(hass)["status"] == "on"
 
 
+LUX2 = "sensor.kitchen_lux_2"
+
+
+def _second_lux(hass, state):
+    e = er.async_get(hass).async_get_or_create("sensor", "test", "kitchen_lux_2", suggested_object_id="kitchen_lux_2",
+                                               original_device_class="illuminance")
+    er.async_get(hass).async_update_entity(e.entity_id, area_id=ar.async_get(hass).async_get_area_by_name("Kitchen").id)
+    hass.states.async_set(LUX2, state)
+
+
+async def test_presence_lux_any_sensor_below_is_dark(hass, kitchen, lights) -> None:
+    _second_lux(hass, "unavailable")
+    await _evening_pl(hass)
+    assert lights["on"] == [] and _zone(hass)["status"].startswith("occupied; light enough (60")   # offline: ignored
+    hass.states.async_set(LUX2, "22")                                    # one of the two below 25: dark
+    await hass.async_block_till_done()
+    assert [(c.data["entity_id"], c.data.get("brightness_pct")) for c in lights["on"]] == [(CEILING, 82)]
+
+
+async def test_presence_lux_no_sensor_reporting_goes_by_the_sun(hass, kitchen, lights) -> None:
+    hass.states.async_set("sun.sun", "above_horizon")
+    hass.states.async_set(LUX, "unavailable")
+    await _evening_pl(hass)
+    assert lights["on"] == [] and "by the sun" in _zone(hass)["status"]   # not "dark" for want of a reading
+    hass.states.async_set("sun.sun", "below_horizon")
+    await hass.async_block_till_done()
+    hass.states.async_set(OCC, "off")
+    hass.states.async_set(OCC, "on")                                      # the next look at it
+    await hass.async_block_till_done()
+    assert (CEILING, 82) in [(c.data["entity_id"], c.data.get("brightness_pct")) for c in lights["on"]]
+
+
 async def test_presence_lux_arrival_in_the_dark(hass, kitchen, lights) -> None:
     hass.states.async_set(LUX, "10")
     await _setup(hass)
