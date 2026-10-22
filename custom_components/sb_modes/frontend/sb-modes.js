@@ -11,7 +11,7 @@
  *
  * Rows use the shared SB row style (window.SBKit, from the SB UI Kit integration).
  */
-const VERSION = "0.25.4";
+const VERSION = "0.26.1";
 const CARD = "sb-modes-card";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -574,6 +574,8 @@ class SbModesCard extends HTMLElement {
             .map(([st, c]) => `${esc(st)} → ${esc(this._targets(c.targets || {}) || "nothing")}${c.holds ? " (holds the zone)" : ""}`).join(" · ")}</div>` : ""}
         ${a.buttons ? `<div><b>Buttons</b> ${Object.entries(a.buttons).map(([ent, acts]) => `${esc(this._name(ent))}: ${Object.entries(acts)
             .map(([t, act]) => `${esc(PRESS[t] || t)} → ${esc(this._buttonAct(act))}`).join(", ")}`).join(" · ")}</div>` : ""}
+        ${a.wake_up ? `<div><b>Wake-up</b> (after ${esc(this._modeName?.(a.wake_up.after_mode) || a.wake_up.after_mode)} ends${a.wake_up_status ? ` · ${esc(a.wake_up_status)}` : ""}) ${(a.wake_up.steps || [])
+            .map((st) => `+${st.after_minutes} min → ${esc(this._targets(st.targets || {}))}`).join(" · ")}</div>` : ""}
         ${(a.occupancy || []).length ? `<div><b>Occupancy</b> ${a.occupancy.map((e) => ent(e, "occ")).join("")}</div>` : ""}
         ${(a.lights || []).length ? `<div><b>Lights</b> ${a.lights.map((e) => ent(e, "light")).join("")}</div>` : ""}
         ${previewing ? "" : this._recentHtml(z)}

@@ -201,6 +201,14 @@ async def ws_draft_set(hass, connection, msg) -> None:
     if not (rt := _need_rt(hass, connection, msg)):
         return
     store = _stores(hass)[1]
+    if msg["config"] == rt.config:
+        # nothing changed (a form reporting its first value on load, or an edit undone): keep no
+        # draft — a stored copy of the table goes stale when it is saved elsewhere, and saving
+        # that copy later would undo the newer table (2026-10-21)
+        await store.async_save({})
+        connection.send_result(msg["id"], {"base_version": await current_version(hass), "changes": [], "same": True,
+                                           **_check(rt, msg["config"])})
+        return
     old = await store.async_load() or {}
     base = old.get("base_version") if old.get("config") else await current_version(hass)
     await store.async_save({"config": msg["config"], "base_version": base,

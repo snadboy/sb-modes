@@ -113,5 +113,8 @@ class ZoneSensor(ModesEntity, SensorEntity):
             "overlay": st.get("overlay"),
             "overlay_config": zone.get("overlay"),
             "buttons": zone.get("buttons"),
+            "wake_up": zone.get("wake_up"),
+            "wake_up_status": self._rt.wake_status(self._zone_id),
+            "auto_off": zone.get("auto_off"),
             **{k: v for k, v in (st.get("entities") or {}).items()},
         }

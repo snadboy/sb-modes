@@ -733,6 +733,44 @@ async def test_wake_sequence_after_overnight_only(hass, kitchen, lights, freezer
     assert _zone(hass)["status"] == "only after Overnight"
 
 
+async def test_wake_up_addon_after_overnight_only(hass, kitchen, lights, freezer) -> None:
+    await _setup(hass)
+    t = _with("vacancy_off", {"lights": [CEILING], "off_after_seconds": 300})   # the room's own rule, untouched
+    t["zones"][0]["wake_up"] = WAKE
+    await _save(hass, t)
+    await _mode(hass, "overnight")
+    await _mode(hass, "day")                                              # came from Overnight
+    assert _zone(hass)["wake_up_status"].startswith("next step at")
+    await _tick(hass, freezer, minutes=30, seconds=1)
+    assert [c.data.get("brightness_pct") for c in lights["on"]] == [1]
+    hass.states.async_set(SINK, "on", {"brightness": 3}, context=Context(id=_rt(hass).own_contexts[-1]))   # our own step
+    await _tick(hass, freezer, minutes=10)
+    assert [c.data.get("brightness_pct") for c in lights["on"]] == [1, 4]
+    assert _zone(hass)["wake_up_status"] == "done"
+    await _mode(hass, "evening")                                          # from Day: not a wake-up
+    assert _zone(hass)["wake_up_status"] == "after Overnight ends"
+
+
+async def test_wake_up_addon_respects_a_hold(hass, kitchen, lights, freezer) -> None:
+    await _setup(hass)
+    t = _table()
+    t["zones"][0]["wake_up"] = WAKE
+    await _save(hass, t)
+    await _mode(hass, "overnight")
+    await _mode(hass, "day")
+    await hass.services.async_call(DOMAIN, "hold_zone", {"zone": "kitchen", "hold": 120}, blocking=True)
+    await _tick(hass, freezer, minutes=30, seconds=1)
+    assert lights["on"] == []                                             # held: the step is skipped
+
+
+async def test_wake_up_addon_is_checked(hass, kitchen) -> None:
+    await _setup(hass)
+    t = _table()
+    t["zones"][0]["wake_up"] = {"after_mode": "weekend", "steps": [{"after_minutes": 900, "targets": {}}]}
+    with pytest.raises(ServiceValidationError, match="wake-up: mode “weekend”"):
+        await _save(hass, t)
+
+
 async def test_sunset_relative_rule(hass, kitchen) -> None:
     from homeassistant.helpers.sun import get_astral_event_date
     from homeassistant.util import dt as dt_util
@@ -1549,6 +1587,21 @@ async def test_editor_stale_draft_and_errors_block_save(hass, kitchen, hass_ws_c
     bad["fallback_mode"] = "party"
     r = await ws(type="sb_modes/save", config=bad)
     assert not r["success"] and "not a defined mode" in r["error"]["message"]
+
+
+async def test_editor_draft_same_as_the_table_is_not_kept(hass, kitchen, hass_ws_client) -> None:
+    await _setup(hass)
+    await _save(hass, _table())
+    client = await hass_ws_client(hass)
+    async def ws(**m):
+        await client.send_json_auto_id(m)
+        return await client.receive_json()
+    t = _table()
+    t["modes"][0]["name"] = "Daytime"
+    await ws(type="sb_modes/draft/set", config=t)
+    r = await ws(type="sb_modes/draft/set", config=_table())          # the edit undone (or a form's first value)
+    assert r["result"]["same"] is True and r["result"]["changes"] == []
+    assert (await ws(type="sb_modes/draft/get"))["result"]["draft"] is None
 
 
 async def test_editor_try_it(hass, kitchen, lights, hass_ws_client) -> None:

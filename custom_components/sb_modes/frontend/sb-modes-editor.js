@@ -11,7 +11,7 @@
  *   Times — the day types (Vacation, Workdays, Days off…) in priority order, each with its
  *           mode changes on a 24-hour band; other rules; the coming week.
  *   Room  — one room top to bottom: Usually · By mode (behaviour + when it begins) · Add-ons
- *           (follow, TV overlay, hold button, auto-off: in every mode) · Devices.
+ *           (follow, TV overlay, hold button, wake-up, auto-off: in every mode) · Devices.
  *
  * Light settings ("targets") live in several places; a LOC says which:
  *   {k:"choice", owner, key, step?}  a behaviour's param (owner: {kind:"zone", zone, mode} or
@@ -345,6 +345,7 @@ export class SbModesEditor extends HTMLElement {
     if (loc.k === "band") return (z.follow.bands[loc.band].targets ||= {});
     if (loc.k === "overlay") return (z.overlay.states[loc.state].targets ||= {});
     if (loc.k === "button") return (z.buttons[loc.ent][loc.etype].targets ||= {});
+    if (loc.k === "wake") return (z.wake_up.steps[loc.step].targets ||= {});
     return {};
   }
   /** After an edit: drop empty containers the table should not keep (an empty on_enter). */
@@ -365,6 +366,7 @@ export class SbModesEditor extends HTMLElement {
     if (loc.k === "band") return ["zones", zi, "follow", "bands", loc.band];
     if (loc.k === "overlay") return ["zones", zi, "overlay", "states", loc.state];
     if (loc.k === "button") return ["zones", zi, "buttons", loc.ent, loc.etype];
+    if (loc.k === "wake") return ["zones", zi, "wake_up", "steps", loc.step];
     return [];
   }
 
@@ -380,7 +382,8 @@ export class SbModesEditor extends HTMLElement {
   async _sync() {
     try {
       const r = await this._ws({ type: "sb_modes/draft/set", config: this._draft });
-      this._hasDraft = true;
+      this._hasDraft = !r.same;                          // the same as the table: no draft is kept
+      if (r.same) this._stale = false;
       this._dirty = false;
       this._changes = r.changes || [];
       this._check = { errors: r.errors || [], warnings: r.warnings || [] };
@@ -449,7 +452,7 @@ export class SbModesEditor extends HTMLElement {
         return `<td class="cell" data-cell="${esc(z.id)}|${esc(m.id)}">${what}${beg ? `<span class="beg">▸ ${esc(this._sayTargets(beg, z.id))}</span>` : ""}</td>`;
       }).join("");
       const addons = [z.follow && ["follow", `Follows ${this._short(z.follow.leader, z.id)}`], z.overlay && ["overlay", "TV overlay"],
-        z.buttons && ["buttons", "Hold button"],
+        z.buttons && ["buttons", "Hold button"], z.wake_up && ["wake_up", `Wake-up after ${this._modeName(z.wake_up.after_mode)}`],
         z.auto_off && ["auto_off", `Auto-off: ${z.auto_off.flatMap((r) => r.lights || []).map((e) => this._short(e, z.id)).join(", ")}`]].filter(Boolean);
       const nerr = this._errorsAt(["zones", this._zoneIndex(z.id)]).length;
       return `<tr><td class="room"><button data-room="${esc(z.id)}">${esc(z.name || z.id)} ›</button>${nerr ? `<span class="dot" title="Has errors"></span>` : ""}
@@ -555,6 +558,18 @@ export class SbModesEditor extends HTMLElement {
         ${Object.entries(z.buttons).map(([ent, acts]) => this._buttonHtml(z, ent, acts)).join("")}
         <div class="tools"><div class="add" data-btn-picker="1"></div></div></div>`);
     }
+    if (z.wake_up) {
+      const steps = z.wake_up.steps || [];
+      parts.push(`<div class="box" data-box="wake_up"><div class="bh"><b>Wake-up</b><button class="b sm" data-rm-extra="wake_up">Remove</button></div>
+        <div class="help">Timed steps after a mode ends — each counts from when the next mode began (the bedside bulbs after Overnight). A hold or a hand change still wins.</div>
+        <div class="form" data-form="wake"></div>
+        <div class="errs-slot" data-path='${esc(JSON.stringify(["zones", this._zoneIndex(z.id), "wake_up"]))}'></div>
+        ${steps.map((st, i) => `<div class="brow"><div><label class="help" style="display:block">After</label>
+            <input class="in" type="number" min="0" max="720" data-wk-step="${i}" value="${esc(st.after_minutes ?? 0)}" style="width:64px" aria-label="Minutes after"> min
+            <button class="ic" data-wk-rm="${i}" title="Remove step" aria-label="Remove step">×</button></div>
+          <div>${this._targetsHtml({ k: "wake", zone: z.id, step: i }, st.targets || {}, { label: `Step ${i + 1}` })}</div></div>`).join("")}
+        <div class="tools"><button class="b sm" data-wk-add="1">+ Step</button></div></div>`);
+    }
     if (z.auto_off) {
       parts.push(`<div class="box" data-box="auto_off"><div class="bh"><b>Auto-off</b><button class="b sm" data-rm-extra="auto_off">Remove</button></div>
         <div class="help">Lights someone turns on by hand that SB Modes only ever turns off: with the room's empty setting, or once on a while with the room empty.</div>
@@ -567,7 +582,8 @@ export class SbModesEditor extends HTMLElement {
     const add = [!z.auto_off && `<button class="b add" data-add-extra="auto_off">+ Auto-off (lights turned on by hand)</button>`,
       !z.follow && `<button class="b add" data-add-extra="follow">+ Follow a leader light</button>`,
       !z.overlay && `<button class="b add" data-add-extra="overlay">+ TV overlay</button>`,
-      !z.buttons && `<button class="b add" data-add-extra="buttons">+ Hold / release button</button>`].filter(Boolean).join("");
+      !z.buttons && `<button class="b add" data-add-extra="buttons">+ Hold / release button</button>`,
+      !z.wake_up && `<button class="b add" data-add-extra="wake_up">+ Wake-up (timed steps after a mode ends)</button>`].filter(Boolean).join("");
     return `${parts.join("")}${add ? `<div class="tools">${add}</div>` : ""}`;
   }
 
@@ -826,6 +842,10 @@ export class SbModesEditor extends HTMLElement {
       }), { lights: "Lights", with_empty: "Off with the room's empty setting (when it turns other lights off)", on_minutes: "Or once on this long while the room is empty" },
       { on_minutes: "0 = only with the empty setting. “Empty” means empty for the room's usual delay, so a sensor's blink doesn't count." }));
     });
+    const wake = root.querySelector('[data-form="wake"]');
+    if (wake && z) wake.appendChild(this._form([{ name: "after_mode", required: true, selector: { select: { mode: "dropdown", options: modeOpts() } } }],
+      { after_mode: z.wake_up.after_mode || "" }, (v) => this._edit((d) => { d.zones.find((q) => q.id === z.id).wake_up.after_mode = v.after_mode; }),
+      { after_mode: "After this mode ends" }));
     const overlay = root.querySelector('[data-form="overlay"]');
     if (overlay && z) overlay.appendChild(this._form([
       { name: "entity", selector: { entity: { filter: { domain: "media_player" } } } },
@@ -841,7 +861,8 @@ export class SbModesEditor extends HTMLElement {
       const owner = JSON.parse(slot.dataset.owner), ch = this._choice(this._draft, owner);
       const NONE = "__none__";
       const opts = [...(owner.kind === "zone" ? [{ value: NONE, label: owner.mode === ALL ? "Not set — each mode's default" : "Same as usual" }] : []),
-        ...Object.entries(this._schema.behaviours).map(([k, b]) => ({ value: k, label: b.label }))];
+        ...Object.entries(this._schema.behaviours).filter(([k]) => k !== "wake_sequence" || ch?.behaviour === k)   // now the Wake-up add-on
+          .map(([k, b]) => ({ value: k, label: b.label }))];
       slot.appendChild(this._form([{ name: "behaviour", selector: { select: { mode: "dropdown", options: opts } } }], { behaviour: ch?.behaviour || NONE },
         (v) => this._edit((d) => {
           const cur = this._choice(d, owner);
@@ -959,12 +980,18 @@ export class SbModesEditor extends HTMLElement {
       if (k === "overlay") x.overlay = { entity: "", states: { playing: { holds: true, targets: {} }, paused: { holds: true, targets: {} }, off: { targets: {} } } };
       if (k === "buttons") x.buttons = {};
       if (k === "auto_off") x.auto_off = [{ lights: [], with_empty: true, on_minutes: 15 }];
+      if (k === "wake_up") x.wake_up = { after_mode: (this._modes().find((m) => m.id === "overnight") || this._modes().at(-1))?.id, steps: [{ after_minutes: 30, targets: {} }] };
     }, true)));
     q("[data-rm-extra]", (b) => b.addEventListener("click", () => {
-      const label = { overlay: "TV overlay", auto_off: "auto-off rules" }[b.dataset.rmExtra] || b.dataset.rmExtra;
+      const label = { overlay: "TV overlay", auto_off: "auto-off rules", wake_up: "wake-up", buttons: "hold buttons" }[b.dataset.rmExtra] || b.dataset.rmExtra;
       if (!confirm(`Remove the ${label} from this room (in the draft)?`)) return;
       this._edit((d) => { delete zone(d)[b.dataset.rmExtra]; }, true);
     }));
+    q("[data-wk-step]", (inp) => inp.addEventListener("input", () => this._edit((d) => { zone(d).wake_up.steps[Number(inp.dataset.wkStep)].after_minutes = Number(inp.value || 0); })));
+    q("[data-wk-rm]", (b) => b.addEventListener("click", () => this._edit((d) => { zone(d).wake_up.steps.splice(Number(b.dataset.wkRm), 1); }, true)));
+    q("[data-wk-add]", (b) => b.addEventListener("click", () => this._edit((d) => {
+      const list = (zone(d).wake_up.steps ||= []); list.push({ after_minutes: (list.at(-1)?.after_minutes ?? 0) + 10, targets: {} });
+    }, true)));
     q("[data-ao-add]", (b) => b.addEventListener("click", () => this._edit((d) => { zone(d).auto_off.push({ lights: [], with_empty: true, on_minutes: 15 }); }, true)));
     q("[data-ao-rm]", (b) => b.addEventListener("click", () => this._edit((d) => {
       const x = zone(d); x.auto_off.splice(Number(b.dataset.aoRm), 1); if (!x.auto_off.length) delete x.auto_off;

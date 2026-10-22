@@ -36,6 +36,7 @@ from .behaviours import KINDS, Behaviour, HandsOff, Held, Overlaid
 from .bookkeeping import Keeper, describe_hold, release_delay
 from .follow import Follower
 from .autooff import AutoOff
+from .wake import WakeUp
 from .buttons import Buttons
 from .overlay import Overlay
 from . import presence
@@ -96,6 +97,7 @@ class Runtime:
         self._overlays: dict[str, Overlay] = {}
         self._buttons: dict[str, Buttons] = {}
         self._autooff: dict[str, AutoOff] = {}
+        self._wakes: dict[str, WakeUp] = {}
         self.media_left: dict[str, datetime] = {}          # media player → when it stopped being watched
         self.daylight: dict[str, tuple] = {}              # zone → (last reading with its lights off, when)
         self._behaviours: dict[str, Behaviour] = {}
@@ -242,12 +244,14 @@ class Runtime:
                 setattr(self, name, None)
         self._cancel_grace()
         self._stop_behaviours()
-        for f in [*self._followers.values(), *self._overlays.values(), *self._buttons.values(), *self._autooff.values()]:
+        for f in [*self._followers.values(), *self._overlays.values(), *self._buttons.values(), *self._autooff.values(),
+                  *self._wakes.values()]:
             f.stop()
         self._followers.clear()
         self._overlays.clear()
         self._buttons.clear()
         self._autooff.clear()
+        self._wakes.clear()
         self.keeper.stop()
 
     # ── the table ────────────────────────────────────────────────────────────
@@ -502,7 +506,7 @@ class Runtime:
     @callback
     def _restart_behaviours(self) -> None:
         self._stop_behaviours()
-        if self.ready and not (self._followers or self._overlays or self._buttons or self._autooff):
+        if self.ready and not (self._followers or self._overlays or self._buttons or self._autooff or self._wakes):
             self._restart_followers()
         if self.ready and self.mode:
             for zone in self.zones():
@@ -510,6 +514,8 @@ class Runtime:
         for a in self._autooff.values():                 # after the zones: they know their presence sensors
             a.stop()
             a.start()
+        for w in self._wakes.values():                   # each mode change: did the house just leave its mode?
+            w.start()
         self._rewatch()
         self.notify()
 
@@ -574,13 +580,17 @@ class Runtime:
         for f in self._followers.values():
             f.stop()
         self._followers.clear()
-        for o in [*self._overlays.values(), *self._buttons.values(), *self._autooff.values()]:
+        for o in [*self._overlays.values(), *self._buttons.values(), *self._autooff.values(), *self._wakes.values()]:
             o.stop()
         self._overlays.clear()
         self._buttons.clear()
         self._autooff.clear()
+        self._wakes.clear()
         if not self.ready:
             return
+        for zone in self.zones():
+            if zone.get("wake_up"):
+                self._wakes[zone["id"]] = WakeUp(self, zone, zone["wake_up"])   # started with the behaviours
         for zone in self.zones():
             if zone.get("auto_off"):
                 a = AutoOff(self, zone, zone["auto_off"])
@@ -670,6 +680,10 @@ class Runtime:
             if sources and self.vacant_since(sources) is not None:
                 self._autooff[zone_id].empty_setting_applied()   # the lamp goes with the others
         return ctx
+
+    def wake_status(self, zone_id: str) -> str | None:
+        w = self._wakes.get(zone_id)
+        return w.status if w else None
 
     def zone_presence(self, zone_id: str) -> list[str]:
         b = self._behaviours.get(zone_id)

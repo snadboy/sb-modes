@@ -258,6 +258,19 @@ def _check_config(config, state_of, area_exists, zone_entities, day_set_exists) 
                         errors.append(f"{where}, auto-off {n + 1}: on_minutes must be 0–1440.")
                     if not r.get("with_empty") and not r.get("on_minutes"):
                         errors.append(f"{where}, auto-off {n + 1}: choose when it turns off (with the empty setting, after some minutes, or both).")
+        wake = zone.get("wake_up")
+        _here("zones", i, "wake_up")
+        if wake is not None:
+            if not isinstance(wake, dict):
+                errors.append(f"{where}: wake_up must be {{after_mode, steps}}.")
+            else:
+                with _sub("after_mode"):
+                    if not wake.get("after_mode"):
+                        errors.append(f"{where}, wake-up: choose the mode it follows.")
+                    else:
+                        _check_param(wake["after_mode"], {"type": "mode"}, f"{where}, wake-up", state_of, errors, warnings, ids)
+                with _sub("steps"):
+                    _check_param(wake.get("steps"), {"type": "steps"}, f"{where}, wake-up step", state_of, errors, warnings)
         enter = zone.get("on_enter")
         _here("zones", i, "on_enter")
         if enter is not None:

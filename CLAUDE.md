@@ -397,3 +397,18 @@ room page (`data-addon="zone|key"` → `_goRoom(zone, key)` scrolls to `[data-bo
 A new add-on TYPE is code: a runtime module (like overlay.py / buttons.py / autooff.py)
 started in `Runtime._restart_followers`, checks in validate.py, review text in changes.py,
 a box + "+" button in the editor's `_addonsHtml`, and tests.
+
+## Wake-up add-on; Bedside folded into Bedroom (0.26.0–0.26.1, 2026-10-21)
+
+New add-on `wake_up: {after_mode, steps: [{after_minutes, targets}]}` (wake.py): restarted with
+the behaviours on every mode change; arms its steps only when the house just left `after_mode`;
+steps go through Runtime.apply (a hold or a hand change wins). Status in the zone sensor's
+`wake_up_status`; card detail line; editor box + "+ Wake-up"; House link. The wake_sequence
+BEHAVIOUR still exists (old table versions validate) but is hidden from the editor's picker.
+Table version 7: the Bedside zone removed; Bedroom gets wake_up (after Overnight +30 min 1 %,
++40 min 4 %), its `lights` gain the two bedside bulbs (so hand changes on them are tracked),
+and on_enter Day/Evening "at least 1 %" for the bulbs. sensor.sb_modes_bedside deleted.
+Trade-off accepted by the user: holding the Bedroom now also pauses the wake-up.
+0.26.1: `draft/set` with a config equal to the live table keeps NO draft (returns `same`). An
+ha-form reporting its first value on load had stored a no-op copy of version 6; once version 7
+was saved it showed "5 changes · saved elsewhere" and Save would have undone the Bedside move.

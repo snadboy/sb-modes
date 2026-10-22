@@ -145,7 +145,7 @@ def _zone_changes(a: dict, b: dict, name_of, mode_name) -> list[str]:
     for mid in _keys(ae, be):
         if ae.get(mid) != be.get(mid):
             out.append(f"{z} · when {mode_name(mid)} begins: {_targets(ae.get(mid), name_of)} → {_targets(be.get(mid), name_of)}")
-    for key, label in (("follow", "follow"), ("overlay", "TV overlay"), ("buttons", "buttons")):
+    for key, label in (("follow", "follow"), ("overlay", "TV overlay"), ("buttons", "hold button"), ("wake_up", "wake-up")):
         out += _generic(f"{z} · {label}", a.get(key), b.get(key), name_of)
     out += _paired(f"{z} · auto-off", [_auto(r, name_of) for r in a.get("auto_off") or []],
                    [_auto(r, name_of) for r in b.get("auto_off") or []])
