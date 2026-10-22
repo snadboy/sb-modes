@@ -415,6 +415,14 @@ was saved it showed "5 changes · saved elsewhere" and Save would have undone th
 
 ## Add-on instances (0.27.x, built 2026-10-22) — LIVE, table version 8
 
+Editor layout 0.27.3–0.27.4 (user-approved mock-up, canvas boards 8–9): a ROOM has one RULE
+(normal rule = overrides["*"]; a mode with its own is a framed "Different rule" cell; blank =
+normal) and ADD-ONS (extra actions on top). House grid: a row per room (rule) and, folded per
+room, a row per add-on with marks in the mode columns — ▸ mode begins (◂ ends), ● bar active
+throughout those modes, 🕒 bar clock, ⚡ bar device state (_addonMarks/_addonCells). No Add-ons
+column, no add-on names in mode cells. Room page: 1 · Rule (normal + per-mode rows), 2 · Add-ons
+(same rows-by-mode table, editor opens under its row), 3 · Devices. Tables use table-layout fixed.
+
 Zone `addons` = ordered list of instances {id, name, type, enabled?, when?, …} (model.py block
 comment has the schema). Types: lights (trigger at / mode_begins / mode_ends / entity+to; steps of
 targets | hold | release | script — addons.LightsAddon), while (overlay.Overlay), button
