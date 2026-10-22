@@ -413,12 +413,20 @@ Trade-off accepted by the user: holding the Bedroom now also pauses the wake-up.
 ha-form reporting its first value on load had stored a no-op copy of version 6; once version 7
 was saved it showed "5 changes · saved elsewhere" and Save would have undone the Bedside move.
 
-## NEXT: add-on instances (designed 2026-10-22, awaiting approval)
+## Add-on instances (0.27.x, built 2026-10-22) — LIVE, table version 8
 
-Design doc "Add-ons" section (rev 38): per room, a list of instances = trigger (time / entity
-state / button press / mode begins-ends + delay) + When (modes, days only/never on day types or
-SB Scheduler calendars, time window) + action (set lights / hold / release / run a script) +
-steps. User decisions: wake-ups are CLOCK times independent of mode (Bedroom: 6:30/6:40 on
-Workdays; days off/Vacation 8:30/8:40 pending confirmation); later instance wins on a clash
-(editor warns); a While instance ends when its When stops matching; SB Scheduler light jobs move
-into SB Modes. Follow and Auto-off stay built-in but gain When. Not built yet.
+Zone `addons` = ordered list of instances {id, name, type, enabled?, when?, …} (model.py block
+comment has the schema). Types: lights (trigger at / mode_begins / mode_ends / entity+to; steps of
+targets | hold | release | script — addons.LightsAddon), while (overlay.Overlay), button
+(buttons.Buttons, merged per room), follow, auto_off (merged into one AutoOff, per-rule When).
+When = modes, days / not_days (day type ids or SB Scheduler day sets), between. One while and
+one follow per room (validation). Older keys (overlay, buttons, follow, auto_off, wake_up,
+on_enter) convert on read (model.zone_addons; editor toAddons) so old versions still load;
+on_enter is now a lights add-on with a mode_begins trigger (Runtime._apply_on_enter is gone).
+Runtime: Overlay.regate() on every tick (60 s) and mode change; add-ons re-armed in
+_after_day_sets (calendars load after start — before that a Days-off add-on showed today).
+Sensor attrs: `addons`, `addon_status`. Editor: Room → 1 · Room modes, 2 · Mode exceptions,
+3 · Add-ons (cards: switch, Trigger · When · Then pills, next run, ▲▼, Edit expands in place;
+"+ Add-on…" select). House: add-on names (with clock time) link to their card; ▸ marks show
+mode-begins add-ons. Table v8: names given; Bedroom = Workday wake-up 06:30 (+10 4%) on
+workday, Day-off wake-up 08:30 on day_off + vacation, Bulbs at least 1% on Day/Evening begins.

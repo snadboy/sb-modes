@@ -83,13 +83,14 @@ class LightsAddon:
     def _arm_time(self) -> None:
         now = dt_util.now()
         self.next_run = None
+        armed = False
         for n in range(LOOKAHEAD_DAYS + 1):
             at = self._occurrence(now.date() + timedelta(days=n))
             if at is None or at <= now:
                 continue
-            if self.next_run is None:
+            if not armed:
                 self._unsubs.append(async_track_point_in_time(self.rt.hass, self._time_fired, at))
-                self.next_run = at                       # fires daily; the When decides on the day
+                armed = True                             # fires daily; the When decides on the day
             if self._days_ok(at):
                 self.next_run = at                       # what to show: the next day it will act
                 break

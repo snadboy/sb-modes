@@ -21,6 +21,8 @@ def describe(old: dict, new: dict, name_of: Callable[[str], str] = lambda e: e) 
     old, new = old or {}, new or {}
     out: list[str] = []
     mode_name = _mode_names(old, new)
+    types = {t.get("id"): t.get("name") or t.get("id") for c in (old, new) for t in c.get("day_types") or [] if isinstance(t, dict)}
+    day_name = lambda d: types.get(d, d)   # noqa: E731
 
     # ── modes ───────────────────────────────────────────────────────────────
     om, nm = _by_id(old.get("modes")), _by_id(new.get("modes"))
@@ -54,7 +56,7 @@ def describe(old: dict, new: dict, name_of: Callable[[str], str] = lambda e: e) 
         if zid not in nz:
             out.append(f"Zone {_n(z)} removed")
     for zid in [z for z in nz if z in oz]:
-        out += _zone_changes(oz[zid], nz[zid], name_of, mode_name)
+        out += _zone_changes(oz[zid], nz[zid], name_of, mode_name, day_name)
     if [z for z in nz if z in oz] != [z for z in oz if z in nz]:
         out.append("Zone order changed")
 
@@ -122,7 +124,7 @@ def _calendar(t: dict) -> str:
 
 
 # ── zones ───────────────────────────────────────────────────────────────────
-def _zone_changes(a: dict, b: dict, name_of, mode_name) -> list[str]:
+def _zone_changes(a: dict, b: dict, name_of, mode_name, day_name=lambda d: d) -> list[str]:
     z = _n(b)
     out = []
     if _n(a) != z:
@@ -141,7 +143,7 @@ def _zone_changes(a: dict, b: dict, name_of, mode_name) -> list[str]:
             out.append(f"{where}: own setting removed ({'each mode' if mid == ALL_MODES else 'All modes or the mode'}'s setting applies)")
         else:
             out += _choice_changes(where, ao[mid], bo[mid], name_of, mode_name)
-    out += _addon_changes(z, zone_addons(a), zone_addons(b), name_of, mode_name)
+    out += _addon_changes(z, zone_addons(a), zone_addons(b), name_of, mode_name, day_name)
     return out
 
 
@@ -336,15 +338,15 @@ def _trigger_txt(t: Any, name_of, mode_name) -> str:
     return NONE
 
 
-def _when_txt(w: Any, mode_name) -> str:
+def _when_txt(w: Any, mode_name, day_name=lambda d: d) -> str:
     w = w if isinstance(w, dict) else {}
     parts = []
     if w.get("modes"):
         parts.append("in " + ", ".join(mode_name(m) for m in w["modes"]))
     if w.get("days"):
-        parts.append("only on " + ", ".join(w["days"]))
+        parts.append("only on " + ", ".join(day_name(d) for d in w["days"]))
     if w.get("not_days"):
-        parts.append("never on " + ", ".join(w["not_days"]))
+        parts.append("never on " + ", ".join(day_name(d) for d in w["not_days"]))
     if w.get("between"):
         parts.append("between " + "–".join(w["between"]))
     return " · ".join(parts)
@@ -361,7 +363,7 @@ def _step_txt(st: Any, name_of) -> str:
     return lead + _targets(st.get("targets"), name_of)
 
 
-def addon_summary(a: dict, name_of=lambda e: e, mode_name=lambda m: m) -> str:
+def addon_summary(a: dict, name_of=lambda e: e, mode_name=lambda m: m, day_name=lambda d: d) -> str:
     """One line for an add-on instance: what triggers it, when, and what it does."""
     kind = a.get("type")
     if kind == "lights":
@@ -378,17 +380,17 @@ def addon_summary(a: dict, name_of=lambda e: e, mode_name=lambda m: m) -> str:
         txt = _auto(a, name_of)
     else:
         txt = str(kind)
-    when = _when_txt(a.get("when"), mode_name)
+    when = _when_txt(a.get("when"), mode_name, day_name)
     return txt + (f" · {when}" if when else "") + ("" if a.get("enabled", True) else " · off")
 
 
-def _addon_changes(z: str, old: list, new: list, name_of, mode_name) -> list[str]:
+def _addon_changes(z: str, old: list, new: list, name_of, mode_name, day_name=lambda d: d) -> list[str]:
     oa = {a.get("id"): a for a in old if isinstance(a, dict)}
     na = {a.get("id"): a for a in new if isinstance(a, dict)}
     out = []
     for aid, a in na.items():
         if aid not in oa:
-            out.append(f"{z} · add-on {a.get('name') or aid} added: {addon_summary(a, name_of, mode_name)}")
+            out.append(f"{z} · add-on {a.get('name') or aid} added: {addon_summary(a, name_of, mode_name, day_name)}")
     for aid, a in oa.items():
         if aid not in na:
             out.append(f"{z} · add-on {a.get('name') or aid} removed")
@@ -404,8 +406,8 @@ def _addon_changes(z: str, old: list, new: list, name_of, mode_name) -> list[str
         rest_a = {k: v for k, v in a.items() if k not in ("name", "enabled")}
         rest_b = {k: v for k, v in b.items() if k not in ("name", "enabled")}
         if rest_a != rest_b:
-            out.append(f"{where}: {addon_summary({**a, 'enabled': True}, name_of, mode_name)} → "
-                       f"{addon_summary({**b, 'enabled': True}, name_of, mode_name)}")
+            out.append(f"{where}: {addon_summary({**a, 'enabled': True}, name_of, mode_name, day_name)} → "
+                       f"{addon_summary({**b, 'enabled': True}, name_of, mode_name, day_name)}")
     shared = [i for i in oa if i in na]
     if [i for i in na if i in oa] != shared:
         out.append(f"{z} · add-on order: " + ", ".join(oa[i].get("name") or i for i in shared) + " → "

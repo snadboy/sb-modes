@@ -221,6 +221,11 @@ class Runtime:
             self._calendar_wait = False
             self._catch_up(source="startup")
         self._arm_schedule()
+        for lst in self._lights_addons.values():         # their When's days are known now: next runs
+            for a in lst:
+                a.start()
+        for ov in self._overlays.values():
+            ov.regate()
         self.notify()
 
     @callback
