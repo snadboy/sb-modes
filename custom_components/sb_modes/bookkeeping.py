@@ -3,6 +3,9 @@
 OVERRIDES — a zone light changed by hand (see manual.py for what counts) is left alone by
 every behaviour until whichever comes first:
   - the zone has been vacant for its delay (the behaviour's `delay` / `off_delay`, else 10 min);
+    a light turned on (or up) by hand while the zone's sensors see no one is kept at least
+    HAND_GRACE_MINUTES — the person is there, the sensor just hasn't caught them (the Basement
+    Bath, 2026-10-21) — unless the sensors see someone after it, when the usual delay applies;
     but a light turned OFF by hand stays off through the vacancy, until someone comes back
     after the zone has been empty that long (an arrival, not the empty room, ends it: the
     bedtime "off" must not be undone by the room's empty setting);
@@ -37,6 +40,7 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 DEFAULT_RELEASE_MINUTES = 10
+HAND_GRACE_MINUTES = 5
 
 
 class Keeper:
@@ -165,12 +169,20 @@ class Keeper:
                       None if last is None else time.monotonic() - last)
         if by is None:
             return
-        self.overrides.setdefault(zone, {})[light] = {"since": dt_util.utcnow().isoformat(), "by": by, "mode": self.rt.mode,
-                                                      "off": new.state == STATE_OFF}
+        info = self._watch.get(zone) or {}
+        # turned on with no one seen: someone IS there — the sensor just hasn't caught them
+        unseen = new.state != STATE_OFF and bool(info.get("occupancy")) and \
+            self.rt.vacant_since(info["occupancy"]) is not None
+        o = {"since": dt_util.utcnow().isoformat(), "by": by, "mode": self.rt.mode, "off": new.state == STATE_OFF}
+        if unseen:
+            o["unseen"] = True
+        self.overrides.setdefault(zone, {})[light] = o
         _LOGGER.debug("SB Modes: %s changed by hand (%s) in %s", light, by, zone)
         what = "off" if new.state == STATE_OFF else (
             f"{round(new.attributes['brightness'] * 100 / 255)}%" if new.attributes.get("brightness") is not None else "on")
-        until = "stays off until someone comes back" if new.state == STATE_OFF else "left alone until the zone is empty"
+        until = ("stays off until someone comes back" if new.state == STATE_OFF else
+                 f"left alone at least {HAND_GRACE_MINUTES} min (no one seen yet)" if unseen else
+                 "left alone until the zone is empty")
         self.rt.log("hand", zone, f"{self._name(light, zone)} {what} by hand"
                     f"{' (at the device)' if by == 'device' else ''} — {until}", [light])
         self._save()
@@ -223,9 +235,16 @@ class Keeper:
         if vacant is None:
             return                                       # occupied (or a sensor unavailable)
         # counted from when the zone emptied or the latest hand change, whichever is later:
-        # a light changed in an already-empty room is still respected for the full delay
-        since = max([vacant] + [dt_util.parse_datetime(o["since"]) for o in ups.values()])
-        left = (since + timedelta(minutes=info["delay"]) - dt_util.utcnow()).total_seconds()
+        # a light changed in an already-empty room is still respected for the full delay —
+        # and one turned on with no one seen, at least the grace, unless someone was seen since
+        due = vacant + timedelta(minutes=info["delay"])
+        graced = False
+        for o in ups.values():
+            at = dt_util.parse_datetime(o["since"])
+            due = max(due, at + timedelta(minutes=info["delay"]))
+            if o.get("unseen") and vacant <= at and at + timedelta(minutes=HAND_GRACE_MINUTES) > due:
+                due, graced = at + timedelta(minutes=HAND_GRACE_MINUTES), True
+        left = (due - dt_util.utcnow()).total_seconds()
         if left <= 0:
             # empty long enough: the hand changes end (not lights turned off by hand: see
             # _arrived), and the zone's behaviour runs again so its rule reaches those lights
@@ -234,7 +253,8 @@ class Keeper:
             if not self.overrides[zone]:
                 self.overrides.pop(zone)
             self._save()
-            self.rt.log("hand_end", zone, f"empty {_minutes(info['delay'])}: hand changes end ({self._names(ups, zone)})", list(ups))
+            why = f"no one seen in {HAND_GRACE_MINUTES} min" if graced else f"empty {_minutes(info['delay'])}"
+            self.rt.log("hand_end", zone, f"{why}: hand changes end ({self._names(ups, zone)})", list(ups))
             self.rt.restart_zone(zone)
             return
         self._vacant[zone] = async_call_later(self.hass, left, HassJob(partial(self._release_due, zone), cancel_on_shutdown=True))

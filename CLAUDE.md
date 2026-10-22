@@ -180,10 +180,16 @@ report (any one below target → dark); offline sensors are ignored; with none r
 last lights-off reading within the hour, else the sun (it used to be the mean, and "no reading"
 counted as dark — the Shelves LWR02 dropout lit the Living Room all afternoon). Table version 5:
 living_room lux = Shelves + Clock (60 lx), dining_room = Driveway + Pantry (50 lx).
-Deployed, NOT yet live: the restart waits for the dead Shelves node 186 to be removed from the
-Matter server (the re-pair is node 191 = 0xBF, merged into the same HA device by serial; the
-old entities were deleted and the new `_2` ones renamed back — a restart would re-create
-node 186's entities as `_2`, and removing the node deletes the shared HA device entry).
+Shelves re-pair: node 191 = 0xBF, merged into the same HA device by serial. A dead node left
+in the Matter server re-creates its entities (as `_2`) on every restart, so: remove the node
+(matter server `remove_node` — this deletes the shared HA device), reload Matter, and HA
+restores the device's name/area/labels and the entity IDs from its deleted-registry. Done.
+**Hand grace (0.25.3, 2026-10-21):** a light turned on/up by hand while the zone's sensors see
+no one is marked `unseen` and kept at least HAND_GRACE_MINUTES (5) — unless the sensors see
+someone after it, then the usual delay. The Basement Bath's FP300 (sensitivity was "low",
+now "standard") missed the person ~100 s and vacancy_off turned the vanity off at 30 s, three
+times. Also: Runtime.apply leaves out a light GROUP target when any member is changed by hand
+(the bath's rule targets `light.basement_bath_lights`, so the override never protected it).
 Was open: how Vacation days are marked (an SB Scheduler day type from dates and/or a tagged
 calendar event) — then add the Vacation day type in Times.
 

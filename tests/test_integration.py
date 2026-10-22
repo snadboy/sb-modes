@@ -535,10 +535,48 @@ async def test_vacancy_off_light_turned_on_while_vacant(hass, kitchen, lights, f
     await _tick(hass, freezer, minutes=30)                                # long vacant
     hass.states.async_set(CEILING, "on", {"brightness": 255}, context=Context(user_id="app"))
     await hass.async_block_till_done()
-    await _tick(hass, freezer, seconds=50)
-    assert lights["off"] == []                                            # counted from when it came on
-    await _tick(hass, freezer, seconds=15)
+    assert "at least 5 min" in _zone(hass)["status"] or _zone(hass)["overrides"][CEILING]["unseen"]
+    await _tick(hass, freezer, seconds=65)
+    assert lights["off"] == []                          # turned on with no one seen: someone is there
+    await _tick(hass, freezer, minutes=3, seconds=50)
+    assert lights["off"] == []
+    await _tick(hass, freezer, seconds=10)              # 5 min and still no one seen
     assert [c.data["entity_id"] for c in lights["off"]] == [CEILING]
+
+
+async def test_vacancy_off_unseen_then_seen_uses_the_usual_delay(hass, kitchen, lights, freezer) -> None:
+    await _setup(hass)
+    await _save(hass, _with("vacancy_off", {"lights": [CEILING], "off_after_seconds": 60}))
+    await _tick(hass, freezer, minutes=30)
+    hass.states.async_set(CEILING, "on", {"brightness": 255}, context=Context(user_id="app"))
+    await hass.async_block_till_done()
+    await _tick(hass, freezer, seconds=20)
+    hass.states.async_set(OCC, "on")                    # the sensor catches them…
+    await hass.async_block_till_done()
+    await _tick(hass, freezer, seconds=10)
+    hass.states.async_set(OCC, "off")                   # …and they leave
+    await hass.async_block_till_done()
+    await _tick(hass, freezer, seconds=55)
+    assert lights["off"] == []
+    await _tick(hass, freezer, seconds=10)              # the usual 60 s after they left, not 5 min
+    assert [c.data["entity_id"] for c in lights["off"]] == [CEILING]
+
+
+GROUP = "light.kitchen_lights"
+
+
+async def test_a_group_with_a_member_changed_by_hand_is_left_alone(hass, kitchen, lights, freezer) -> None:
+    hass.states.async_set(GROUP, "off", {"entity_id": [SINK, CEILING]})
+    await _setup(hass)
+    await _save(hass, _with("vacancy_off", {"lights": [GROUP], "off_after_seconds": 30}))
+    await _tick(hass, freezer, minutes=30)
+    hass.states.async_set(SINK, "on", {"brightness": 255}, context=Context())       # at the wall, no one seen
+    hass.states.async_set(GROUP, "on", {"entity_id": [SINK, CEILING]})
+    await hass.async_block_till_done()
+    await _tick(hass, freezer, seconds=35)
+    assert lights["off"] == []                          # the group's off would undo the sink
+    await _tick(hass, freezer, minutes=5)
+    assert [c.data["entity_id"] for c in lights["off"]] == [GROUP]
 
 
 async def test_vacancy_off_max_on(hass, kitchen, lights, freezer) -> None:
@@ -789,7 +827,7 @@ async def test_occupied_vacant_vacant_set_applied_once(hass, kitchen, lights, fr
     await _save(hass, _with("occupied_vacant", {"occupied": {SINK: {"brightness_pct": 50}},
                                                 "vacant": {SINK: {"state": "off"}}, "vacant_after_minutes": 1}))
     hass.states.async_set(SINK, "on", {"brightness": 128})
-    await _tick(hass, freezer, minutes=2)
+    await _tick(hass, freezer, minutes=6)                                 # on with no one seen: the 5 min grace
     assert len(lights["off"]) == 1
     hass.states.async_set(SINK, "off")
     await _tick(hass, freezer, minutes=1)
@@ -1388,7 +1426,7 @@ async def test_activity_hand_hold_mode(hass, kitchen, lights, freezer) -> None:
     acts = _acts(hass)
     hass.states.async_set(SINK, "on", {"brightness": 128}, context=Context(user_id="u"))
     await hass.async_block_till_done()
-    assert [(a.data["kind"], a.data["message"]) for a in acts] == [("hand", "sink 50% by hand — left alone until the zone is empty")]
+    assert [(a.data["kind"], a.data["message"]) for a in acts] == [("hand", "sink 50% by hand — left alone at least 5 min (no one seen yet)")]
     await hass.services.async_call(DOMAIN, "hold_zone", {"zone": "kitchen", "hold": 30}, blocking=True)
     _rt(hass).apply({SINK: {"state": "off"}}, "kitchen: off: vacant", "kitchen")
     await hass.async_block_till_done()

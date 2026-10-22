@@ -623,13 +623,21 @@ class Runtime:
                              f"({activity.summary(self.hass, changing, self._zone_name(zone_id))})", changing)
                 return
             skip = self.keeper.overridden(zone_id)
-            left = {e: t for e, t in targets.items() if e in skip}
-            targets = {e: t for e, t in targets.items() if e not in skip}
+            # a group counts as changed by hand when any of its members is (the Basement Bath's
+            # rule turns off its light group: that must not undo the vanity a person turned on)
+            left = {e: t for e, t in targets.items() if e in skip or self._members(e) & skip.keys()}
+            targets = {e: t for e, t in targets.items() if e not in left}
         note = None
         if left_changing := self._changing(left):
             note = "left alone, changed by hand: " + ", ".join(
                 activity.short_name(self.hass, e, self._zone_name(zone_id)) for e in left_changing)
         self.send(targets, why, zone_id, note)
+
+    def _members(self, entity_id: str) -> set[str]:
+        """A group's members (its `entity_id` attribute); empty for anything else."""
+        st = self.hass.states.get(entity_id)
+        members = st.attributes.get("entity_id") if st is not None else None
+        return set(members) if isinstance(members, (list, tuple)) else set()
 
     def _changing(self, targets: dict[str, dict]) -> dict[str, dict]:
         """The targets that would actually change something (the driver's plan)."""
