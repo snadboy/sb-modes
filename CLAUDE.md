@@ -151,12 +151,12 @@ day types incl. **Vacation**, and edits mainly in a browser.
   rules". Proven equal to the 6 old rules (60 days offline, 14 days live) and the LIVE TABLE WAS
   CONVERTED (version 2 "rules → day types"; version 1 = the old rules, revertable).
 - **Editor = House | Times, with Room pages.** House: rooms × modes grid (Usual / own / ▸ when it
-  begins / Always), mode headings open a mode panel (name, icon, order, delete, the default
+  begins / Add-ons, each a link to its box on the room page), mode headings open a mode panel (name, icon, order, delete, the default
   behaviour under "advanced"), + Room / + Mode, start-up mode. Times: day types (name, calendar,
   priority, + Day type → goes first with the last type's times copied), a 24-h band and editable
   times per type ("same in …" edits the identical entries of the other types too), other rules,
   the coming week with each day's type. Room: Usually · By mode (behaviour + when it begins) ·
-  Always (follow bands, TV overlay states/holds/debounce, buttons per event type: hold N min / next
+  Add-ons (follow bands, TV overlay states/holds/debounce, buttons per event type: hold N min / next
   / until released / release, flash, lights) · Devices (folded). Step 4 (extras) is included.
 - Status card's Schedule section lists day types' times + other rules.
 **Vacation (2026-10-21):** SB Scheduler day type "Vacation" (`calendar.sb_vacation`, created via
@@ -171,7 +171,7 @@ Shelves LWR02 going offline 13:56 and blocking the room's empty setting.
 lights a person turns on by hand that SB Modes only turns OFF: with the zone's empty setting
 (Runtime.send cascades when a zone command turns lights off while the zone is vacant), or once
 on N min while the zone has been empty its usual delay. Clears the light's hand-change mark.
-Editor: Room → Always → "+ Auto-off". For the Office's Lutron "Floor Lamp Side Window": off with
+Editor: Room → Add-ons → "+ Auto-off". For the Office's Lutron "Floor Lamp Side Window": off with
 the empty setting, or on 15 min while empty — the user sets it up in the editor (not yet saved).
 Kitchen "dark below" 50 → **60 lx** (version 4, 2026-10-21 16:2x): it came on at 45 lx in passing
 clouds and the user wanted it earlier.
@@ -387,3 +387,13 @@ behaviour so the released lights follow the rule again. Regression tests added.
   the select restores the mode across that reload.
 - Problem re-check every 60 s; Repairs after 120 s of errors; cleared on recovery.
 - Entity domains a driver controls: `model.DRIVER_DOMAINS` = light, switch.
+
+## Add-ons (0.25.4, 2026-10-21)
+
+The user named the per-room extras that apply in every mode **add-ons**: Follow, TV overlay,
+Hold button, Auto-off (table keys `follow`, `overlay`, `buttons`, `auto_off`). The editor's
+"Always" column/section is now "Add-ons"; on House each add-on is a link to its box on the
+room page (`data-addon="zone|key"` → `_goRoom(zone, key)` scrolls to `[data-box=key]`).
+A new add-on TYPE is code: a runtime module (like overlay.py / buttons.py / autooff.py)
+started in `Runtime._restart_followers`, checks in validate.py, review text in changes.py,
+a box + "+" button in the editor's `_addonsHtml`, and tests.

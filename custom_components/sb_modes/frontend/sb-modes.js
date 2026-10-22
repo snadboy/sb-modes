@@ -11,7 +11,7 @@
  *
  * Rows use the shared SB row style (window.SBKit, from the SB UI Kit integration).
  */
-const VERSION = "0.25.3";
+const VERSION = "0.25.4";
 const CARD = "sb-modes-card";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));

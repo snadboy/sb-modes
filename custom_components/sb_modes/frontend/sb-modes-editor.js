@@ -10,8 +10,8 @@
  *           what is set when a mode begins; mode headings open the mode (name, icon, order).
  *   Times — the day types (Vacation, Workdays, Days off…) in priority order, each with its
  *           mode changes on a 24-hour band; other rules; the coming week.
- *   Room  — one room top to bottom: Usually · By mode (behaviour + when it begins) · Always
- *           (follow, TV overlay, buttons) · Devices.
+ *   Room  — one room top to bottom: Usually · By mode (behaviour + when it begins) · Add-ons
+ *           (follow, TV overlay, hold button, auto-off: in every mode) · Devices.
  *
  * Light settings ("targets") live in several places; a LOC says which:
  *   {k:"choice", owner, key, step?}  a behaviour's param (owner: {kind:"zone", zone, mode} or
@@ -448,15 +448,16 @@ export class SbModesEditor extends HTMLElement {
         const beg = (z.on_enter || {})[m.id];
         return `<td class="cell" data-cell="${esc(z.id)}|${esc(m.id)}">${what}${beg ? `<span class="beg">▸ ${esc(this._sayTargets(beg, z.id))}</span>` : ""}</td>`;
       }).join("");
-      const always = [z.follow && `Follows ${this._short(z.follow.leader, z.id)}`, z.overlay && "TV overlay", z.buttons && "Hold button",
-        z.auto_off && `Auto-off: ${z.auto_off.flatMap((r) => r.lights || []).map((e) => this._short(e, z.id)).join(", ")}`].filter(Boolean);
+      const addons = [z.follow && ["follow", `Follows ${this._short(z.follow.leader, z.id)}`], z.overlay && ["overlay", "TV overlay"],
+        z.buttons && ["buttons", "Hold button"],
+        z.auto_off && ["auto_off", `Auto-off: ${z.auto_off.flatMap((r) => r.lights || []).map((e) => this._short(e, z.id)).join(", ")}`]].filter(Boolean);
       const nerr = this._errorsAt(["zones", this._zoneIndex(z.id)]).length;
       return `<tr><td class="room"><button data-room="${esc(z.id)}">${esc(z.name || z.id)} ›</button>${nerr ? `<span class="dot" title="Has errors"></span>` : ""}
-          <span class="us">${esc(usual ? this._sayChoice(usual, z.id) : "No usual setting")}</span></td>${cells}<td class="alw">${always.map(esc).join("<br>")}</td></tr>`;
+          <span class="us">${esc(usual ? this._sayChoice(usual, z.id) : "No usual setting")}</span></td>${cells}<td class="alw">${addons.map(([k, t]) => `<button class="lk" data-addon="${esc(z.id)}|${k}">${esc(t)}</button>`).join("<br>")}</td></tr>`;
     }).join("");
     return `${this._modePanelHtml()}
       <div class="card"><div class="grid"><table>
-        <thead><tr><th class="lbl">Room · usually</th>${head}<th class="lbl">Always</th></tr></thead>
+        <thead><tr><th class="lbl">Room · usually</th>${head}<th class="lbl">Add-ons</th></tr></thead>
         <tbody>${rows || `<tr><td colspan="${modes.length + 2}" class="empty">No rooms yet.</td></tr>`}</tbody></table></div></div>
       <div class="legend"><span>Usual = the room's normal behaviour (left)</span><span><span class="own" style="padding:1px 7px">Own</span> = something else in that mode</span>
         <span style="color:var(--primary-color)">▸ set once when the mode begins</span><span>Tap a room or a cell to edit · tap a mode for its name, icon and order</span></div>
@@ -495,7 +496,7 @@ export class SbModesEditor extends HTMLElement {
       <div class="card"><div class="sec"><h3>1 · Usually<span class="sub">what ${esc(z.name || z.id)} does unless a mode says otherwise</span></h3>
         ${this._choiceEditorHtml({ kind: "zone", zone: z.id, mode: ALL }, usual)}</div></div>
       <div class="card"><div class="sec"><h3>2 · By mode<span class="sub">each mode: same as usual or its own, and anything set once when it begins</span></h3>${modeRows}</div></div>
-      <div class="card"><div class="sec"><h3>3 · Always<span class="sub">in every mode, on top of the above</span></h3>${this._alwaysHtml(z)}</div></div>
+      <div class="card"><div class="sec"><h3>3 · Add-ons<span class="sub">in every mode, on top of the above</span></h3>${this._addonsHtml(z)}</div></div>
       <div class="card"><div class="sec"><details class="devices" ${this._open.has(`dev|${z.id}`) ? "open" : ""} data-dev="${esc(z.id)}"><summary>4 · Devices
           <span class="sub">${esc(this._sayDevices(z, zs))}</span></summary><div class="form" data-form="basics" style="margin-top:10px"></div></details>
         <div class="tools"><button class="b sm danger" data-act="del-zone">Delete room</button></div></div></div>`;
@@ -523,11 +524,11 @@ export class SbModesEditor extends HTMLElement {
           ${this._targetsHtml({ k: "enter", zone: z.id, mode: m.id }, beg || {}, { label: "", help: "Set once, the moment this mode starts (not after a restart)." })}</div></div>` : ""}</div>`;
   }
 
-  _alwaysHtml(z) {
+  _addonsHtml(z) {
     const parts = [];
     if (z.follow) {
       const bands = (z.follow.bands || []).map((b, i) => ({ b, i })).sort((x, y) => (y.b.min_pct || 0) - (x.b.min_pct || 0));
-      parts.push(`<div class="box"><div class="bh"><b>Follow</b><button class="b sm" data-rm-extra="follow">Remove</button></div>
+      parts.push(`<div class="box" data-box="follow"><div class="bh"><b>Follow</b><button class="b sm" data-rm-extra="follow">Remove</button></div>
         <div class="help">Lights that track a leader light in every mode (the band its brightness falls in sets them).</div>
         <div class="form" data-form="follow"></div>
         <div class="errs-slot" data-path='${esc(JSON.stringify(["zones", this._zoneIndex(z.id), "follow"]))}'></div>
@@ -539,7 +540,7 @@ export class SbModesEditor extends HTMLElement {
     }
     if (z.overlay) {
       const st = z.overlay.states || {};
-      parts.push(`<div class="box"><div class="bh"><b>TV overlay</b><button class="b sm" data-rm-extra="overlay">Remove</button></div>
+      parts.push(`<div class="box" data-box="overlay"><div class="bh"><b>TV overlay</b><button class="b sm" data-rm-extra="overlay">Remove</button></div>
         <div class="help">Lights set from the TV's state. A state that holds the zone replaces its behaviour while it lasts; a hold or a hand change still wins.</div>
         <div class="form" data-form="overlay"></div>
         <div class="errs-slot" data-path='${esc(JSON.stringify(["zones", this._zoneIndex(z.id), "overlay"]))}'></div>
@@ -548,14 +549,14 @@ export class SbModesEditor extends HTMLElement {
           <div>${st[s] ? this._targetsHtml({ k: "overlay", zone: z.id, state: s }, st[s].targets || {}, { label: "" }) : `<span class="help">Not used.</span>`}</div></div>`).join("")}</div>`);
     }
     if (z.buttons) {
-      parts.push(`<div class="box"><div class="bh"><b>Buttons</b><button class="b sm" data-rm-extra="buttons">Remove all</button></div>
+      parts.push(`<div class="box" data-box="buttons"><div class="bh"><b>Hold button</b><button class="b sm" data-rm-extra="buttons">Remove all</button></div>
         <div class="help">A press holds the zone (optionally setting lights, with a flash as the cue) or releases it.</div>
         <div class="errs-slot" data-path='${esc(JSON.stringify(["zones", this._zoneIndex(z.id), "buttons"]))}'></div>
         ${Object.entries(z.buttons).map(([ent, acts]) => this._buttonHtml(z, ent, acts)).join("")}
         <div class="tools"><div class="add" data-btn-picker="1"></div></div></div>`);
     }
     if (z.auto_off) {
-      parts.push(`<div class="box"><div class="bh"><b>Auto-off</b><button class="b sm" data-rm-extra="auto_off">Remove</button></div>
+      parts.push(`<div class="box" data-box="auto_off"><div class="bh"><b>Auto-off</b><button class="b sm" data-rm-extra="auto_off">Remove</button></div>
         <div class="help">Lights someone turns on by hand that SB Modes only ever turns off: with the room's empty setting, or once on a while with the room empty.</div>
         <div class="errs-slot" data-path='${esc(JSON.stringify(["zones", this._zoneIndex(z.id), "auto_off"]))}'></div>
         ${z.auto_off.map((r, i) => `<div class="brow"><div><b style="font-weight:500">Rule ${i + 1}</b><br><button class="ic" data-ao-rm="${i}" style="font-size:13px;padding:0">remove</button></div>
@@ -930,6 +931,7 @@ export class SbModesEditor extends HTMLElement {
     const zone = (d) => d.zones.find((x) => x.id === room);
     q("[data-view]", (b) => b.addEventListener("click", () => { this._view = b.dataset.view; this._modePanel = null; this._render(); window.scrollTo({ top: 0 }); }));
     q("[data-room]", (b) => b.addEventListener("click", () => this._goRoom(b.dataset.room)));
+    q("[data-addon]", (b) => b.addEventListener("click", (e) => { e.stopPropagation(); const [z, k] = b.dataset.addon.split("|"); this._goRoom(z, k); }));
     q("[data-cell]", (td) => td.addEventListener("click", () => { const [z, m] = td.dataset.cell.split("|"); this._open.add(`${z}|${m}`); this._goRoom(z); }));
     q("[data-mode-open]", (b) => b.addEventListener("click", () => { this._modePanel = this._modePanel === b.dataset.modeOpen ? null : b.dataset.modeOpen; this._render(); }));
     q("[data-row]", (b) => b.addEventListener("click", () => this._toggle(b.dataset.row)));
@@ -950,7 +952,7 @@ export class SbModesEditor extends HTMLElement {
       const list = ((this._choice(d, JSON.parse(b.dataset.owner)).params ||= {})[b.dataset.key] ||= []);
       list.push({ after_minutes: (list.at(-1)?.after_minutes ?? 0) + 10, targets: {} });
     }, true)));
-    // Always
+    // Add-ons
     q("[data-add-extra]", (b) => b.addEventListener("click", () => this._edit((d) => {
       const x = zone(d), k = b.dataset.addExtra;
       if (k === "follow") x.follow = { leader: "", bands: [{ min_pct: 50, targets: {} }, { min_pct: 0, targets: {} }] };
@@ -1009,7 +1011,11 @@ export class SbModesEditor extends HTMLElement {
     q(".rule", (row) => this._wireRule(row));
   }
 
-  _goRoom(id) { this._room = id; this._view = "room"; this._modePanel = null; this._render(); window.scrollTo({ top: 0 }); }
+  _goRoom(id, box = null) {
+    this._room = id; this._view = "room"; this._modePanel = null; this._render();
+    const el = box && this.shadowRoot.querySelector(`[data-box="${box}"]`);
+    if (el) el.scrollIntoView({ block: "start", behavior: "smooth" }); else window.scrollTo({ top: 0 });
+  }
   _toggle(k) { if (this._open.has(k)) this._open.delete(k); else this._open.add(k); this._render(); }
 
   _wireTargets(w) {
