@@ -438,3 +438,12 @@ Sensor attrs: `addons`, `addon_status`. Editor: Room → 1 · Room modes, 2 · M
 "+ Add-on…" select). House: add-on names (with clock time) link to their card; ▸ marks show
 mode-begins add-ons. Table v8: names given; Bedroom = Workday wake-up 06:30 (+10 4%) on
 workday, Day-off wake-up 08:30 on day_off + vacation, Bulbs at least 1% on Day/Evening begins.
+
+## Matter colour while off (0.27.9, 2026-10-22)
+
+Office floor lamps (5 × Govee H607C, Matter over Wi-Fi, group light.office_floor_lamps_h607c):
+on arrival the group came on at 25 % but two lamps kept a hand-set colour. Matter lights ignore
+ColorControl commands while off, so driver._turn now turns an off light on first, then sends the
+colour. Separately, a colour set in the Govee app may not reach Matter: the east lamp reported
+3401 K while showing another colour, and a repeat of 3401 K was a no-op on the device; a nudge
+(3600 K, then 3401 K) fixed it. Offered the user an always-resend option; not chosen yet.
