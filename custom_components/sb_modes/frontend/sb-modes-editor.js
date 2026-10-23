@@ -540,7 +540,8 @@ export class SbModesEditor extends HTMLElement {
       return runs(inModes, clock ? "clk" : "dev", `${lead}${days ? ` · ${days}` : ""}${scope} — ${p.then}`);
     }
     const what = a.type === "while" ? p.trigger.replace(" …", ": ") + Object.keys(a.states || {}).join(", ")
-      : a.type === "button" ? `${p.trigger}: ${p.then}` : a.type === "follow" ? `follows ${a.leader ? this._short(a.leader, zid) : "?"}` : p.then;
+      : a.type === "button" ? `${p.trigger}: ${Object.entries(a.presses || {}).map(([et, act]) => `${(PRESS[et] || et).toLowerCase()} → ${
+        act === "release" || act?.release ? "release" : act?.hold === "next" ? "hold until next mode" : act?.hold === "paused" ? "hold until released" : `hold ${act?.hold} min`}`).join(" · ")}` : a.type === "follow" ? `follows ${a.leader ? this._short(a.leader, zid) : "?"}` : p.then;
     return runs(inModes, "on", `● ${what}${days ? ` · ${days}` : ""}`);
   }
   /** The mode-column cells of an add-on row. */
@@ -1115,8 +1116,7 @@ export class SbModesEditor extends HTMLElement {
       const owner = JSON.parse(slot.dataset.owner), ch = this._choice(this._draft, owner);
       const NONE = "__none__";
       const opts = [...(owner.kind === "zone" ? [{ value: NONE, label: owner.mode === ALL ? "Not set — each mode's default" : "Same as usual" }] : []),
-        ...Object.entries(this._schema.behaviours).filter(([k]) => k !== "wake_sequence" || ch?.behaviour === k)   // now the Wake-up add-on
-          .map(([k, b]) => ({ value: k, label: b.label }))];
+        ...Object.entries(this._schema.behaviours).map(([k, b]) => ({ value: k, label: b.label }))];
       slot.appendChild(this._form([{ name: "behaviour", selector: { select: { mode: "dropdown", options: opts } } }], { behaviour: ch?.behaviour || NONE },
         (v) => this._edit((d) => {
           const cur = this._choice(d, owner);

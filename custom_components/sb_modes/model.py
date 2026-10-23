@@ -65,11 +65,6 @@ BEHAVIOURS: dict[str, dict[str, dict[str, Any]]] = {
         "vacant_after_minutes": {"type": "number", "min": 0, "max": 240, "default": 0, "unit": "min", "label": "Empty after",
                                  "help": "Minutes with nobody seen before the empty setting."},
     },
-    "wake_sequence": {
-        "after_mode": {"type": "mode", "required": True, "label": "After this mode ends",
-                       "help": "The steps count from the start of the mode that follows it."},
-        "steps": {"type": "steps", "required": True, "label": "Steps"},
-    },
     "presence_lux": {
         "target_lux": {"type": "number", "min": 1, "max": 2000, "required": True, "unit": "lx", "label": "Dark below",
                        "help": "Below this light level (with the lights off) the zone counts as dark."},
@@ -89,7 +84,6 @@ BEHAVIOUR_INFO: dict[str, dict[str, str]] = {
     "nightlight_then_dark": {"label": "Nightlight, then dark", "help": "A nightlight when someone comes in; dark once empty."},
     "vacancy_off": {"label": "Off when empty", "help": "Lights off after the zone has been empty a while."},
     "occupied_vacant": {"label": "Occupied / empty", "help": "One setting with someone there, another once empty."},
-    "wake_sequence": {"label": "Wake-up", "help": "Timed steps after a mode ends (bedside lamps in the morning)."},
     "presence_lux": {"label": "Presence + light level", "help": "Lights on when someone is there and it is dark; an empty setting for dark and light."},
 }
 

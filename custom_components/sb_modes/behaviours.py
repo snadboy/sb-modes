@@ -15,8 +15,6 @@ behaviour decides what happens from there.
                          when someone arrives) — the old "Lights - Occupancy" automations.
 - occupied_vacant        one set of targets while occupied, another once vacant — the old
                          occupancy scene toggle (the Office).
-- wake_sequence          timed steps after the mode began, only when it followed `after_mode`
-                         (the bedside lamps waking up after Overnight, weekday or weekend).
 - presence_lux           occupied and darker than target_lux → occupied targets; vacant a while →
                          vacant targets (e.g. a nightlight). The reading only turns lights up.
 
@@ -520,56 +518,7 @@ class PresenceLux(_Occupancy):
         self._evaluate()
 
 
-class WakeSequence(Behaviour):
-    """Steps of targets at `after_minutes` after the mode began — only when the house came
-    into this mode from `after_mode` (Overnight). Steps already past are skipped."""
-    name = "wake_sequence"
-
-    def __init__(self, *args) -> None:
-        super().__init__(*args)
-        self._timers: list[CALLBACK_TYPE] = []
-        self._pending: list = []
-
-    @callback
-    def start(self) -> None:
-        after = self.params.get("after_mode")
-        if self.rt.prev_mode != after:
-            self._set_status(f"only after {self.rt.mode_name(after) or after}")
-            return
-        began = dt_util.parse_datetime(self.rt.mode_since) if self.rt.mode_since else dt_util.utcnow()
-        now = dt_util.utcnow()
-        steps = sorted(self.params.get("steps") or [], key=lambda st: st.get("after_minutes", 0))
-        future = [(began + timedelta(minutes=st.get("after_minutes", 0)), n, st) for n, st in enumerate(steps, 1)]
-        future = [f for f in future if f[0] > now]
-        for when, n, st in future:
-            self._timers.append(async_track_point_in_time(
-                self.hass, partial(self._step, n, st.get("targets") or {}, len(steps)), when))
-        self._show_next(future)
-
-    @callback
-    def _show_next(self, future) -> None:
-        self._pending = future
-        if future:
-            self._set_status("next step at " + dt_util.as_local(future[0][0]).strftime("%H:%M"))
-        else:
-            self._set_status("done")
-
-    @callback
-    def _step(self, n: int, targets: dict, total: int, _now) -> None:
-        self._pending = [f for f in self._pending if f[1] != n]
-        self._apply(targets, f"step {n} of {total}")
-        self._show_next(self._pending)
-
-    @callback
-    def stop(self) -> None:
-        for t in self._timers:
-            t()
-        self._timers.clear()
-        super().stop()
-
-
 KINDS: dict[str, type[Behaviour]] = {
-    "wake_sequence": WakeSequence,
     "vacancy_off": VacancyOff,
     "occupied_vacant": OccupiedVacant,
     "hands_off": HandsOff,

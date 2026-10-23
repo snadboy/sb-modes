@@ -715,24 +715,6 @@ WAKE = {"after_mode": "overnight", "steps": [{"after_minutes": 30, "targets": {S
                                              {"after_minutes": 40, "targets": {SINK: {"brightness_pct": 4}}}]}
 
 
-async def test_wake_sequence_after_overnight_only(hass, kitchen, lights, freezer) -> None:
-    await _setup(hass)
-    t = _table()
-    t["zones"][0]["overrides"] = {"*": {"behaviour": "wake_sequence", "params": WAKE}}
-    await _save(hass, t)
-    await _mode(hass, "overnight")
-    await _mode(hass, "day")                                              # came from Overnight
-    assert _zone(hass)["status"].startswith("next step at")
-    await _tick(hass, freezer, minutes=30, seconds=1)
-    assert [c.data.get("brightness_pct") for c in lights["on"]] == [1]
-    hass.states.async_set(SINK, "on", {"brightness": 3})
-    await _tick(hass, freezer, minutes=10)
-    assert [c.data.get("brightness_pct") for c in lights["on"]] == [1, 4]
-    assert _zone(hass)["status"] == "done"
-    await _mode(hass, "evening")                                          # from Day: not a wake-up
-    assert _zone(hass)["status"] == "only after Overnight"
-
-
 def _st(hass, addon_id):
     return _zone(hass)["addon_status"].get(addon_id)
 
