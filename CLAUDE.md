@@ -468,3 +468,4 @@ Dining Room add-ons: "Thermostat — away" (#vac starts → script.thermostat_aw
 heat_cool 70–76 °F) on climate.dining_room_dining_room_hvac. First use: Nov 13 09:00 / Nov 15
 14:00. SB Scheduler's Vacation day set only picked up the new #vac after `sb_scheduler.refresh`.
 Option 2 (phone proximity / drive time for everyday returns) = nice-to-have, not built.
+Table version 12 (2026-10-23): the Day-off wake-up no longer runs on Vacation days (house empty).
