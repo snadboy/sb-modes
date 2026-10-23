@@ -7,7 +7,9 @@
 | Design | https://claude.ai/artifact/9GAUvd4N2gctYm88fnMqhs (Claude Docs doc "SB Modes — design") |
 | Tests | `python3 tests/test_validate.py` (offline) · `.venv/bin/pytest` (all, inside HA 2026.10.2 via pytest-homeassistant-custom-component; Python 3.14 venv, 670 MB, gitignored) |
 | Frontend | `frontend/sb-modes.js` = card + panel, one module (add_extra_js_url + panel_custom), SB UI Kit row style; bump `VERSION` in the JS AND manifest version together (`?v=` cache-buster). Headless check: a Playwright script injecting `hassTokens` (long-lived token) via add_init_script, then screenshot `/sb-modes`. To compare cards, create them on the `/sb-modes` page (document.createElement works there); on a dashboard page the script's evaluate saw no custom elements at all (even sb-background-card) and loadCardHelpers gave error cards |
-| Quick deploy | `tar czf - --exclude=__pycache__ -C custom_components sb_modes \| ssh snadboy@homeassistant "cd /config/custom_components && sudo tar xzf -"` then a FULL HA restart (new integration / Python changes) |
+| Release (since 2026-10-23, repo PUBLIC, installed via HACS id 1423334816) | bump version in manifest.json + VERSION in sb-modes.js, commit, push, `gh release create vX.Y.Z`, then HACS `update_information` + `download` that version, then a FULL HA restart |
+| Quick deploy (testing only) | `tar czf - --exclude=__pycache__ -C custom_components sb_modes \| ssh snadboy@homeassistant "cd /config/custom_components && sudo tar xzf - && sudo rm -f sb_modes/frontend/*.gz"` then a FULL HA restart — HACS left `.gz` copies of the JS; a stale `.gz` would be served instead of the new file |
+| Public repo | NEVER commit Matter setup codes, tokens or IPs. History was scrubbed with git-filter-repo 2026-10-23 (5 codes → "(setup code in SB Device Notes)") before going public |
 
 ## Why it exists (2026-10-16/17)
 
