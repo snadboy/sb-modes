@@ -457,3 +457,14 @@ that matches on average gets its own call. A lamp that MISREPORTS (Govee app) st
 The first workday clock wake-up (06:30) dimmed the bedside bulbs from a hand-set 4 % back to 1 %:
 hand changes end with the 06:00 mode change. Both Bedroom wake-ups now use min_brightness_pct
 ("at least" 1 %, then 4 %), so they never dim a lamp someone already turned up.
+
+## Calendar trigger; thermostat for trips (0.29.0, table version 11, 2026-10-23)
+
+Lights add-on trigger {"calendar", "match", "edge": start|end, "offset_minutes"} (addons.py
+_scan every 15 min over 60 days; title matched as a whole word/tag like SB Scheduler; an edge
+missed while a rescan replaced its timer fires once, never one from before a restart).
+Dining Room add-ons: "Thermostat — away" (#vac starts → script.thermostat_away: heat_cool
+65–80 °F) and "Thermostat — coming home" (60 min before #vac ends → script.thermostat_home:
+heat_cool 70–76 °F) on climate.dining_room_dining_room_hvac. First use: Nov 13 09:00 / Nov 15
+14:00. SB Scheduler's Vacation day set only picked up the new #vac after `sb_scheduler.refresh`.
+Option 2 (phone proximity / drive time for everyday returns) = nice-to-have, not built.
