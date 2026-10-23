@@ -4,7 +4,10 @@
 
 Triggers: a clock or sun time ({"at": "06:30" | "sunset-01:00"}), a mode beginning or ending
 ({"mode_begins": [ids]} / {"mode_ends": [ids]} — a real mode change, never a restart), or a
-device reaching a state ({"entity": id, "to": state}). The When is checked as the trigger fires.
+device reaching a state ({"entity": id, "to": state}), or a calendar event starting or ending
+({"calendar": id, "match": "#vac", "edge": "start" | "end", "offset_minutes": -60} — an hour
+before a "#vac" event ends; the title must contain the match as a whole word or tag).
+The When is checked as the trigger fires.
 Step 0 runs then, the others `after_minutes` later. An action is {"targets"} (Runtime.apply: a
 held zone or a light changed by hand is left alone), {"hold", "targets"?, "flash"?},
 {"release": true, "flash"?} or {"script": "script.x"} (run under SB Modes' own context, with the
@@ -22,7 +25,9 @@ from functools import partial
 from typing import TYPE_CHECKING
 
 from homeassistant.core import CALLBACK_TYPE, Context, Event, EventStateChangedData, callback
-from homeassistant.helpers.event import async_track_point_in_time, async_track_state_change_event
+from homeassistant.helpers.event import (
+    async_track_point_in_time, async_track_state_change_event, async_track_time_interval,
+)
 from homeassistant.util import dt as dt_util
 
 from .manual import UNAVAILABLE
@@ -33,6 +38,31 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 LOOKAHEAD_DAYS = 14                                      # how far "next run" looks for a matching day
+CALENDAR_DAYS = 60                                       # how far ahead a calendar trigger looks
+CALENDAR_RESCAN = timedelta(minutes=15)                  # events can be added or moved at any time
+_TRIM = ".,;:!?()[]{}\"'"
+
+
+def title_matches(summary: str | None, match: str | None) -> bool:
+    """Whole-word / tag match on an event title, as SB Scheduler reads tags ("#vac" ≠ "#vacuum")."""
+    words = lambda t: [w for w in (x.strip(_TRIM).lower() for x in str(t or "").split()) if w]   # noqa: E731
+    needle = words(match)
+    if not needle:
+        return True
+    have = words(summary)
+    return any(have[i:i + len(needle)] == needle for i in range(len(have) - len(needle) + 1))
+
+
+def event_edge(value):
+    """An event boundary as an aware datetime: a date (all-day) is local midnight."""
+    if isinstance(value, dict):
+        value = value.get("dateTime") or value.get("date")
+    if not value:
+        return None
+    if "T" in str(value):
+        return dt_util.parse_datetime(str(value))
+    d = dt_util.parse_date(str(value))
+    return dt_util.start_of_local_day(d) if d else None
 
 
 class LightsAddon:
@@ -48,6 +78,9 @@ class LightsAddon:
                             key=lambda s: s.get("after_minutes", 0))
         self._unsubs: list[CALLBACK_TYPE] = []
         self._steps: list[tuple] = []                   # (due, unsub) of steps still to come
+        self._cal_unsub: list[CALLBACK_TYPE] = []       # the armed calendar-edge timer
+        self._cal_fired: set = set()                     # (title, time) of calendar edges already acted on
+        self._started = dt_util.utcnow()                 # edges before this (a restart) are never replayed
         self.next_run = None                             # datetime of the next time trigger, for the status
 
     # ── life cycle ───────────────────────────────────────────────────────────
@@ -57,6 +90,10 @@ class LightsAddon:
         if "at" in self.trigger:
             self._resume_time()
             self._arm_time()
+        elif self.trigger.get("calendar"):
+            self._unsubs.append(async_track_time_interval(self.rt.hass, self._calendar_scan, CALENDAR_RESCAN,
+                                                          cancel_on_shutdown=True))
+            self.rt.hass.async_create_task(self._scan(), f"sb_modes calendar trigger {self.name}")
         elif self.trigger.get("entity"):
             self._unsubs.append(async_track_state_change_event(self.rt.hass, [self.trigger["entity"]], self._state))
         elif self.trigger.get("mode_begins") or self.trigger.get("mode_ends"):
@@ -64,9 +101,10 @@ class LightsAddon:
 
     @callback
     def stop(self) -> None:
-        for u in [*self._unsubs, *(x[1] for x in self._steps)]:
+        for u in [*self._unsubs, *(x[1] for x in self._steps), *self._cal_unsub]:
             u()
         self._unsubs.clear()
+        self._cal_unsub = []
         self._steps.clear()
 
     # ── triggers ─────────────────────────────────────────────────────────────
@@ -130,6 +168,64 @@ class LightsAddon:
             names = " / ".join(self.rt.mode_name(m) or m for m in (
                 [new] if new in (self.trigger.get("mode_begins") or []) else [old]))
             self.fire(f"{names} {'begins' if new in (self.trigger.get('mode_begins') or []) else 'ended'}")
+
+    # ── calendar events ──────────────────────────────────────────────────────
+    @callback
+    def _calendar_scan(self, _now=None) -> None:
+        self.rt.hass.async_create_task(self._scan(), f"sb_modes calendar trigger {self.name}")
+
+    async def _scan(self) -> None:
+        """Find the next matching event edge (+ offset) still to come, and arm it."""
+        t, now = self.trigger, dt_util.utcnow()
+        offset = timedelta(minutes=t.get("offset_minutes") or 0)
+        try:
+            resp = await self.rt.hass.services.async_call(
+                "calendar", "get_events",
+                {"entity_id": t["calendar"], "start_date_time": (now - timedelta(days=2) - abs(offset)).isoformat(),
+                 "end_date_time": (now + timedelta(days=CALENDAR_DAYS) + abs(offset)).isoformat()},
+                blocking=True, return_response=True)
+        except Exception:  # noqa: BLE001 — a calendar not ready (boot, sync) is retried at the next scan
+            _LOGGER.debug("SB Modes: %s not readable yet for %s", t["calendar"], self.name, exc_info=True)
+            return
+        times, missed = [], []
+        for ev in ((resp or {}).get(t["calendar"]) or {}).get("events") or []:
+            if not title_matches(ev.get("summary"), t.get("match")):
+                continue
+            edge = event_edge(ev.get("end") if t.get("edge") == "end" else ev.get("start"))
+            if edge is None:
+                continue
+            at, title = dt_util.as_utc(edge + offset), ev.get("summary") or ""
+            if (title, at) in self._cal_fired:
+                continue
+            if at > now:
+                times.append((at, title))
+            elif at >= self._started:
+                missed.append((at, title))               # passed while a rescan replaced its timer
+        for at, title in sorted(missed):
+            self._calendar_fired(title, at, None)
+        for u in self._cal_unsub:
+            u()
+        self._cal_unsub = []
+        self.next_run = None
+        if times:
+            at, title = min(times)
+            self.next_run = at
+            self._cal_unsub.append(async_track_point_in_time(self.rt.hass, partial(self._calendar_fired, title, at), at))
+        self.rt.notify()
+
+    @callback
+    def _calendar_fired(self, title: str, at, _now) -> None:
+        if (title, at) in self._cal_fired:
+            return
+        self._cal_fired.add((title, at))
+        if _now is not None:
+            self._cal_unsub = []
+        t = self.trigger
+        off = t.get("offset_minutes") or 0
+        when = (f"{abs(off):g} min {'before' if off < 0 else 'after'} " if off else "") + \
+            f"“{title}” {'ends' if t.get('edge') == 'end' else 'starts'}"
+        self.fire(when)
+        self.rt.hass.async_create_task(self._scan(), f"sb_modes calendar trigger {self.name}")   # the next one
 
     @callback
     def _state(self, event: Event[EventStateChangedData]) -> None:

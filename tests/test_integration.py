@@ -1833,3 +1833,30 @@ async def test_group_checked_lamp_by_lamp(hass, kitchen, lights) -> None:
     _rt(hass).apply({GROUP: {"brightness_pct": 25, "color_temp_kelvin": 3401}}, "test", "kitchen")
     await hass.async_block_till_done()
     assert [c.data for c in lights["on"]] == [{"entity_id": CEILING, "brightness_pct": 25, "color_temp_kelvin": 3401}]
+
+
+async def test_lights_addon_before_a_calendar_event_ends(hass, kitchen, lights, freezer) -> None:
+    """'1 h before the #vac event ends' runs a script; a '#vacuum' event does not count."""
+    from homeassistant.core import SupportsResponse
+    from homeassistant.util import dt as dt_util
+    now = dt_util.utcnow()
+    events = [{"summary": "#vacuum day", "start": (now + timedelta(minutes=10)).isoformat(), "end": (now + timedelta(minutes=70)).isoformat()},
+              {"summary": "Trip #vac", "start": (now - timedelta(days=1)).isoformat(), "end": (now + timedelta(hours=2)).isoformat()}]
+    async def get_events(call):
+        return {e: {"events": events} for e in call.data["entity_id"]} if isinstance(call.data["entity_id"], list) else {call.data["entity_id"]: {"events": events}}
+    hass.services.async_register("calendar", "get_events", get_events, supports_response=SupportsResponse.ONLY)
+    hass.states.async_set("calendar.anderson", "off")
+    hass.states.async_set("script.thermostat_home", "off")
+    scripts = async_mock_service(hass, "script", "turn_on")
+    await _setup(hass)
+    t = _table()
+    t["zones"][0]["addons"] = [{"id": "home", "name": "Thermostat home", "type": "lights",
+                                "trigger": {"calendar": "calendar.anderson", "match": "#vac", "edge": "end", "offset_minutes": -60},
+                                "steps": [{"after_minutes": 0, "script": "script.thermostat_home"}]}]
+    await _save(hass, t)
+    await hass.async_block_till_done()
+    assert _st(hass, "home").startswith("next ")
+    await _tick(hass, freezer, minutes=59)
+    assert scripts == []
+    await _tick(hass, freezer, minutes=2)
+    assert [c.data["entity_id"] for c in scripts] == ["script.thermostat_home"]

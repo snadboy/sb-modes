@@ -62,9 +62,11 @@ function toAddons(z) {
   if (out.length) y.addons = out; else delete y.addons;
   return y;
 }
+const sayCal = (t, name) => { const off = t.offset_minutes || 0, h = Math.abs(off) % 60 === 0 && Math.abs(off) >= 60 ? `${Math.abs(off) / 60} h` : `${Math.abs(off)} min`;
+  return `${off ? `${h} ${off < 0 ? "before" : "after"}` : "when"} ${t.match ? `“${t.match}”` : "an event"} on ${name} ${t.edge === "end" ? "ends" : "starts"}`; };
 const ADDON_NEW = [
   ["time", "At a time of day"], ["begins", "When a mode begins"], ["ends", "When a mode ends"],
-  ["state", "When a device changes"], ["while", "TV lighting (while a device is …)"],
+  ["state", "When a device changes"], ["calendar", "Before / after a calendar event"], ["while", "TV lighting (while a device is …)"],
   ["button", "Hold / release button"], ["follow", "Follow a leader light"], ["auto_off", "Auto-off (lights turned on by hand)"],
 ];
 const KIND_LABEL = { lights: "Lights", while: "While", button: "Button", follow: "Follow", auto_off: "Auto-off" };
@@ -534,8 +536,8 @@ export class SbModesEditor extends HTMLElement {
         .map((i) => ({ cols: [i], cls: "beg", text: `${sym} ${p.then}${days ? ` · ${days}` : ""}`, title: `${t.mode_begins ? "When" : "After"} ${this._modeName(modes[i])} ${t.mode_begins ? "begins" : "ends"}: ${p.then}` }));
     }
     if (a.type === "lights") {
-      const clock = "at" in t;
-      const lead = clock ? `🕒 ${p.trigger}` : `⚡ ${p.trigger}`;
+      const clock = "at" in t || t.calendar !== undefined;
+      const lead = t.calendar !== undefined ? `📅 ${p.trigger}` : clock ? `🕒 ${p.trigger}` : `⚡ ${p.trigger}`;
       const scope = w.modes?.length ? "" : " · any mode";
       return runs(inModes, clock ? "clk" : "dev", `${lead}${days ? ` · ${days}` : ""}${scope} — ${p.then}`);
     }
@@ -694,7 +696,8 @@ export class SbModesEditor extends HTMLElement {
       w.between?.length === 2 ? `between ${this._clock(w.between[0])} and ${this._clock(w.between[1])}` : ""].filter(Boolean).join(" · ") || "any time";
     if (a.type === "lights") {
       const trigger = "at" in t ? this._clock(t.at) : t.mode_begins ? `${t.mode_begins.map((m) => this._modeName(m)).join(" or ")} begins`
-        : t.mode_ends ? `${t.mode_ends.map((m) => this._modeName(m)).join(" or ")} ends` : t.entity ? `${this._short(t.entity, zid)} becomes ${t.to || "?"}` : "not set";
+        : t.mode_ends ? `${t.mode_ends.map((m) => this._modeName(m)).join(" or ")} ends` : t.calendar !== undefined ? sayCal(t, t.calendar ? this._name(t.calendar) : "?")
+        : t.entity ? `${this._short(t.entity, zid)} becomes ${t.to || "?"}` : "not set";
       const steps = a.steps || [], script = steps.some((s) => s.script !== undefined), lights = steps.some((s) => s.script === undefined);
       return { kind: script && lights ? "Lights + script" : script ? "Script" : "Lights", trigger, when, then: (a.steps || []).map((s) => this._sayStep(s, zid)).join(" · ") || "nothing yet" };
     }
@@ -1061,24 +1064,35 @@ export class SbModesEditor extends HTMLElement {
     }
     const trig = root.querySelector('[data-form="ad-trigger"]');
     if (trig && ad) {
-      const t = ad.trigger || {}, kind = "at" in t ? "time" : t.mode_begins ? "begins" : t.mode_ends ? "ends" : t.entity !== undefined ? "state" : "time";
+      const t = ad.trigger || {}, kind = "at" in t ? "time" : t.mode_begins ? "begins" : t.mode_ends ? "ends" : t.calendar !== undefined ? "calendar" : t.entity !== undefined ? "state" : "time";
       const schema = [{ name: "kind", selector: { select: { mode: "dropdown", options: [{ value: "time", label: "A time of day" },
-        { value: "begins", label: "A mode begins" }, { value: "ends", label: "A mode ends" }, { value: "state", label: "A device reaches a state" }] } } }];
+        { value: "begins", label: "A mode begins" }, { value: "ends", label: "A mode ends" }, { value: "state", label: "A device reaches a state" },
+        { value: "calendar", label: "A calendar event starts or ends" }] } } }];
+      if (kind === "calendar") schema.push({ name: "calendar", selector: { entity: { filter: { domain: "calendar" } } } }, { name: "match", selector: { text: {} } },
+        { name: "edge", selector: { select: { mode: "dropdown", options: [{ value: "start", label: "starts" }, { value: "end", label: "ends" }] } } },
+        { name: "minutes", selector: { number: { min: 0, max: 10080, mode: "box", unit_of_measurement: "min" } } },
+        { name: "side", selector: { select: { mode: "dropdown", options: [{ value: "before", label: "before" }, { value: "after", label: "after" }] } } });
       if (kind === "time") schema.push({ name: "at", selector: { text: {} } });
       if (kind === "begins" || kind === "ends") schema.push({ name: "modes", selector: { select: { multiple: true, mode: "dropdown", options: modeOpts() } } });
       if (kind === "state") schema.push({ name: "entity", selector: { entity: {} } }, { name: "to", selector: { text: {} } });
-      trig.appendChild(this._form(schema, { kind, at: t.at || "", modes: t.mode_begins || t.mode_ends || [], entity: t.entity || "", to: t.to || "" },
+      trig.appendChild(this._form(schema, { kind, at: t.at || "", modes: t.mode_begins || t.mode_ends || [], entity: t.entity || "", to: t.to || "",
+        calendar: t.calendar || "", match: t.match || "", edge: t.edge || "start", minutes: Math.abs(t.offset_minutes || 0), side: (t.offset_minutes || 0) > 0 ? "after" : "before" },
         (v) => adEdit((x) => {
           if (v.kind !== kind) {
-            x.trigger = v.kind === "time" ? { at: "06:30" } : v.kind === "begins" ? { mode_begins: [] } : v.kind === "ends" ? { mode_ends: [] } : { entity: "", to: "on" };
+            x.trigger = v.kind === "time" ? { at: "06:30" } : v.kind === "begins" ? { mode_begins: [] } : v.kind === "ends" ? { mode_ends: [] }
+              : v.kind === "calendar" ? { calendar: "", match: "", edge: "start", offset_minutes: 0 } : { entity: "", to: "on" };
             return;
           }
           if (kind === "time") x.trigger = { at: v.at || "" };
           else if (kind === "begins") x.trigger = { mode_begins: v.modes || [] };
           else if (kind === "ends") x.trigger = { mode_ends: v.modes || [] };
+          else if (kind === "calendar") x.trigger = { calendar: v.calendar || "", match: v.match || "", edge: v.edge || "start",
+            offset_minutes: (v.side === "after" ? 1 : -1) * (Number(v.minutes) || 0) };
           else x.trigger = { entity: v.entity || "", to: v.to || "" };
-        }, v.kind !== kind), { kind: "Trigger", at: "At", modes: "Mode", entity: "Device", to: "Reaches the state" },
-        { at: "HH:MM (06:30), or sunrise / sunset ± HH:MM (sunset-01:00).", to: "As HA shows it, e.g. playing, on, open." }));
+        }, v.kind !== kind), { kind: "Trigger", at: "At", modes: "Mode", entity: "Device", to: "Reaches the state", calendar: "Calendar",
+          match: "Event title contains", edge: "When the event", minutes: "Offset", side: "Before / after" },
+        { at: "HH:MM (06:30), or sunrise / sunset ± HH:MM (sunset-01:00).", to: "As HA shows it, e.g. playing, on, open.",
+          match: "A whole word or tag, e.g. #vac. Empty = any event on that calendar.", minutes: "0 = right at the start or end." }));
     }
     root.querySelectorAll('[data-form="ad-script"]').forEach((slot) => {
       const i = Number(slot.dataset.i);
@@ -1250,13 +1264,13 @@ export class SbModesEditor extends HTMLElement {
       let id;
       this._edit((d) => {
         const x = zone(d), list = (x.addons ||= []);
-        const base = { time: "wake", begins: "begins", ends: "ends", state: "device", while: "tv", button: "button", follow: "follow", auto_off: "auto-off" }[k];
+        const base = { time: "wake", begins: "begins", ends: "ends", state: "device", calendar: "calendar", while: "tv", button: "button", follow: "follow", auto_off: "auto-off" }[k];
         id = newId(list, base);
-        const name = { time: "At a time", begins: "When a mode begins", ends: "When a mode ends", state: "When a device changes", while: "TV lighting",
+        const name = { time: "At a time", begins: "When a mode begins", ends: "When a mode ends", state: "When a device changes", calendar: "Calendar event", while: "TV lighting",
           button: "Hold button", follow: "Follow", auto_off: "Auto-off" }[k];
         const lights = (trigger) => ({ id, name, type: "lights", trigger, steps: [{ after_minutes: 0, targets: {} }] });
         list.push(k === "time" ? lights({ at: "06:30" }) : k === "begins" ? lights({ mode_begins: [] }) : k === "ends" ? lights({ mode_ends: [] })
-          : k === "state" ? lights({ entity: "", to: "on" })
+          : k === "state" ? lights({ entity: "", to: "on" }) : k === "calendar" ? lights({ calendar: "", match: "", edge: "start", offset_minutes: 0 })
           : k === "while" ? { id, name, type: "while", entity: "", states: { playing: { holds: true, targets: {} }, paused: { holds: true, targets: {} }, off: { targets: {} } } }
           : k === "button" ? { id, name, type: "button", entity: "", presses: {} }
           : k === "follow" ? { id, name, type: "follow", leader: "", bands: [{ min_pct: 50, targets: {} }, { min_pct: 0, targets: {} }] }

@@ -19,7 +19,8 @@ mode, room or entity can never be left unhandled.
 - **Add-ons.** Extra actions on top of the rule, each with a **trigger**, an optional
   **When** (modes, days, a time window) and steps that set lights (or "at least"), hold
   or release the room, or run a Home Assistant script. Triggers: a time of day, a mode
-  beginning or ending, a device reaching a state, a TV's state (*while* playing…), a
+  beginning or ending, a device reaching a state, a calendar event starting or ending
+  (± an offset — "an hour before the #vac event ends"), a TV's state (*while* playing…), a
   button press. Built-in add-ons: **follow** a leader light, **auto-off** for lamps
   turned on by hand.
 - **People win.** A light changed by hand is left alone until the room has been empty

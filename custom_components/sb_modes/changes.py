@@ -333,6 +333,11 @@ def _trigger_txt(t: Any, name_of, mode_name) -> str:
         return " or ".join(mode_name(m) for m in t["mode_begins"]) + " begins"
     if t.get("mode_ends"):
         return " or ".join(mode_name(m) for m in t["mode_ends"]) + " ends"
+    if t.get("calendar"):
+        off = t.get("offset_minutes") or 0
+        lead = f"{abs(off):g} min {'before' if off < 0 else 'after'} " if off else "when "
+        what = f"“{t['match']}” on {name_of(t['calendar'])}" if t.get("match") else f"an event on {name_of(t['calendar'])}"
+        return f"{lead}{what} {'ends' if t.get('edge') == 'end' else 'starts'}"
     if t.get("entity"):
         return f"{name_of(t['entity'])} becomes {t.get('to', '?')}"
     return NONE

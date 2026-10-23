@@ -605,13 +605,26 @@ def _check_lights_addon(a, at, ids, state_of, errors, warnings) -> None:
             for m in modes or []:
                 if m not in ids:
                     errors.append(f"{at}: trigger names mode “{m}”, which is not defined.")
+        elif "calendar" in trig:
+            cal = trig["calendar"]
+            if not isinstance(cal, str) or not cal.startswith("calendar."):
+                errors.append(f"{at}: choose a calendar.")
+            elif state_of(cal) is None:
+                errors.append(f"{at}: {cal} does not exist.")
+            if trig.get("edge", "start") not in ("start", "end"):
+                errors.append(f"{at}: the event's start or end.")
+            off = trig.get("offset_minutes", 0)
+            if not _num(off, -10080, 10080):
+                errors.append(f"{at}: offset must be within a week (−10080…10080 min).")
+            if "match" in trig and not isinstance(trig["match"], str):
+                errors.append(f"{at}: the title match must be text.")
         elif "entity" in trig:
             if not isinstance(trig["entity"], str) or state_of(trig["entity"]) is None:
                 errors.append(f"{at}: {trig.get('entity')} does not exist.")
             if not isinstance(trig.get("to"), str) or not trig["to"]:
                 errors.append(f"{at}: choose the state that triggers it.")
         else:
-            errors.append(f"{at}: choose a trigger (a time, a mode beginning or ending, or a device's state).")
+            errors.append(f"{at}: choose a trigger (a time, a mode beginning or ending, a device's state, or a calendar event).")
     steps = a.get("steps")
     if not isinstance(steps, list) or not steps:
         with _sub("steps"):

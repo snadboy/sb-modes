@@ -11,7 +11,7 @@
  *
  * Rows use the shared SB row style (window.SBKit, from the SB UI Kit integration).
  */
-const VERSION = "0.28.0";
+const VERSION = "0.29.0";
 const CARD = "sb-modes-card";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -506,7 +506,9 @@ class SbModesCard extends HTMLElement {
     let what;
     if (x.type === "lights") {
       const trig = "at" in t ? `at ${fmtTimes(t.at)}` : t.mode_begins ? `when ${t.mode_begins.map(mn).join(" or ")} begins`
-        : t.mode_ends ? `when ${t.mode_ends.map(mn).join(" or ")} ends` : t.entity ? `when ${this._name(t.entity)} becomes ${t.to}` : "";
+        : t.mode_ends ? `when ${t.mode_ends.map(mn).join(" or ")} ends`
+        : t.calendar ? `${t.offset_minutes ? `${Math.abs(t.offset_minutes)} min ${t.offset_minutes < 0 ? "before" : "after"}` : "when"} ${t.match ? `“${t.match}”` : "an event"} on ${this._name(t.calendar)} ${t.edge === "end" ? "ends" : "starts"}`
+        : t.entity ? `when ${this._name(t.entity)} becomes ${t.to}` : "";
       what = `${trig}: ` + (x.steps || []).map((st) => `${st.after_minutes ? `+${st.after_minutes} min ` : ""}${
         st.script ? `run ${this._name(st.script)}` : st.release || "hold" in st ? this._buttonAct(st) : this._targets(st.targets)}`).join(" · ");
     } else if (x.type === "while") {
