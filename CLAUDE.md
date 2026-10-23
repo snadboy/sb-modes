@@ -449,3 +449,9 @@ colour. Separately, a colour set in the Govee app may not reach Matter: the east
 (3600 K, then 3401 K) fixed it. User chose "check, then send if necessary" (0.27.10): light groups
 are checked and set lamp by lamp (driver.members / needs), so a lamp that differs from a group
 that matches on average gets its own call. A lamp that MISREPORTS (Govee app) still can't be caught.
+
+## Table version 9 (2026-10-23): wake-ups only ever raise
+
+The first workday clock wake-up (06:30) dimmed the bedside bulbs from a hand-set 4 % back to 1 %:
+hand changes end with the 06:00 mode change. Both Bedroom wake-ups now use min_brightness_pct
+("at least" 1 %, then 4 %), so they never dim a lamp someone already turned up.
