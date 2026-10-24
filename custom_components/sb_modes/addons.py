@@ -131,6 +131,10 @@ class LightsAddon:
             self._jitter[day] = random.uniform(-r, r)
         return at + timedelta(minutes=self._jitter[day])
 
+    def _modes_ok(self) -> bool:
+        """The When's modes, in the house's mode now (a lived-in add-on outside Away: nothing to resume)."""
+        return not self.when.get("modes") or self.rt.mode in self.when["modes"]
+
     def _days_ok(self, at) -> bool:
         """The When's days and window at `at` (the mode is checked when it fires)."""
         return when_matches(self.rt.config, {k: v for k, v in self.when.items() if k != "modes"}, None,
@@ -165,7 +169,7 @@ class LightsAddon:
     def _resume_time(self) -> None:
         """A restart inside today's sequence: arm the steps still to come."""
         at = self._occurrence(dt_util.now().date())
-        if at is not None and at <= dt_util.now() and self._days_ok(at):
+        if at is not None and at <= dt_util.now() and self._days_ok(at) and self._modes_ok():
             self._arm_steps(dt_util.as_utc(at), skip_first=True)
 
     @callback
@@ -318,6 +322,8 @@ class LightsAddon:
             return "off"
         if self._steps:
             return "running"
+        if not self._modes_ok():
+            return "only in " + ", ".join(self.rt.mode_name(m) or m for m in self.when["modes"])
         if self.next_run is not None:
             return "next " + dt_util.as_local(self.next_run).strftime("%a %d %H:%M")
         return ""

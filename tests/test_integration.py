@@ -1934,3 +1934,19 @@ async def test_replay_plays_last_weeks_changes(hass, kitchen, lights, freezer, m
     hass.states.async_set(SINK, "on", {"brightness": 128}, context=Context(id=_rt(hass).own_contexts[-1]))
     await _tick(hass, freezer, minutes=10)
     assert [c.data["entity_id"] for c in lights["off"]] == [SINK]
+
+
+async def test_time_addon_outside_its_modes_does_not_resume(hass, kitchen, lights, freezer) -> None:
+    """A lived-in add-on (When: Away) loaded after its time today, in another mode, arms nothing."""
+    from homeassistant.util import dt as dt_util
+    at = (dt_util.now() - timedelta(minutes=30)).strftime("%H:%M")
+    await _setup(hass)
+    t = _table()
+    t["zones"][0]["addons"] = [{"id": "lit", "name": "Lived-in", "type": "lights", "when": {"modes": ["overnight"]}, "trigger": {"at": at},
+                                "steps": [{"after_minutes": 0, "targets": {SINK: {"brightness_pct": 40}}},
+                                          {"after_minutes": 60, "targets": {SINK: {"state": "off"}}}]}]
+    await _mode(hass, "day")
+    await _save(hass, t)
+    assert _st(hass, "lit") == "only in Overnight"
+    await _tick(hass, freezer, minutes=45)
+    assert lights["off"] == []
