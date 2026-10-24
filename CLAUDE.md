@@ -492,3 +492,9 @@ same at dim values (mini rack 20 %, desk 8 %, floor lamps 8 %, Mova 12 %, all 27
 96 / 30); double-press either → release. Confirmation blinks only the desk bulb (new
 `flash_lights` on a press action). Bedside BILRESAs stay on the snadboy/bilresa-dual-button-light
 blueprint (tap ladder + hold ramp); their double-press is free for SB Modes if wanted.
+
+## Laundry Room: door FP300 only (table version 16, 2026-10-24)
+
+The Laundry Room furnace FP300 reported "occupied" non-stop from 12:21 to 15:4x (10 s hold, alive —
+temperature/lux kept reporting) and held the light on; user: "the furnace sensor seems broken".
+laundry_room `occupancy` = [door FP300] only. Re-add the furnace FP300 once it is fixed or replaced.
