@@ -469,3 +469,17 @@ heat_cool 70–76 °F) on climate.dining_room_dining_room_hvac. First use: Nov 1
 14:00. SB Scheduler's Vacation day set only picked up the new #vac after `sb_scheduler.refresh`.
 Option 2 (phone proximity / drive time for everyday returns) = nice-to-have, not built.
 Table version 12 (2026-10-23): the Day-off wake-up no longer runs on Vacation days (house empty).
+
+## Away mode and the lived-in look (0.30.x, table version 13, 2026-10-23)
+
+New add-on pieces: steps {set_mode, hold} / {resume_schedule}; "random_minutes" on a time
+trigger (±N, one draw per day) and on a step (+0…N); type "replay" (replay.py: every 30 min reads
+the recorder for the next 40 min, N days back, and schedules each on/off/brightness change).
+LightsAddon.start() now re-arms the trigger WITHOUT cancelling steps under way (the hourly
+calendar refresh had cut sequences short); stop() is the full teardown. 0.30.1: a time add-on
+whose When names modes resumes nothing at start-up outside them; status "only in <mode>".
+Table v13: mode `away` (mdi:airplane, never scheduled); every room's rule in Away = hands_off.
+Dining Room: "Away mode on" (#vac starts → all house lights off, then set_mode away paused) and
+"Away mode off" (#vac ends → resume_schedule). Lived-in pattern add-ons (When: Away) in
+Kitchen, Dining, Living, Office, Bedroom, Upstairs Hallway; a "Lived-in replay" (7 days back)
+per room, switched OFF — the user can flip pattern ↔ replay per room.
