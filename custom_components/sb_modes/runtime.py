@@ -37,6 +37,7 @@ from .bookkeeping import Keeper, describe_hold, release_delay
 from .follow import Follower
 from .autooff import AutoOff
 from .addons import LightsAddon
+from .replay import ReplayAddon
 from .buttons import Buttons
 from .overlay import Overlay
 from . import presence
@@ -446,6 +447,7 @@ class Runtime:
         for lst in list(self._lights_addons.values()):  # add-ons triggered by a mode beginning / ending
             for a in lst:
                 a.mode_changed(old, mode_id)
+        self.notify()
         return True
 
     @callback
@@ -608,8 +610,9 @@ class Runtime:
                 f = Follower(self, zone, follows[0])
                 self._followers[zid] = f
                 f.start()
-            if lights := of("lights"):
-                self._lights_addons[zid] = [LightsAddon(self, zone, a) for a in lights]
+            runners = [LightsAddon(self, zone, a) for a in of("lights")] + [ReplayAddon(self, zone, a) for a in of("replay")]
+            if runners:
+                self._lights_addons[zid] = runners
 
     @callback
     def _occupancy_changed(self, _event) -> None:

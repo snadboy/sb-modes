@@ -328,7 +328,7 @@ def _hold_txt(act: Any, name_of) -> str:
 def _trigger_txt(t: Any, name_of, mode_name) -> str:
     t = t if isinstance(t, dict) else {}
     if "at" in t:
-        return f"at {_at(t['at'])}"
+        return f"at {_at(t['at'])}" + (f" ±{t['random_minutes']:g} min" if t.get("random_minutes") else "")
     if t.get("mode_begins"):
         return " or ".join(mode_name(m) for m in t["mode_begins"]) + " begins"
     if t.get("mode_ends"):
@@ -357,10 +357,18 @@ def _when_txt(w: Any, mode_name, day_name=lambda d: d) -> str:
     return " · ".join(parts)
 
 
-def _step_txt(st: Any, name_of) -> str:
+def _step_txt(st: Any, name_of, mode_name=lambda m: m) -> str:
     if not isinstance(st, dict):
         return str(st)
     lead = f"+{st['after_minutes']:g} min " if st.get("after_minutes") else ""
+    if st.get("random_minutes"):
+        lead = f"+{st.get('after_minutes', 0):g}–{st.get('after_minutes', 0) + st['random_minutes']:g} min "
+    if st.get("set_mode"):
+        h = st.get("hold", "paused")
+        until = {"paused": "until released", "next": "until the next scheduled change"}.get(h, f"for {h} min")
+        return f"{lead}house mode {mode_name(st['set_mode'])} {until}"
+    if st.get("resume_schedule"):
+        return f"{lead}back on schedule"
     if st.get("script"):
         return f"{lead}run {st['script']}"
     if "hold" in st or st.get("release"):
@@ -372,7 +380,7 @@ def addon_summary(a: dict, name_of=lambda e: e, mode_name=lambda m: m, day_name=
     """One line for an add-on instance: what triggers it, when, and what it does."""
     kind = a.get("type")
     if kind == "lights":
-        txt = f"{_trigger_txt(a.get('trigger'), name_of, mode_name)} → " + " · ".join(_step_txt(s, name_of) for s in a.get("steps") or [])
+        txt = f"{_trigger_txt(a.get('trigger'), name_of, mode_name)} → " + " · ".join(_step_txt(s, name_of, mode_name) for s in a.get("steps") or [])
     elif kind == "while":
         txt = f"while {name_of(a.get('entity') or '?')} is " + ", ".join(
             f"{st}{' (holds)' if (c or {}).get('holds') else ''}" for st, c in (a.get("states") or {}).items())
@@ -383,6 +391,8 @@ def addon_summary(a: dict, name_of=lambda e: e, mode_name=lambda m: m, day_name=
         txt = f"follows {name_of(a.get('leader') or '?')} ({len(a.get('bands') or [])} bands)"
     elif kind == "auto_off":
         txt = _auto(a, name_of)
+    elif kind == "replay":
+        txt = f"{_names(a.get('lights'), name_of)} replay {a.get('days_back', 7):g} days ago"
     else:
         txt = str(kind)
     when = _when_txt(a.get("when"), mode_name, day_name)

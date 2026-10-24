@@ -1860,3 +1860,77 @@ async def test_lights_addon_before_a_calendar_event_ends(hass, kitchen, lights, 
     assert scripts == []
     await _tick(hass, freezer, minutes=2)
     assert [c.data["entity_id"] for c in scripts] == ["script.thermostat_home"]
+
+
+def _calendar(hass, events):
+    from homeassistant.core import SupportsResponse
+    async def get_events(call):
+        ids = call.data["entity_id"] if isinstance(call.data["entity_id"], list) else [call.data["entity_id"]]
+        return {e: {"events": events} for e in ids}
+    hass.services.async_register("calendar", "get_events", get_events, supports_response=SupportsResponse.ONLY)
+    hass.states.async_set("calendar.anderson", "off")
+
+
+async def test_mode_steps_from_a_calendar_event(hass, kitchen, lights, freezer) -> None:
+    """'#vac' starts → the house goes to a mode until released; it ends → back on schedule."""
+    from homeassistant.util import dt as dt_util
+    now = dt_util.utcnow()
+    _calendar(hass, [{"summary": "#vac", "start": (now + timedelta(minutes=30)).isoformat(), "end": (now + timedelta(hours=3)).isoformat()}])
+    await _setup(hass)
+    t = _table()
+    cal = lambda edge: {"calendar": "calendar.anderson", "match": "#vac", "edge": edge, "offset_minutes": 0}   # noqa: E731
+    t["zones"][0]["addons"] = [
+        {"id": "away", "name": "Away", "type": "lights", "trigger": cal("start"), "steps": [{"after_minutes": 0, "set_mode": "overnight", "hold": "paused"}]},
+        {"id": "back", "name": "Back", "type": "lights", "trigger": cal("end"), "steps": [{"after_minutes": 0, "resume_schedule": True}]}]
+    await _save(hass, t)
+    await _mode(hass, "day")
+    await _tick(hass, freezer, minutes=31)
+    assert _sel(hass).state == "overnight"
+    await _tick(hass, freezer, hours=3)
+    assert _sel(hass).attributes.get("manual") in (None, {}) or _sel(hass).state != "overnight"
+
+
+async def test_time_trigger_random_shift(hass, kitchen, lights, freezer, monkeypatch) -> None:
+    from homeassistant.util import dt as dt_util
+    import custom_components.sb_modes.addons as ad
+    monkeypatch.setattr(ad.random, "uniform", lambda a, b: b)              # always the latest
+    await _setup(hass)
+    at = (dt_util.now() + timedelta(minutes=5)).strftime("%H:%M")
+    t = _table()
+    t["zones"][0]["addons"] = [{"id": "lit", "name": "Lived-in", "type": "lights", "trigger": {"at": at, "random_minutes": 10},
+                                "steps": [{"after_minutes": 0, "targets": {SINK: {"brightness_pct": 40}}},
+                                          {"after_minutes": 30, "random_minutes": 20, "targets": {SINK: {"state": "off"}}}]}]
+    await _save(hass, t)
+    await _tick(hass, freezer, minutes=14)
+    assert lights["on"] == []                                               # 5 + 10 min: not yet
+    await _tick(hass, freezer, minutes=2)
+    assert [c.data.get("brightness_pct") for c in lights["on"]] == [40]
+    hass.states.async_set(SINK, "on", {"brightness": 102}, context=Context(id=_rt(hass).own_contexts[-1]))
+    await _tick(hass, freezer, minutes=49)
+    assert lights["off"] == []                                              # 30 + 20 min later
+    await _tick(hass, freezer, minutes=2)
+    assert [c.data["entity_id"] for c in lights["off"]] == [SINK]
+
+
+async def test_replay_plays_last_weeks_changes(hass, kitchen, lights, freezer, monkeypatch) -> None:
+    from homeassistant.core import State
+    from homeassistant.util import dt as dt_util
+    import custom_components.sb_modes.replay as rp
+    now = dt_util.utcnow()
+    week = timedelta(days=7)
+    recorded = {SINK: [State(SINK, "on", {"brightness": 128}, last_changed=now - week + timedelta(minutes=10)),
+                       State(SINK, "off", {}, last_changed=now - week + timedelta(minutes=20))]}
+    async def history(self, start, end):
+        return {e: [s for s in v if start <= s.last_changed <= end] for e, v in recorded.items()}
+    monkeypatch.setattr(rp.ReplayAddon, "history", history)
+    await _setup(hass)
+    t = _table()
+    t["zones"][0]["addons"] = [{"id": "rp", "name": "Replay", "type": "replay", "lights": [SINK], "days_back": 7, "when": {"modes": ["evening"]}}]
+    await _save(hass, t)
+    await _mode(hass, "evening")
+    await hass.async_block_till_done()
+    await _tick(hass, freezer, minutes=11)
+    assert [c.data.get("brightness_pct") for c in lights["on"]] == [50]
+    hass.states.async_set(SINK, "on", {"brightness": 128}, context=Context(id=_rt(hass).own_contexts[-1]))
+    await _tick(hass, freezer, minutes=10)
+    assert [c.data["entity_id"] for c in lights["off"]] == [SINK]

@@ -10,8 +10,11 @@ before a "#vac" event ends; the title must contain the match as a whole word or 
 The When is checked as the trigger fires.
 Step 0 runs then, the others `after_minutes` later. An action is {"targets"} (Runtime.apply: a
 held zone or a light changed by hand is left alone), {"hold", "targets"?, "flash"?},
-{"release": true, "flash"?} or {"script": "script.x"} (run under SB Modes' own context, with the
-room, mode and who is there as variables).
+{"release": true, "flash"?}, {"script": "script.x"} (run under SB Modes' own context, with the
+room, mode and who is there as variables), {"set_mode": id, "hold": "paused" | "next" | minutes}
+or {"resume_schedule": true}. A step's "random_minutes" adds 0…N minutes to its delay; a time
+trigger's "random_minutes" moves each day's time by up to ±N (the lived-in look). A mode step
+restarts the add-ons like any mode change, so it should be an add-on's last step.
 
 After a restart, the steps still to come of a sequence that began before it are re-armed;
 nothing already past is replayed.
@@ -20,6 +23,7 @@ nothing already past is replayed.
 from __future__ import annotations
 
 import logging
+import random
 from datetime import timedelta
 from functools import partial
 from typing import TYPE_CHECKING
@@ -81,14 +85,22 @@ class LightsAddon:
         self._cal_unsub: list[CALLBACK_TYPE] = []       # the armed calendar-edge timer
         self._cal_fired: set = set()                     # (title, time) of calendar edges already acted on
         self._started = dt_util.utcnow()                 # edges before this (a restart) are never replayed
+        self._jitter: dict = {}                          # date → this day's random shift (minutes)
         self.next_run = None                             # datetime of the next time trigger, for the status
 
     # ── life cycle ───────────────────────────────────────────────────────────
     @callback
     def start(self) -> None:
-        self.stop()
+        """(Re)arm the trigger. Steps already under way are kept: a mode change or the hourly
+        calendar refresh must not cut a sequence short (a lived-in "off" due at 21:40)."""
+        for u in [*self._unsubs, *self._cal_unsub]:
+            u()
+        self._unsubs.clear()
+        self._cal_unsub = []
+        first, self._armed_once = not getattr(self, "_armed_once", False), True
         if "at" in self.trigger:
-            self._resume_time()
+            if first:
+                self._resume_time()
             self._arm_time()
         elif self.trigger.get("calendar"):
             self._unsubs.append(async_track_time_interval(self.rt.hass, self._calendar_scan, CALENDAR_RESCAN,
@@ -96,11 +108,12 @@ class LightsAddon:
             self.rt.hass.async_create_task(self._scan(), f"sb_modes calendar trigger {self.name}")
         elif self.trigger.get("entity"):
             self._unsubs.append(async_track_state_change_event(self.rt.hass, [self.trigger["entity"]], self._state))
-        elif self.trigger.get("mode_begins") or self.trigger.get("mode_ends"):
+        elif (self.trigger.get("mode_begins") or self.trigger.get("mode_ends")) and first:
             self._resume_mode()
 
     @callback
     def stop(self) -> None:
+        """Everything off — the add-on is being removed (a table reload, shutdown)."""
         for u in [*self._unsubs, *(x[1] for x in self._steps), *self._cal_unsub]:
             u()
         self._unsubs.clear()
@@ -110,7 +123,13 @@ class LightsAddon:
     # ── triggers ─────────────────────────────────────────────────────────────
     def _occurrence(self, day):
         when = parse_when(self.trigger.get("at"))
-        return _when_on(day, when, dt_util.get_default_time_zone(), self.rt.sun) if when else None
+        at = _when_on(day, when, dt_util.get_default_time_zone(), self.rt.sun) if when else None
+        r = self.trigger.get("random_minutes") or 0
+        if at is None or not r:
+            return at
+        if day not in self._jitter:                       # one draw per day, kept, so the time is stable
+            self._jitter[day] = random.uniform(-r, r)
+        return at + timedelta(minutes=self._jitter[day])
 
     def _days_ok(self, at) -> bool:
         """The When's days and window at `at` (the mode is checked when it fires)."""
@@ -250,7 +269,7 @@ class LightsAddon:
         now = dt_util.utcnow()
         total = len(self.steps)
         for n, step in enumerate(self.steps, 1):
-            due = began + timedelta(minutes=step.get("after_minutes", 0))
+            due = began + timedelta(minutes=step.get("after_minutes", 0) + random.uniform(0, step.get("random_minutes") or 0))
             label = f"{self.name}" + (f", step {n} of {total}" if total > 1 else "") + (f" ({why})" if why and n == 1 else "")
             if due <= now:
                 if not skip_first:
@@ -279,6 +298,14 @@ class LightsAddon:
             rt.hass.async_create_task(rt.hass.services.async_call(
                 "script", "turn_on", {"entity_id": step["script"], "variables": variables}, context=ctx),
                 f"sb_modes addon script {step['script']}")
+            return
+        if step.get("set_mode"):
+            rt.log("command", self.zone_id, f"{label} → house mode {rt.mode_name(step['set_mode']) or step['set_mode']}")
+            rt.set_mode(step["set_mode"], step.get("hold", "paused"))
+            return
+        if step.get("resume_schedule"):
+            rt.log("command", self.zone_id, f"{label} → back on schedule")
+            rt.resume_schedule()
             return
         if "hold" in step or step.get("release"):
             rt.hold_or_release(self.zone_id, step, by=self.name)

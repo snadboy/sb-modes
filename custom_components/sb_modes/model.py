@@ -315,12 +315,13 @@ def next_change(config: dict, now, in_set=None, sun=None):
 # type "button":   "entity" (an event entity), "presses" {event type: hold/release action}
 # type "follow":   "leader", "bands"
 # type "auto_off": "lights", "with_empty", "on_minutes"
+# type "replay":   "lights", "days_back" (7) — the lights do what they did that many days ago
 # "when" (all optional, all must match): "modes" [ids], "days" / "not_days" [day type ids or SB
 # Scheduler day set ids], "between" ["HH:MM", "HH:MM"] (may cross midnight).
 # Older tables kept one of each as zone keys (overlay, buttons, follow, auto_off, wake_up) plus
 # on_enter; zone_addons() converts those on read, so every version still loads.
 
-ADDON_TYPES = ("lights", "while", "button", "follow", "auto_off")
+ADDON_TYPES = ("lights", "while", "button", "follow", "auto_off", "replay")
 LEGACY_ADDON_KEYS = ("overlay", "buttons", "follow", "auto_off", "wake_up", "on_enter")
 
 

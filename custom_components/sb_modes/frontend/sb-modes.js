@@ -11,7 +11,7 @@
  *
  * Rows use the shared SB row style (window.SBKit, from the SB UI Kit integration).
  */
-const VERSION = "0.29.0";
+const VERSION = "0.30.0";
 const CARD = "sb-modes-card";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -510,7 +510,8 @@ class SbModesCard extends HTMLElement {
         : t.calendar ? `${t.offset_minutes ? `${Math.abs(t.offset_minutes)} min ${t.offset_minutes < 0 ? "before" : "after"}` : "when"} ${t.match ? `“${t.match}”` : "an event"} on ${this._name(t.calendar)} ${t.edge === "end" ? "ends" : "starts"}`
         : t.entity ? `when ${this._name(t.entity)} becomes ${t.to}` : "";
       what = `${trig}: ` + (x.steps || []).map((st) => `${st.after_minutes ? `+${st.after_minutes} min ` : ""}${
-        st.script ? `run ${this._name(st.script)}` : st.release || "hold" in st ? this._buttonAct(st) : this._targets(st.targets)}`).join(" · ");
+        st.set_mode ? `house → ${mn(st.set_mode)}` : st.resume_schedule ? "back on schedule"
+        : st.script ? `run ${this._name(st.script)}` : st.release || "hold" in st ? this._buttonAct(st) : this._targets(st.targets)}`).join(" · ");
     } else if (x.type === "while") {
       what = `while ${this._name(x.entity)} is ` + Object.entries(x.states || {})
         .map(([st, c]) => `${st} → ${this._targets(c.targets || {}) || "nothing"}${c.holds ? " (holds the room)" : ""}`).join(" · ");
@@ -519,6 +520,8 @@ class SbModesCard extends HTMLElement {
     } else if (x.type === "follow") {
       what = `follows ${this._name(x.leader)}: ` + [...(x.bands || [])].sort((p, q) => (q.min_pct || 0) - (p.min_pct || 0))
         .map((b) => `${b.min_pct ? `≥${b.min_pct}%` : "off / low"} → ${this._targets(b.targets)}`).join(" · ");
+    } else if (x.type === "replay") {
+      what = `${(x.lights || []).map((e) => this._name(e)).join(", ")} repeat what they did ${x.days_back || 7} days ago`;
     } else {
       what = `${(x.lights || []).map((e) => this._name(e)).join(", ")} off${x.with_empty ? " with the empty setting" : ""}${x.on_minutes ? `${x.with_empty ? ", or" : ""} once on ${x.on_minutes} min with the room empty` : ""}`;
     }

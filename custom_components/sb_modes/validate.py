@@ -552,6 +552,16 @@ def _check_addons(config, zone, i, where, ids, names, state_of, errors, warnings
                         _check_param(band.get("targets"), {"type": "targets"}, f"{at}, band {b}", state_of, errors, warnings)
                         if a["leader"] in (band.get("targets") or {}):
                             errors.append(f"{at}, band {b}: the leader cannot follow itself.")
+        elif kind == "replay":
+            if not isinstance(a.get("lights"), list) or not a["lights"]:
+                with _sub("lights"):
+                    errors.append(f"{at}: list the lights it replays.")
+            else:
+                for eid in a["lights"]:
+                    with _sub("lights"):
+                        _check_entity(eid, ["light", "switch"], at, state_of, errors, warnings)
+            if "days_back" in a and not _num(a["days_back"], 1, 9):
+                errors.append(f"{at}: days back must be 1–9 (the recorder keeps 10 days).")
         elif kind == "auto_off":
             if not isinstance(a.get("lights"), list) or not a["lights"]:
                 with _sub("lights"):
@@ -598,6 +608,8 @@ def _check_lights_addon(a, at, ids, state_of, errors, warnings) -> None:
         elif "at" in trig:
             if parse_when(trig["at"]) is None:
                 errors.append(f"{at}: {trig['at']!r} is not a time (HH:MM, or sunrise / sunset ± HH:MM).")
+            if "random_minutes" in trig and not _num(trig["random_minutes"], 0, 240):
+                errors.append(f"{at}: random variation must be 0–240 min.")
         elif "mode_begins" in trig or "mode_ends" in trig:
             modes = trig.get("mode_begins") or trig.get("mode_ends")
             if not isinstance(modes, list) or not modes:
@@ -638,6 +650,20 @@ def _check_lights_addon(a, at, ids, state_of, errors, warnings) -> None:
                 continue
             if not _num(st.get("after_minutes", 0), 0, 1440):
                 errors.append(f"{sat}: after_minutes must be 0–1440.")
+            if "random_minutes" in st and not _num(st["random_minutes"], 0, 1440):
+                errors.append(f"{sat}: random extra time must be 0–1440 min.")
+            if "set_mode" in st or "resume_schedule" in st:
+                if "set_mode" in st and "resume_schedule" in st:
+                    errors.append(f"{sat}: choose one action — set the house mode or resume the schedule.")
+                elif "set_mode" in st:
+                    if st["set_mode"] not in ids:
+                        errors.append(f"{sat}: mode “{st['set_mode']}” is not defined.")
+                    h = st.get("hold", "paused")
+                    if not (h in ("next", "paused") or (isinstance(h, int) and not isinstance(h, bool) and 1 <= h <= 10080)):
+                        errors.append(f"{sat}: hold the mode until released, until the next scheduled change, or for 1–10080 minutes.")
+                elif st["resume_schedule"] is not True:
+                    errors.append(f"{sat}: resume_schedule must be true.")
+                continue
             acts = [x for x in ("targets", "hold", "release", "script") if x in st]
             if "hold" in st and "targets" in st:
                 acts.remove("targets")

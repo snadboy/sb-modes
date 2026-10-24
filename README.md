@@ -21,8 +21,10 @@ mode, room or entity can never be left unhandled.
   or release the room, or run a Home Assistant script. Triggers: a time of day, a mode
   beginning or ending, a device reaching a state, a calendar event starting or ending
   (± an offset — "an hour before the #vac event ends"), a TV's state (*while* playing…), a
-  button press. Built-in add-ons: **follow** a leader light, **auto-off** for lamps
-  turned on by hand.
+  button press. Steps can also set the house mode or resume the schedule, and times and
+  steps can vary at random. Built-in add-ons: **follow** a leader light, **auto-off** for
+  lamps turned on by hand, and **replay**, where lights repeat what they did a week ago
+  (a lived-in look while away).
 - **People win.** A light changed by hand is left alone until the room has been empty
   for its delay; a light turned off by hand stays off until someone comes back. A room
   can be **held** (for minutes, until the next mode, or until released).

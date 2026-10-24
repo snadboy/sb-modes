@@ -64,12 +64,14 @@ function toAddons(z) {
 }
 const sayCal = (t, name) => { const off = t.offset_minutes || 0, h = Math.abs(off) % 60 === 0 && Math.abs(off) >= 60 ? `${Math.abs(off) / 60} h` : `${Math.abs(off)} min`;
   return `${off ? `${h} ${off < 0 ? "before" : "after"}` : "when"} ${t.match ? `“${t.match}”` : "an event"} on ${name} ${t.edge === "end" ? "ends" : "starts"}`; };
+const MODE_HOLDS = [["paused", "until released (or a resume step)"], ["next", "until the next scheduled change"], ["m60", "for 1 hour"], ["m240", "for 4 hours"]];
 const ADDON_NEW = [
   ["time", "At a time of day"], ["begins", "When a mode begins"], ["ends", "When a mode ends"],
   ["state", "When a device changes"], ["calendar", "Before / after a calendar event"], ["while", "TV lighting (while a device is …)"],
   ["button", "Hold / release button"], ["follow", "Follow a leader light"], ["auto_off", "Auto-off (lights turned on by hand)"],
+  ["replay", "Replay a past day (lived-in look)"],
 ];
-const KIND_LABEL = { lights: "Lights", while: "While", button: "Button", follow: "Follow", auto_off: "Auto-off" };
+const KIND_LABEL = { lights: "Lights", while: "While", button: "Button", follow: "Follow", auto_off: "Auto-off", replay: "Replay" };
 const PRESS = { multi_press_1: "Press", multi_press_2: "Double press", multi_press_3: "Triple press", long_press: "Hold", long_release: "Hold (on release)" };
 const HOLD_OPTS = [["m15", "hold 15 min"], ["m30", "hold 30 min"], ["m60", "hold 60 min"], ["next", "hold until the next mode"], ["paused", "hold until released"]];
 const holdKey = (a) => !a ? "" : a === "release" || a.release ? "release" : a.hold === "next" ? "next" : a.hold === "paused" ? "paused" : a.hold != null ? `m${a.hold}` : "";
@@ -542,6 +544,7 @@ export class SbModesEditor extends HTMLElement {
       return runs(inModes, clock ? "clk" : "dev", `${lead}${days ? ` · ${days}` : ""}${scope} — ${p.then}`);
     }
     const what = a.type === "while" ? p.trigger.replace(" …", ": ") + Object.keys(a.states || {}).join(", ")
+      : a.type === "replay" ? `↺ ${(a.lights || []).length} light${(a.lights || []).length === 1 ? "" : "s"} as ${a.days_back || 7} days ago`
       : a.type === "button" ? `${p.trigger}: ${Object.entries(a.presses || {}).map(([et, act]) => `${(PRESS[et] || et).toLowerCase()} → ${
         act === "release" || act?.release ? "release" : act?.hold === "next" ? "hold until next mode" : act?.hold === "paused" ? "hold until released" : `hold ${act?.hold} min`}`).join(" · ")}` : a.type === "follow" ? `follows ${a.leader ? this._short(a.leader, zid) : "?"}` : p.then;
     return runs(inModes, "on", `● ${what}${days ? ` · ${days}` : ""}`);
@@ -681,7 +684,9 @@ export class SbModesEditor extends HTMLElement {
     return this._types().find((t) => t.id === id)?.name || (this._schema.day_sets || []).find((s) => s.id === id)?.name || id;
   }
   _sayStep(st, zid) {
-    const lead = st.after_minutes ? `+${st.after_minutes} min ` : "";
+    const lead = st.random_minutes ? `+${st.after_minutes || 0}–${(st.after_minutes || 0) + st.random_minutes} min ` : st.after_minutes ? `+${st.after_minutes} min ` : "";
+    if (st.set_mode) return `${lead}house → ${this._modeName(st.set_mode)} ${MODE_HOLDS.find(([k]) => k === holdKey({ hold: st.hold ?? "paused" }))?.[1] || ""}`.trim();
+    if (st.resume_schedule) return `${lead}back on schedule`;
     if (st.script) return `${lead}run ${this._name(st.script)}`;
     if (st.release) return `${lead}release${st.flash ? `, flash ×${st.flash}` : ""}`;
     if ("hold" in st) return `${lead}${HOLD_OPTS.find(([k]) => k === holdKey(st))?.[1] || `hold ${st.hold} min`}${st.targets && Object.keys(st.targets).length ? `, ${this._sayTargets(st.targets, zid)}` : ""}`;
@@ -711,6 +716,10 @@ export class SbModesEditor extends HTMLElement {
     }
     if (a.type === "follow") {
       return { kind: "Follow", trigger: `${a.leader ? this._short(a.leader, zid) : "?"} changes`, when, then: `${(a.bands || []).length} brightness bands` };
+    }
+    if (a.type === "replay") {
+      return { kind: "Replay", trigger: `as ${a.days_back || 7} days ago`, when,
+        then: `${(a.lights || []).map((e) => this._short(e, zid)).join(", ") || "no lights yet"} repeat what they did` };
     }
     return { kind: "Auto-off", trigger: "a light turned on by hand", when,
       then: `${(a.lights || []).map((e) => this._short(e, zid)).join(", ") || "?"} off${a.with_empty ? " with the empty setting" : ""}${a.on_minutes ? `${a.with_empty ? ", or" : ""} once on ${a.on_minutes} min with the room empty` : ""}` };
@@ -768,6 +777,9 @@ export class SbModesEditor extends HTMLElement {
             <button class="ic" data-band-rm="${i}" title="Remove band" aria-label="Remove band">×</button></div>
           <div>${this._targetsHtml({ k: "band", zone: z.id, addon: a.id, band: i }, b.targets || {}, { label: "" })}</div></div>`).join("")
         + `<div class="tools"><button class="b sm" data-band-add="1">+ Band</button></div>`;
+    } else if (a.type === "replay") {
+      trig = `<div class="help">These lights repeat what they did the same time ${a.days_back || 7} days ago, while the When below matches (normally the Away mode). A hold or a hand change still wins.</div>`;
+      then = `<div class="form" data-form="ad-replay"></div>`;
     } else {
       trig = `<div class="help">A light someone turns on by hand. SB Modes only ever turns these off.</div>`;
       then = `<div class="form" data-form="ad-autooff"></div>`;
@@ -789,7 +801,7 @@ export class SbModesEditor extends HTMLElement {
   }
 
   _stepHtml(z, a, st, i) {
-    const act = st.script !== undefined ? "script" : st.release ? "release" : "hold" in st ? "hold" : "lights";
+    const act = st.set_mode !== undefined ? "mode" : st.resume_schedule ? "resume" : st.script !== undefined ? "script" : st.release ? "release" : "hold" in st ? "hold" : "lights";
     const flash = (n) => `<label class="help">flash <select data-st-flash="${i}">${[0, 1, 2, 3].map((k) => `<option value="${k}" ${(n || 0) === k ? "selected" : ""}>${k ? `×${k}` : "none"}</option>`).join("")}</select></label>`;
     let body = "";
     if (act === "lights") body = this._targetsHtml({ k: "step", zone: z.id, addon: a.id, step: i }, st.targets || {}, { label: "" });
@@ -799,11 +811,20 @@ export class SbModesEditor extends HTMLElement {
         .map(([v, l]) => `<option value="${v}" ${v === k ? "selected" : ""}>${l}</option>`).join("")}</select>${flash(st.flash)}</div>
         ${this._targetsHtml({ k: "step", zone: z.id, addon: a.id, step: i }, st.targets || {}, { label: "", help: "Lights to set as it holds (leave empty to keep them as they are)." })}`;
     } else if (act === "release") body = `<div class="stop">${flash(st.flash)}<span class="help">ends the hold; the room's own rule (or a TV add-on) takes over</span></div>`;
+    else if (act === "mode") {
+      const k = holdKey({ hold: st.hold ?? "paused" });
+      body = `<div class="stop"><select data-st-mode="${i}">${this._modes().map((m) => `<option value="${esc(m.id)}" ${m.id === st.set_mode ? "selected" : ""}>${esc(m.name || m.id)}</option>`).join("")}</select>
+        <select data-st-mhold="${i}">${[...MODE_HOLDS, ...(/^m\d+$/.test(k) && !MODE_HOLDS.some(([x]) => x === k) ? [[k, `for ${k.slice(1)} min`]] : [])]
+          .map(([v, l]) => `<option value="${v}" ${v === k ? "selected" : ""}>${l}</option>`).join("")}</select></div>
+        <div class="help">Sets the whole house's mode, as the mode menu does. Make it the add-on's last step: a mode change restarts the add-ons.</div>`;
+    } else if (act === "resume") body = `<div class="help">Ends a mode set by hand or by an add-on; the house goes back to the scheduled mode.</div>`;
     else body = `<div class="form" data-form="ad-script" data-i="${i}"></div><div class="help">The script gets: zone, zone_name, mode, occupied, held, changed_by_hand, addon.</div>`;
     return `<div class="brow"><div><label class="help" style="display:block">${i ? "Then after" : "At the trigger, after"}</label>
         <input class="in" type="number" min="0" max="1440" data-st-min="${i}" value="${esc(st.after_minutes ?? 0)}" style="width:64px"> min
         <button class="ic" data-st-rm="${i}" title="Remove step" aria-label="Remove step" ${(a.steps || []).length > 1 ? "" : "disabled"}>×</button>
-        <select data-st-act="${i}" style="display:block;margin-top:6px">${[["lights", "Set lights"], ["hold", "Hold the room"], ["release", "Release the room"], ["script", "Run a script"]]
+        <label class="help" style="display:block;margin-top:4px">plus up to <input class="in" type="number" min="0" max="1440" data-st-rnd="${i}" value="${esc(st.random_minutes || 0)}" style="width:56px"> min at random</label>
+        <select data-st-act="${i}" style="display:block;margin-top:6px">${[["lights", "Set lights"], ["hold", "Hold the room"], ["release", "Release the room"], ["script", "Run a script"],
+          ["mode", "Set the house mode"], ["resume", "Resume the schedule"]]
           .map(([v, l]) => `<option value="${v}" ${v === act ? "selected" : ""}>${l}</option>`).join("")}</select></div>
       <div>${body}</div></div>`;
   }
@@ -1072,25 +1093,25 @@ export class SbModesEditor extends HTMLElement {
         { name: "edge", selector: { select: { mode: "dropdown", options: [{ value: "start", label: "starts" }, { value: "end", label: "ends" }] } } },
         { name: "minutes", selector: { number: { min: 0, max: 10080, mode: "box", unit_of_measurement: "min" } } },
         { name: "side", selector: { select: { mode: "dropdown", options: [{ value: "before", label: "before" }, { value: "after", label: "after" }] } } });
-      if (kind === "time") schema.push({ name: "at", selector: { text: {} } });
+      if (kind === "time") schema.push({ name: "at", selector: { text: {} } }, { name: "random_minutes", selector: { number: { min: 0, max: 240, mode: "box", unit_of_measurement: "min" } } });
       if (kind === "begins" || kind === "ends") schema.push({ name: "modes", selector: { select: { multiple: true, mode: "dropdown", options: modeOpts() } } });
       if (kind === "state") schema.push({ name: "entity", selector: { entity: {} } }, { name: "to", selector: { text: {} } });
       trig.appendChild(this._form(schema, { kind, at: t.at || "", modes: t.mode_begins || t.mode_ends || [], entity: t.entity || "", to: t.to || "",
-        calendar: t.calendar || "", match: t.match || "", edge: t.edge || "start", minutes: Math.abs(t.offset_minutes || 0), side: (t.offset_minutes || 0) > 0 ? "after" : "before" },
+        random_minutes: t.random_minutes || 0, calendar: t.calendar || "", match: t.match || "", edge: t.edge || "start", minutes: Math.abs(t.offset_minutes || 0), side: (t.offset_minutes || 0) > 0 ? "after" : "before" },
         (v) => adEdit((x) => {
           if (v.kind !== kind) {
             x.trigger = v.kind === "time" ? { at: "06:30" } : v.kind === "begins" ? { mode_begins: [] } : v.kind === "ends" ? { mode_ends: [] }
               : v.kind === "calendar" ? { calendar: "", match: "", edge: "start", offset_minutes: 0 } : { entity: "", to: "on" };
             return;
           }
-          if (kind === "time") x.trigger = { at: v.at || "" };
+          if (kind === "time") x.trigger = { at: v.at || "", ...(Number(v.random_minutes) ? { random_minutes: Number(v.random_minutes) } : {}) };
           else if (kind === "begins") x.trigger = { mode_begins: v.modes || [] };
           else if (kind === "ends") x.trigger = { mode_ends: v.modes || [] };
           else if (kind === "calendar") x.trigger = { calendar: v.calendar || "", match: v.match || "", edge: v.edge || "start",
             offset_minutes: (v.side === "after" ? 1 : -1) * (Number(v.minutes) || 0) };
           else x.trigger = { entity: v.entity || "", to: v.to || "" };
         }, v.kind !== kind), { kind: "Trigger", at: "At", modes: "Mode", entity: "Device", to: "Reaches the state", calendar: "Calendar",
-          match: "Event title contains", edge: "When the event", minutes: "Offset", side: "Before / after" },
+          match: "Event title contains", edge: "When the event", minutes: "Offset", side: "Before / after", random_minutes: "Vary each day by up to ±" },
         { at: "HH:MM (06:30), or sunrise / sunset ± HH:MM (sunset-01:00).", to: "As HA shows it, e.g. playing, on, open.",
           match: "A whole word or tag, e.g. #vac. Empty = any event on that calendar.", minutes: "0 = right at the start or end." }));
     }
@@ -1114,6 +1135,13 @@ export class SbModesEditor extends HTMLElement {
     const fo = root.querySelector('[data-form="ad-follow"]');
     if (fo && ad) fo.appendChild(this._form([{ name: "leader", selector: { entity: { filter: { domain: ["light", "switch"] } } } }], { leader: ad.leader || "" },
       (v) => adEdit((x) => { x.leader = v.leader || ""; }), { leader: "Leader light" }));
+    const rp = root.querySelector('[data-form="ad-replay"]');
+    if (rp && ad) rp.appendChild(this._form([
+      { name: "lights", selector: { entity: { multiple: true, filter: { domain: ["light", "switch"] } } } },
+      { name: "days_back", selector: { number: { min: 1, max: 9, mode: "box", unit_of_measurement: "days" } } },
+    ], { lights: ad.lights || [], days_back: ad.days_back || 7 },
+    (v) => adEdit((x) => { x.lights = v.lights || []; x.days_back = Number(v.days_back) || 7; }),
+    { lights: "Lights", days_back: "Replay from this many days ago" }, { days_back: "The recorder keeps 10 days; 7 repeats the same weekday." }));
     const ao = root.querySelector('[data-form="ad-autooff"]');
     if (ao && ad) ao.appendChild(this._form([
       { name: "lights", selector: { entity: { multiple: true, filter: { domain: ["light", "switch"] } } } },
@@ -1264,15 +1292,17 @@ export class SbModesEditor extends HTMLElement {
       let id;
       this._edit((d) => {
         const x = zone(d), list = (x.addons ||= []);
-        const base = { time: "wake", begins: "begins", ends: "ends", state: "device", calendar: "calendar", while: "tv", button: "button", follow: "follow", auto_off: "auto-off" }[k];
+        const base = { replay: "replay", time: "wake", begins: "begins", ends: "ends", state: "device", calendar: "calendar", while: "tv", button: "button", follow: "follow", auto_off: "auto-off" }[k];
         id = newId(list, base);
-        const name = { time: "At a time", begins: "When a mode begins", ends: "When a mode ends", state: "When a device changes", calendar: "Calendar event", while: "TV lighting",
+        const name = { replay: "Lived-in replay", time: "At a time", begins: "When a mode begins", ends: "When a mode ends", state: "When a device changes", calendar: "Calendar event", while: "TV lighting",
           button: "Hold button", follow: "Follow", auto_off: "Auto-off" }[k];
         const lights = (trigger) => ({ id, name, type: "lights", trigger, steps: [{ after_minutes: 0, targets: {} }] });
         list.push(k === "time" ? lights({ at: "06:30" }) : k === "begins" ? lights({ mode_begins: [] }) : k === "ends" ? lights({ mode_ends: [] })
           : k === "state" ? lights({ entity: "", to: "on" }) : k === "calendar" ? lights({ calendar: "", match: "", edge: "start", offset_minutes: 0 })
           : k === "while" ? { id, name, type: "while", entity: "", states: { playing: { holds: true, targets: {} }, paused: { holds: true, targets: {} }, off: { targets: {} } } }
           : k === "button" ? { id, name, type: "button", entity: "", presses: {} }
+          : k === "replay" ? { id, name, type: "replay", lights: [...(x.lights || [])], days_back: 7,
+              ...(this._mode("away") ? { when: { modes: ["away"] } } : {}) }
           : k === "follow" ? { id, name, type: "follow", leader: "", bands: [{ min_pct: 50, targets: {} }, { min_pct: 0, targets: {} }] }
           : { id, name, type: "auto_off", lights: [], with_empty: true, on_minutes: 15 });
         this._openAddon = `${x.id}|${id}`;
@@ -1322,9 +1352,17 @@ export class SbModesEditor extends HTMLElement {
     q("[data-st-min]", (inp) => inp.addEventListener("input", () => this._edit((d) => { inst(d).steps[Number(inp.dataset.stMin)].after_minutes = Number(inp.value || 0); })));
     q("[data-st-act]", (sel) => sel.addEventListener("change", () => this._edit((d) => {
       const steps = inst(d).steps, i = Number(sel.dataset.stAct), after = steps[i].after_minutes || 0;
-      steps[i] = sel.value === "lights" ? { after_minutes: after, targets: {} } : sel.value === "hold" ? { after_minutes: after, hold: 30 }
-        : sel.value === "release" ? { after_minutes: after, release: true } : { after_minutes: after, script: "" };
+      const rnd = steps[i].random_minutes ? { random_minutes: steps[i].random_minutes } : {};
+      steps[i] = sel.value === "lights" ? { after_minutes: after, ...rnd, targets: {} } : sel.value === "hold" ? { after_minutes: after, ...rnd, hold: 30 }
+        : sel.value === "release" ? { after_minutes: after, ...rnd, release: true }
+        : sel.value === "mode" ? { after_minutes: after, ...rnd, set_mode: (this._modes().find((m) => m.id === "away") || this._modes()[0])?.id, hold: "paused" }
+        : sel.value === "resume" ? { after_minutes: after, ...rnd, resume_schedule: true } : { after_minutes: after, ...rnd, script: "" };
     }, true)));
+    q("[data-st-rnd]", (inp) => inp.addEventListener("input", () => this._edit((d) => {
+      const st = inst(d).steps[Number(inp.dataset.stRnd)], n = Number(inp.value || 0); if (n) st.random_minutes = n; else delete st.random_minutes;
+    })));
+    q("[data-st-mode]", (sel) => sel.addEventListener("change", () => this._edit((d) => { inst(d).steps[Number(sel.dataset.stMode)].set_mode = sel.value; }, true)));
+    q("[data-st-mhold]", (sel) => sel.addEventListener("change", () => this._edit((d) => { inst(d).steps[Number(sel.dataset.stMhold)].hold = holdVal(sel.value); }, true)));
     q("[data-st-hold]", (sel) => sel.addEventListener("change", () => this._edit((d) => { inst(d).steps[Number(sel.dataset.stHold)].hold = holdVal(sel.value); }, true)));
     q("[data-st-flash]", (sel) => sel.addEventListener("change", () => this._edit((d) => {
       const s = inst(d).steps[Number(sel.dataset.stFlash)], n = Number(sel.value); if (n) s.flash = n; else delete s.flash;
