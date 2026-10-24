@@ -483,3 +483,12 @@ Dining Room: "Away mode on" (#vac starts → all house lights off, then set_mode
 "Away mode off" (#vac ends → resume_schedule). Lived-in pattern add-ons (When: Away) in
 Kitchen, Dining, Living, Office, Bedroom, Upstairs Hallway; a "Lived-in replay" (7 days back)
 per room, switched OFF — the user can flip pattern ↔ replay per room.
+
+## Office hold buttons (0.31.0, table version 14, 2026-10-24)
+
+Office Lights BILRESA (event.bilresa_dual_button_button_1 large / _2 small — generic ids).
+Large press → hold until the next mode at the Office's usual occupied values; small press →
+same at dim values (mini rack 20 %, desk 8 %, floor lamps 8 %, Mova 12 %, all 2700 K; clocks
+96 / 30); double-press either → release. Confirmation blinks only the desk bulb (new
+`flash_lights` on a press action). Bedside BILRESAs stay on the snadboy/bilresa-dual-button-light
+blueprint (tap ladder + hold ramp); their double-press is free for SB Modes if wanted.
