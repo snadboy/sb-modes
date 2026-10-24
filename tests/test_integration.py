@@ -1950,3 +1950,20 @@ async def test_time_addon_outside_its_modes_does_not_resume(hass, kitchen, light
     assert _st(hass, "lit") == "only in Overnight"
     await _tick(hass, freezer, minutes=45)
     assert lights["off"] == []
+
+
+async def test_button_flash_only_chosen_lights(hass, kitchen, lights, freezer, monkeypatch) -> None:
+    """flash_lights: the confirmation blinks only those lights (the Office desk bulb)."""
+    from custom_components.sb_modes import buttons as btn
+    monkeypatch.setattr(btn, "FLASH_SECONDS", 0)
+    hass.states.async_set(BIG, "2026-10-01T00:00:00+00:00", {"event_type": "multi_press_1"})
+    hass.states.async_set(SINK, "on", {"brightness": 200})
+    await _setup(hass)
+    t = _with("vacancy_off", {"lights": [SINK], "off_after_seconds": 60})
+    t["zones"][0]["addons"] = [{"id": "b", "name": "Hold", "type": "button", "entity": BIG,
+                                "presses": {"multi_press_1": {"hold": "next", "flash": 1, "flash_lights": [SINK]}}}]
+    await _save(hass, t)
+    lights["on"].clear(); lights["off"].clear()
+    await _press(hass, freezer, BIG, "multi_press_1")
+    assert [c.data["entity_id"] for c in lights["off"]] == [SINK]           # the ceiling (off) is not blinked
+    assert [c.data["entity_id"] for c in lights["on"]] == [SINK]

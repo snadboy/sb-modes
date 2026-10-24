@@ -321,7 +321,7 @@ def _hold_txt(act: Any, name_of) -> str:
     else:
         return _compact(act, name_of)
     if isinstance(act, dict) and act.get("flash"):
-        txt += f", flash ×{act['flash']}"
+        txt += f", flash ×{act['flash']}" + (f" ({_names(act['flash_lights'], name_of)})" if act.get("flash_lights") else "")
     return txt
 
 

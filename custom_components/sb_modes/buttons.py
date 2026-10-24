@@ -6,6 +6,7 @@ A zone's `buttons` = {event_entity: {event_type: action}}, an action being
   {"release": true, "flash": n}  (or just "release") — flash n times, end the hold, and put the
       lights back: the zone's behaviour starts again, and an overlay re-applies its current
       state (the TV's off levels too, since a person pressing the button is in the room).
+"flash_lights": [...] flashes only those lights (the Office's desk bulb), else every zone light.
 The lights have no flash of their own (Lutron), so a flash is made: lights that are on go off,
 lights that are off come on, for FLASH_SECONDS, then back.
 
@@ -95,7 +96,7 @@ class Buttons:
 
     async def _run(self, action: dict, by: str = "button") -> None:
         if action.get("flash"):
-            await self._flash(self.rt.zone_lights(self.zone_id), action["flash"])
+            await self._flash(action.get("flash_lights") or self.rt.zone_lights(self.zone_id), action["flash"])
         if "hold" in action:
             if action.get("targets"):
                 self.rt.send(action["targets"], f"held by {by}", self.zone_id)

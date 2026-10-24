@@ -480,6 +480,13 @@ def _check_hold_action(act, at: str, state_of, errors, warnings) -> None:
     flash = act.get("flash")
     if flash is not None and (isinstance(flash, bool) or not isinstance(flash, int) or not 0 <= flash <= 5):
         errors.append(f"{at}: flash must be 0–5.")
+    fl = act.get("flash_lights")
+    if fl is not None:
+        if not isinstance(fl, list):
+            errors.append(f"{at}: flash_lights must be a list of lights.")
+        else:
+            for eid in fl:
+                _check_entity(eid, ["light"], f"{at}, flash", state_of, errors, warnings)
     if act.get("targets") is not None:
         if "hold" not in act:
             errors.append(f"{at}: lights go with a hold.")

@@ -836,6 +836,7 @@ export class SbModesEditor extends HTMLElement {
         ${[...HOLD_OPTS, ["release", "release"], ...(/^m\d+$/.test(k) && !HOLD_OPTS.some(([x]) => x === k) ? [[k, `hold ${k.slice(1)} min`]] : [])]
           .map(([v, l]) => `<option value="${v}" ${v === k ? "selected" : ""}>${l}</option>`).join("")}</select>
         ${k ? `<label class="help">flash <select data-pr-flash="${esc(et)}">${[0, 1, 2, 3].map((n) => `<option value="${n}" ${((p && p.flash) || 0) === n ? "selected" : ""}>${n ? `×${n}` : "none"}</option>`).join("")}</select></label>` : ""}</div>
+      ${k && p && p.flash ? `<div class="form" data-form="ad-flash" data-et="${esc(et)}" style="max-width:420px"></div>` : ""}
       ${k && k !== "release" ? this._targetsHtml({ k: "button", zone: z.id, addon: a.id, etype: et }, p.targets || {}, { label: "", help: "Lights to set when it holds (leave empty to keep them as they are)." }) : ""}</div></div>`;
   }
 
@@ -1135,6 +1136,13 @@ export class SbModesEditor extends HTMLElement {
     const fo = root.querySelector('[data-form="ad-follow"]');
     if (fo && ad) fo.appendChild(this._form([{ name: "leader", selector: { entity: { filter: { domain: ["light", "switch"] } } } }], { leader: ad.leader || "" },
       (v) => adEdit((x) => { x.leader = v.leader || ""; }), { leader: "Leader light" }));
+    root.querySelectorAll('[data-form="ad-flash"]').forEach((slot) => {
+      const et = slot.dataset.et;
+      slot.appendChild(this._form([{ name: "flash_lights", selector: { entity: { multiple: true, filter: { domain: "light" } } } }],
+        { flash_lights: ad.presses?.[et]?.flash_lights || [] },
+        (v) => adEdit((x) => { const p = x.presses[et]; if (v.flash_lights?.length) p.flash_lights = v.flash_lights; else delete p.flash_lights; }),
+        { flash_lights: "Lights that flash" }, { flash_lights: "Empty = all the room's lights." }));
+    });
     const rp = root.querySelector('[data-form="ad-replay"]');
     if (rp && ad) rp.appendChild(this._form([
       { name: "lights", selector: { entity: { multiple: true, filter: { domain: ["light", "switch"] } } } },
