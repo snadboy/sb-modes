@@ -1967,3 +1967,30 @@ async def test_button_flash_only_chosen_lights(hass, kitchen, lights, freezer, m
     await _press(hass, freezer, BIG, "multi_press_1")
     assert [c.data["entity_id"] for c in lights["off"]] == [SINK]           # the ceiling (off) is not blinked
     assert [c.data["entity_id"] for c in lights["on"]] == [SINK]
+
+
+async def test_overlay_follows_the_most_active_of_several_players(hass, kitchen, lights, freezer) -> None:
+    """The TV's own player says off while Plex on it plays: the room is playing (2026-10-24)."""
+    PLEX = "media_player.plex_tv"
+    hass.states.async_set(TV, "off")
+    hass.states.async_set(PLEX, "unavailable")
+    await _setup(hass)
+    t = _with("vacancy_off", {"lights": [SINK], "off_after_seconds": 60})
+    t["zones"][0]["addons"] = [{"id": "tv", "name": "TV lighting", "type": "while", **{k: v for k, v in OVERLAY.items() if k != "entity"},
+                                "entities": [TV, PLEX]}]
+    await _save(hass, t)
+    pct = lambda: [c.data.get("brightness_pct") for c in lights["on"] if c.data["entity_id"] == SINK]   # noqa: E731
+    hass.states.async_set(PLEX, "playing")
+    await _tick(hass, freezer, seconds=6)
+    assert pct()[-1] == 5 and _zone(hass)["overlay"]["state"] == "playing"
+    hass.states.async_set(PLEX, "paused")
+    await _tick(hass, freezer, seconds=6)
+    assert pct()[-1] == 20
+    hass.states.async_set(TV, "idle")                                   # the TV's own player waking: paused still wins
+    await _tick(hass, freezer, seconds=6)
+    assert pct()[-1] == 20
+    hass.states.async_set(PLEX, "unavailable")                          # Plex gone, TV idle (not set up): no change
+    hass.states.async_set(TV, "off")
+    await _tick(hass, freezer, seconds=6)
+    assert pct()[-1] == 30
+    assert PLEX in _zone(hass)["occupancy"]                             # watching Plex counts as someone there

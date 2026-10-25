@@ -382,7 +382,8 @@ def addon_summary(a: dict, name_of=lambda e: e, mode_name=lambda m: m, day_name=
     if kind == "lights":
         txt = f"{_trigger_txt(a.get('trigger'), name_of, mode_name)} → " + " · ".join(_step_txt(s, name_of, mode_name) for s in a.get("steps") or [])
     elif kind == "while":
-        txt = f"while {name_of(a.get('entity') or '?')} is " + ", ".join(
+        players = a.get("entities") or ([a["entity"]] if a.get("entity") else [])
+        txt = f"while {' / '.join(name_of(e) for e in players) or '?'} is " + ", ".join(
             f"{st}{' (holds)' if (c or {}).get('holds') else ''}" for st, c in (a.get("states") or {}).items())
     elif kind == "button":
         txt = f"{name_of(a.get('entity') or '?')}: " + ", ".join(

@@ -1,7 +1,8 @@
 """Overlays: temporary context that sets a zone's lights from another entity's state — the TV.
 
 A zone's `overlay` = {
-    "entity": "media_player.family_room_tv",
+    "entity": "media_player.family_room_tv",     # or "entities": [...] — several players of one TV
+                                                 # (its own, Plex's…): the most active state counts
     "states": {"playing": {"targets": {…}, "holds": true},     # set, and hold the zone while in it
                "paused":  {"targets": {…}, "holds": true},
                "idle":    {"targets": {…}},                    # set once; the zone's behaviour resumes
@@ -40,13 +41,26 @@ if TYPE_CHECKING:
 
 UNAVAILABLE = ("unavailable", "unknown")
 OFF_STATES = ("off", "standby")
+# With several players (the TV's own and an app's, e.g. Plex on the streamer), the overlay follows
+# the most active one: a TV whose own player says "off" while Plex plays is playing (2026-10-24).
+PRIORITY = ("playing", "paused", "buffering", "idle", "on", "standby", "off")
+
+
+def combined(states: list[str | None]) -> str:
+    """The most active of several players' states; "unavailable" when none reports."""
+    real = [x for x in states if x and x not in UNAVAILABLE]
+    if not real:
+        return "unavailable"
+    known = [x for x in real if x in PRIORITY]
+    return min(known, key=PRIORITY.index) if known else real[0]
 
 
 class Overlay:
     def __init__(self, rt: Runtime, zone: dict, spec: dict) -> None:
         self.rt = rt
         self.zone_id = zone["id"]
-        self.entity = spec["entity"]
+        self.entities = [e for e in (spec.get("entities") or [spec.get("entity")]) if e]
+        self.entity = self.entities[0]                   # the TV's own player: its name in messages
         self.id = spec.get("id", "tv")
         self.name = spec.get("name") or "TV lighting"
         self.when = spec.get("when") or {}
@@ -64,16 +78,24 @@ class Overlay:
         self._pending: CALLBACK_TYPE | None = None
         self._unsub: CALLBACK_TYPE | None = None
 
+    def _combined(self) -> str:
+        return combined([(st.state if (st := self.rt.hass.states.get(e)) else None) for e in self.entities])
+
+    def _label(self) -> str:
+        st = self.rt.hass.states.get(self.entity)
+        return st.name if st else self.entity
+
     @callback
     def start(self) -> None:
-        st = self.rt.hass.states.get(self.entity)
-        self.state = st.state if st else None
-        if st is not None and st.state in OFF_STATES:
-            self._off_since = st.last_changed            # off already at start (after a restart)
+        self.state = self._combined()
+        self._prev = self.state
+        if self.state in OFF_STATES:
+            st = self.rt.hass.states.get(self.entity)
+            self._off_since = st.last_changed if st else dt_util.utcnow()   # off already at start (a restart)
         # at start, only learn whether the zone is held — set nothing (the lights already are)
         self.active = self.rt.when_ok(self.when)
         self.holding = self.active and bool((self.states.get(self.state) or {}).get("holds"))
-        self._unsub = async_track_state_change_event(self.rt.hass, [self.entity], self._changed)
+        self._unsub = async_track_state_change_event(self.rt.hass, list(self.entities), self._changed)
 
     @callback
     def apply_current(self) -> None:
@@ -121,35 +143,38 @@ class Overlay:
 
     @callback
     def _changed(self, event: Event[EventStateChangedData]) -> None:
-        new, old = event.data["new_state"], event.data["old_state"]
-        if new is not None and old is not None and old.state in MEDIA_WATCHING and new.state not in MEDIA_WATCHING:
-            self.rt.media_left[self.entity] = new.last_changed    # stopped being watched (presence)
-        if new is None or (old is not None and old.state == new.state):
-            return                                       # attributes only (media position…): not a change
-        if new.state in OFF_STATES:
-            self._off_since = new.last_changed
+        new_st, old_st = event.data["new_state"], event.data["old_state"]
+        if new_st is not None and old_st is not None and old_st.state in MEDIA_WATCHING and new_st.state not in MEDIA_WATCHING:
+            self.rt.media_left[event.data["entity_id"]] = new_st.last_changed    # stopped being watched (presence)
+        new, old = self._combined(), getattr(self, "_prev", None)
+        self._prev = new
+        if new == old:
+            return                                       # attributes only, or another player that doesn't win
+        now = dt_util.utcnow()
+        if new in OFF_STATES:
+            self._off_since = now
             self._turned_on = None
-        elif new.state in MEDIA_WATCHING and old is not None and old.state in OFF_STATES and self._off_since is not None \
-                and (new.last_changed - self._off_since).total_seconds() >= self.debounce:
-            self._turned_on = new.last_changed           # a real turn-on, not a one-second "off" blip
+        elif new in MEDIA_WATCHING and old in OFF_STATES and self._off_since is not None \
+                and (now - self._off_since).total_seconds() >= self.debounce:
+            self._turned_on = now                        # a real turn-on, not a one-second "off" blip
         self._cancel()
-        if new.state in UNAVAILABLE:
-            self._last_unavailable = dt_util.utcnow()
+        if new in UNAVAILABLE:
+            self._last_unavailable = now
             return
-        from_unavailable = old is not None and old.state in UNAVAILABLE
+        from_unavailable = old in UNAVAILABLE
         self._pending = async_call_later(self.rt.hass, self.debounce,
-                                         HassJob(partial(self._settled, new.state, from_unavailable), cancel_on_shutdown=True))
+                                         HassJob(partial(self._settled, new, from_unavailable), cancel_on_shutdown=True))
 
     @callback
     def _settled(self, state: str, from_unavailable: bool, _now=None) -> None:
         self._pending = None
-        current = self.rt.hass.states.get(self.entity)
-        if current is None or current.state != state:
+        if self._combined() != state:
             return                                       # it did not last the debounce
+        name = self._label()
         cfg = self.states.get(state)
         if self._last_unavailable and (dt_util.utcnow() - self._last_unavailable).total_seconds() < self.cooldown:
             if cfg is not None:                          # still in the cool-down after a drop-out
-                self.rt.log("skipped", self.zone_id, f"{current.name} {state} — ignored: under {self.cooldown:g} s since it dropped out")
+                self.rt.log("skipped", self.zone_id, f"{name} {state} — ignored: under {self.cooldown:g} s since it dropped out")
             return
         if cfg is None:
             return
@@ -159,7 +184,7 @@ class Overlay:
         was = self.holding
         self.holding = bool(cfg.get("holds"))
         if self._turned_on is not None:
-            self.rt.keeper.release_before(self.zone_id, self._turned_on, f"{current.name} turned on")
+            self.rt.keeper.release_before(self.zone_id, self._turned_on, f"{name} turned on")
             self._turned_on = None
         if self.holding:
             # the zone's Overlaid behaviour sets the targets as it (re)starts
@@ -170,7 +195,7 @@ class Overlay:
                 self._quiet = False
             return
         if cfg.get("targets") and not from_unavailable:
-            self.rt.apply(cfg["targets"], f"{current.name} {state}", self.zone_id)
+            self.rt.apply(cfg["targets"], f"{name} {state}", self.zone_id)
         if was:
             self.rt.restart_zone(self.zone_id)           # back to the zone's own behaviour
         else:

@@ -11,7 +11,7 @@
  *
  * Rows use the shared SB row style (window.SBKit, from the SB UI Kit integration).
  */
-const VERSION = "0.31.0";
+const VERSION = "0.32.0";
 const CARD = "sb-modes-card";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -513,7 +513,7 @@ class SbModesCard extends HTMLElement {
         st.set_mode ? `house → ${mn(st.set_mode)}` : st.resume_schedule ? "back on schedule"
         : st.script ? `run ${this._name(st.script)}` : st.release || "hold" in st ? this._buttonAct(st) : this._targets(st.targets)}`).join(" · ");
     } else if (x.type === "while") {
-      what = `while ${this._name(x.entity)} is ` + Object.entries(x.states || {})
+      what = `while ${(x.entities || [x.entity]).filter(Boolean).map((e) => this._name(e)).join(" / ")} is ` + Object.entries(x.states || {})
         .map(([st, c]) => `${st} → ${this._targets(c.targets || {}) || "nothing"}${c.holds ? " (holds the room)" : ""}`).join(" · ");
     } else if (x.type === "button") {
       what = `${this._name(x.entity)}: ` + Object.entries(x.presses || {}).map(([k, act]) => `${PRESS[k] || k} → ${this._buttonAct(act)}`).join(", ");

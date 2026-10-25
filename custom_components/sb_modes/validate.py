@@ -692,12 +692,15 @@ def _check_lights_addon(a, at, ids, state_of, errors, warnings) -> None:
 
 
 def _check_while_addon(a, at, state_of, errors, warnings) -> None:
-    ent, sts = a.get("entity"), a.get("states")
-    with _sub("entity"):
-        if not isinstance(ent, str) or "." not in ent:
+    sts = a.get("states")
+    ents = a.get("entities") if a.get("entities") is not None else ([a["entity"]] if a.get("entity") else [])
+    with _sub("entities" if "entities" in a else "entity"):
+        if not isinstance(ents, list) or not ents or not all(isinstance(e, str) and "." in e for e in ents):
             errors.append(f"{at}: choose the device (a TV or media player).")
-        elif state_of(ent) is None:
-            errors.append(f"{at}: {ent} does not exist.")
+        else:
+            for e in ents:
+                if state_of(e) is None:
+                    errors.append(f"{at}: {e} does not exist.")
     if not isinstance(sts, dict) or not sts:
         with _sub("states"):
             errors.append(f"{at}: choose at least one state.")

@@ -368,7 +368,7 @@ class Runtime:
         picked["entities"] = b.entities if b else {}
         picked["occupancy"], picked["occupancy_since"] = self._occupancy(b.entities.get("occupancy", []) if b else [])
         ov = self._overlays.get(zone_id)
-        picked["overlay"] = {"entity": ov.entity, "state": ov.state, "holding": ov.holding} if ov else None
+        picked["overlay"] = {"entity": ov.entity, "entities": ov.entities, "state": ov.state, "holding": ov.holding} if ov else None
         picked["hold"] = self.keeper.held(zone_id)
         picked["overrides"] = self.keeper.overridden(zone_id)
         return picked
@@ -533,8 +533,8 @@ class Runtime:
             kind = KINDS.get(picked.get("behaviour") or "", HandsOff)
         entities = zone_entities(self.hass, zone.get("areas") or [], zone.get("lights"),
                                  zone.get("occupancy"), zone.get("illuminance"))
-        if ov is not None and ov.presence and ov.entity:
-            entities["occupancy"] = [*entities["occupancy"], ov.entity]   # the TV on = someone watching
+        if ov is not None and ov.presence and ov.entities:
+            entities["occupancy"] = [*entities["occupancy"], *ov.entities]   # the TV on = someone watching
         b = kind(self, zone, picked.get("params") or {}, entities)
         self._behaviours[zone["id"]] = b
         b.start()

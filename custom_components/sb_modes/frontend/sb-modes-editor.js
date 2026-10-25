@@ -707,7 +707,8 @@ export class SbModesEditor extends HTMLElement {
       return { kind: script && lights ? "Lights + script" : script ? "Script" : "Lights", trigger, when, then: (a.steps || []).map((s) => this._sayStep(s, zid)).join(" · ") || "nothing yet" };
     }
     if (a.type === "while") {
-      return { kind: "While", trigger: `while ${a.entity ? this._short(a.entity, zid) : "?"} is …`, when,
+      const players = a.entities || (a.entity ? [a.entity] : []);
+      return { kind: "While", trigger: `while ${players.length ? players.map((e) => this._short(e, zid)).join(" / ") : "?"} is …`, when,
         then: Object.entries(a.states || {}).map(([s, c]) => `${s}${c.holds ? " (holds)" : ""}: ${this._sayTargets(c.targets, zid) || "—"}`).join(" · ") };
     }
     if (a.type === "button") {
@@ -1123,13 +1124,13 @@ export class SbModesEditor extends HTMLElement {
     });
     const wh = root.querySelector('[data-form="ad-while"]');
     if (wh && ad) wh.appendChild(this._form([
-      { name: "entity", selector: { entity: { filter: { domain: "media_player" } } } },
+      { name: "entities", selector: { entity: { multiple: true, filter: { domain: "media_player" } } } },
       { name: "debounce_seconds", selector: { number: { min: 0, max: 3600, mode: "box", unit_of_measurement: "s" } } },
       { name: "unavailable_cooldown_seconds", selector: { number: { min: 0, max: 3600, mode: "box", unit_of_measurement: "s" } } },
       { name: "presence", selector: { boolean: {} } },
-    ], { entity: ad.entity || "", debounce_seconds: ad.debounce_seconds ?? 5, unavailable_cooldown_seconds: ad.unavailable_cooldown_seconds ?? 60, presence: ad.presence ?? true },
-    (v) => adEdit((x) => { Object.assign(x, v); if (x.presence === true) delete x.presence; }),
-    { entity: "TV", debounce_seconds: "A state counts after", unavailable_cooldown_seconds: "Ignore changes after a drop-out for", presence: "Watching counts as someone in the room" }));
+    ], { entities: ad.entities || (ad.entity ? [ad.entity] : []), debounce_seconds: ad.debounce_seconds ?? 5, unavailable_cooldown_seconds: ad.unavailable_cooldown_seconds ?? 60, presence: ad.presence ?? true },
+    (v) => adEdit((x) => { Object.assign(x, v); delete x.entity; if (x.presence === true) delete x.presence; }),
+    { entities: "TV (and any app players on it, e.g. Plex)", debounce_seconds: "A state counts after", unavailable_cooldown_seconds: "Ignore changes after a drop-out for", presence: "Watching counts as someone in the room" }));
     const bt = root.querySelector('[data-form="ad-button"]');
     if (bt && ad) bt.appendChild(this._form([{ name: "entity", selector: { entity: { filter: { domain: "event" } } } }], { entity: ad.entity || "" },
       (v) => adEdit((x) => { x.entity = v.entity || ""; }, true), { entity: "Button" }));
@@ -1307,7 +1308,7 @@ export class SbModesEditor extends HTMLElement {
         const lights = (trigger) => ({ id, name, type: "lights", trigger, steps: [{ after_minutes: 0, targets: {} }] });
         list.push(k === "time" ? lights({ at: "06:30" }) : k === "begins" ? lights({ mode_begins: [] }) : k === "ends" ? lights({ mode_ends: [] })
           : k === "state" ? lights({ entity: "", to: "on" }) : k === "calendar" ? lights({ calendar: "", match: "", edge: "start", offset_minutes: 0 })
-          : k === "while" ? { id, name, type: "while", entity: "", states: { playing: { holds: true, targets: {} }, paused: { holds: true, targets: {} }, off: { targets: {} } } }
+          : k === "while" ? { id, name, type: "while", entities: [], states: { playing: { holds: true, targets: {} }, paused: { holds: true, targets: {} }, off: { targets: {} } } }
           : k === "button" ? { id, name, type: "button", entity: "", presses: {} }
           : k === "replay" ? { id, name, type: "replay", lights: [...(x.lights || [])], days_back: 7,
               ...(this._mode("away") ? { when: { modes: ["away"] } } : {}) }
