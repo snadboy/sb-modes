@@ -498,3 +498,11 @@ blueprint (tap ladder + hold ramp); their double-press is free for SB Modes if w
 The Laundry Room furnace FP300 reported "occupied" non-stop from 12:21 to 15:4x (10 s hold, alive —
 temperature/lux kept reporting) and held the light on; user: "the furnace sensor seems broken".
 laundry_room `occupancy` = [door FP300] only. Re-add the furnace FP300 once it is fixed or replaced.
+
+## TV lighting on several players (0.32.0, table version 17, 2026-10-24)
+
+A "while" add-on takes `entities` (or the old single `entity`): Overlay follows the most active
+(overlay.combined: playing > paused > buffering > idle > on > standby > off; unavailable ignored)
+and every player counts as presence. Family Room TV lighting = media_player.family_room_tv +
+media_player.plex_plex_for_android_tv_google_tv_streamer — under Plex the TV's own player reads
+"off", which had left the lights at the off levels.
