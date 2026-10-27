@@ -11,7 +11,7 @@
  *
  * Rows use the shared SB row style (window.SBKit, from the SB UI Kit integration).
  */
-const VERSION = "0.32.0";
+const VERSION = "0.33.0";
 const CARD = "sb-modes-card";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -568,18 +568,19 @@ class SbModesCard extends HTMLElement {
     const pick = (a.by_mode || {})[viewed] || { behaviour: z.state, params: a.params, source: a.source };
     const beh = pick.behaviour;
     const begins = (a.addons || []).filter((x) => x.type === "lights" && x.enabled !== false && (x.trigger?.mode_begins || []).includes(viewed));
-    const what = this._describe(beh, pick.params) + begins.map((x) => ` · when ${modeName} begins: ${x.name}`).join("");
+    const off = pick.source === "disabled";
+    const what = off ? "Off — SB Modes leaves this room alone" : this._describe(beh, pick.params) + begins.map((x) => ` · when ${modeName} begins: ${x.name}`).join("");
     const held = !previewing && String(a.status || "").startsWith("held");
     // live: "Vacant since 12:12 PM · lights off" — occupancy first, then what the behaviour is doing
     const occ = a.occupancy_state === "occupied" ? `Occupied since ${hhmm(a.occupancy_since)}`
       : a.occupancy_state === "vacant" ? `Vacant since ${hhmm(a.occupancy_since)}`
       : a.occupancy_state === "unknown" ? "Occupancy unknown (sensor unavailable)" : "";
-    const rest = held ? a.status : beh === "hands_off" ? `not controlled in ${modeName}`
+    const rest = off ? "room switched off" : held ? a.status : beh === "hands_off" ? `not controlled in ${modeName}`
       : String(a.status || "").replace(/^(vacant|occupied)(;\s*|$)/, "").replace(/^overlay:\s*/, "");
     const doing = previewing ? what : [occ, fmtTimes(rest)].filter(Boolean).join(" · ");
     const l = previewing ? { icon: look(beh, "").icon, tint: "idle" } : look(beh, a.status);
     const open = this._open.has(z.id);
-    const src = pick.source === "override" ? "this zone's own setting for this mode" : pick.source === "zone" ? "this zone's setting for all modes" : "the mode's default";
+    const src = off ? "switched off in the editor" : pick.source === "override" ? "this zone's own setting for this mode" : pick.source === "zone" ? "this zone's setting for all modes" : "the mode's default";
     const ent = (eid, kind) => {
       const st = this._hass.states[eid];
       const name = st?.attributes.friendly_name || eid;

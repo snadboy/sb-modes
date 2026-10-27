@@ -252,6 +252,11 @@ table.tg input[type=number] { width: 64px; }
 @media (max-width: 700px) { .ahead { grid-template-columns: 36px minmax(0, 1fr) auto; } .ahead .anext { grid-column: 2; } }
 .grid tr.arow td { background: var(--secondary-background-color, rgba(127,127,127,.04)); padding: 5px 10px; border-bottom: 1px dashed var(--divider-color); }
 .grid tr.arow.off td { opacity: .5; }
+.grid tr.zoff td.room button, .grid tr.zoff td.room .us { opacity: .5; }
+.grid td.zoff { cursor: pointer; text-align: center; }
+.grid td.room ha-switch { margin-right: 6px; vertical-align: middle; --mdc-switch-thumb-diameter: 16px; }
+.crumb .zon { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--secondary-text-color); align-self: center; }
+.zoffnote .sec { color: var(--secondary-text-color); font-size: 14px; }
 .grid tr.arow td.an { padding-left: 26px; font-size: 13.5px; }
 .grid tr.arow td.an button { all: unset; cursor: pointer; color: var(--primary-text-color); }
 .grid tr.arow td.an button:hover { color: var(--primary-color); }
@@ -575,8 +580,8 @@ export class SbModesEditor extends HTMLElement {
         <span class="mn"><ha-icon icon="${esc(this._modeIcon(m.id))}"></ha-icon>${esc(m.name || m.id)}${this._errorsAt(["modes", this._modeIndex(m.id)]).length ? `<span class="dot"></span>` : ""}</span>
         <span class="mt">${esc(this._modeTimes(m.id))}</span></button></th>`).join("");
     const rows = this._zones().map((z) => {
-      const ov = z.overrides || {}, normal = ov[ALL], addons = z.addons || [], open = this._foldOpen(z.id);
-      const cells = modes.map((m) => {
+      const ov = z.overrides || {}, normal = ov[ALL], addons = z.addons || [], open = this._foldOpen(z.id), off = z.enabled === false;
+      const cells = off ? `<td class="cell zoff" colspan="${modes.length}" data-room="${esc(z.id)}"><span class="usual">off — SB Modes leaves this room alone</span></td>` : modes.map((m) => {
         const own = ov[m.id];
         const fallback = !own && !normal ? this._mode(m.id)?.default : null;
         const what = own ? `<span class="difr"><small>Different rule</small>${esc(this._sayChoice(own, z.id, true))}</span>`
@@ -586,9 +591,9 @@ export class SbModesEditor extends HTMLElement {
       }).join("");
       const nerr = this._errorsAt(["zones", this._zoneIndex(z.id)]).length;
       const fold = addons.length ? `<span class="help" style="margin:0 2px 0 6px">·</span><button class="fold" data-fold="${esc(z.id)}">${open ? "hide" : "show"} ${addons.length} add-on${addons.length === 1 ? "" : "s"} ${open ? "▴" : "▾"}</button>` : "";
-      const room = `<tr><td class="room"><button data-room="${esc(z.id)}">${esc(z.name || z.id)} ›</button>${fold}${nerr ? `<span class="dot" title="Has errors"></span>` : ""}
-          <span class="us">${esc(normal ? this._sayChoice(normal, z.id) : "No normal rule")}</span></td>${cells}</tr>`;
-      const subs = open ? addons.map((a) => `<tr class="arow ${a.enabled === false ? "off" : ""}"><td class="an"><span class="ar">↳</span><button data-addon="${esc(z.id)}|${esc(a.id)}">${esc(a.name || a.id)}${a.enabled === false ? " (off)" : ""}</button></td>${this._addonCells(a, z.id)}</tr>`).join("") : "";
+      const room = `<tr class="${off ? "zoff" : ""}"><td class="room"><ha-switch data-zone-on="${esc(z.id)}" ${off ? "" : "checked"} title="SB Modes runs this room — on / off"></ha-switch><button data-room="${esc(z.id)}">${esc(z.name || z.id)} ›</button>${off ? "" : fold}${nerr ? `<span class="dot" title="Has errors"></span>` : ""}
+          <span class="us">${esc(off ? "Off: no rule, no add-ons" : normal ? this._sayChoice(normal, z.id) : "No normal rule")}</span></td>${cells}</tr>`;
+      const subs = open && !off ? addons.map((a) => `<tr class="arow ${a.enabled === false ? "off" : ""}"><td class="an"><span class="ar">↳</span><button data-addon="${esc(z.id)}|${esc(a.id)}">${esc(a.name || a.id)}${a.enabled === false ? " (off)" : ""}</button></td>${this._addonCells(a, z.id)}</tr>`).join("") : "";
       return room + subs;
     }).join("");
     return `${this._modePanelHtml()}
@@ -630,9 +635,12 @@ export class SbModesEditor extends HTMLElement {
     const zs = Object.values(this._hass.states).find((s) => s.attributes.sb_modes_zone === z.id);
     const normal = (z.overrides || {})[ALL];
     const modeRows = this._modes().map((m) => this._roomModeRowHtml(z, m)).join("");
+    const off = z.enabled === false;
     return `<div class="crumb"><button class="lk" data-view="house">‹ House</button><h2>${esc(z.name || z.id)}</h2>
-        <span class="live">${esc(zs ? zs.attributes.status || "" : "new — saved rooms show their live state here")}</span></div>
+        <span class="live">${esc(zs ? zs.attributes.status || "" : "new — saved rooms show their live state here")}</span>
+        <label class="zon"><ha-switch data-zone-on="${esc(z.id)}" ${off ? "" : "checked"}></ha-switch>${off ? "Off" : "On"}</label></div>
       <div class="errs-slot" data-path='${esc(JSON.stringify(["zones", zi]))}'></div>
+      ${off ? `<div class="card zoffnote"><div class="sec">Switched off: SB Modes leaves ${esc(z.name || z.id)} alone in every mode — no rule, no add-ons, hand changes not tracked. Its settings below are kept for when you switch it back on.</div></div>` : ""}
       ${this._secHtml("rule", "1 · Rule", `what's in charge of ${z.name || z.id}'s lights — one at a time`,
         `${normal ? this._sayChoice(normal, z.id) : "no normal rule"}${(() => { const n = Object.keys(z.overrides || {}).filter((k) => k !== ALL).length; return n ? ` · ${n} mode${n === 1 ? "" : "s"} with a different rule` : ""; })()}`,
         `<h4 style="margin:4px 0">Normal rule</h4>
@@ -1257,6 +1265,10 @@ export class SbModesEditor extends HTMLElement {
     const zone = (d) => d.zones.find((x) => x.id === room);
     q("[data-view]", (b) => b.addEventListener("click", () => { this._view = b.dataset.view; this._modePanel = null; this._render(); window.scrollTo({ top: 0 }); }));
     q("[data-room]", (b) => b.addEventListener("click", () => this._goRoom(b.dataset.room)));
+    q("[data-zone-on]", (sw) => sw.addEventListener("change", () => this._edit((d) => {
+      const z = d.zones.find((x) => x.id === sw.dataset.zoneOn);
+      if (sw.checked) delete z.enabled; else z.enabled = false;
+    }, true)));
     q("[data-fold]", (b) => b.addEventListener("click", () => {
       const f = (this._folded ||= new Set()), id = b.dataset.fold;
       if (f.has(id)) f.delete(id); else f.add(id);

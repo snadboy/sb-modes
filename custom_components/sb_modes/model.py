@@ -133,12 +133,15 @@ def resolve(config: dict, mode_id: str, zone_id: str) -> dict | None:
 
     Precedence: the zone's own setting for this mode ("override"), then the zone's setting for
     all modes, key "*" ("zone"), then the mode's default ("default"). None when the
-    mode or zone does not exist (validation keeps a saved table from getting there).
+    mode or zone does not exist (validation keeps a saved table from getting there). A room
+    switched off (``"enabled": false``) is hands off in every mode ("disabled").
     """
     mode = find(config.get("modes"), mode_id)
     zone = find(config.get("zones"), zone_id)
     if mode is None or zone is None:
         return None
+    if zone.get("enabled") is False:                     # a room switched off: SB Modes leaves it alone
+        return {"behaviour": "hands_off", "params": {}, "source": "disabled"}
     overrides = zone.get("overrides") or {}
     if overrides.get(mode_id):
         picked, source = overrides[mode_id], "override"

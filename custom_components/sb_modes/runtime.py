@@ -32,7 +32,7 @@ from homeassistant.helpers.sun import get_astral_event_date
 from homeassistant.util import dt as dt_util
 
 from . import activity, driver
-from .behaviours import KINDS, Behaviour, HandsOff, Held, Overlaid
+from .behaviours import KINDS, Behaviour, Disabled, HandsOff, Held, Overlaid
 from .bookkeeping import Keeper, describe_hold, release_delay
 from .follow import Follower
 from .autooff import AutoOff
@@ -525,7 +525,9 @@ class Runtime:
     def _start_zone(self, zone: dict) -> None:
         picked = resolve(self.config, self.mode, zone["id"]) or {}
         ov = self._overlays.get(zone["id"])
-        if self.keeper.held(zone["id"]):
+        if zone.get("enabled") is False:
+            kind = Disabled
+        elif self.keeper.held(zone["id"]):
             kind = Held
         elif ov is not None and ov.holding:
             kind = Overlaid
@@ -592,6 +594,8 @@ class Runtime:
         if not self.ready:
             return
         for zone in self.zones():
+            if zone.get("enabled") is False:
+                continue                                 # a room switched off runs no add-ons
             addons = [a for a in zone_addons(zone) if a.get("enabled", True)]
             of = lambda t: [a for a in addons if a.get("type") == t]   # noqa: E731
             zid = zone["id"]

@@ -25,6 +25,8 @@ mode, room or entity can never be left unhandled.
   steps can vary at random. Built-in add-ons: **follow** a leader light, **auto-off** for
   lamps turned on by hand, and **replay**, where lights repeat what they did a week ago
   (a lived-in look while away).
+- **Rooms can be switched off.** A switch on the House grid or the room page makes SB
+  Modes leave that room alone in every mode (no rule, no add-ons); its settings are kept.
 - **People win.** A light changed by hand is left alone until the room has been empty
   for its delay; a light turned off by hand stays off until someone comes back. A room
   can be **held** (for minutes, until the next mode, or until released).

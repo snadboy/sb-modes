@@ -78,6 +78,15 @@ class HandsOff(Behaviour):
     name = "hands_off"
 
 
+class Disabled(Behaviour):
+    """A room switched off in the table: no rule, no add-ons, no hand-change tracking."""
+    name = "hands_off"
+
+    @callback
+    def start(self) -> None:
+        self._set_status("disabled")
+
+
 class Overlaid(Behaviour):
     """A zone an overlay holds (the TV playing or paused): the overlay's setting for that state
     instead of the zone's behaviour. Re-applied whenever the zone restarts under it — after a

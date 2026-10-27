@@ -560,6 +560,16 @@ def test_addon_summary_and_changes():
     assert "Kitchen · add-on Workday wake-up: turned off" in lines, lines
     assert any(x.startswith("Kitchen · add-on Workday wake-up: at 06:30") and "at 06:45" in x for x in lines), lines
 
+def test_room_switched_off():
+    a = copy.deepcopy(GOOD)
+    b = copy.deepcopy(a)
+    b["zones"][0]["enabled"] = False
+    assert CH.describe(a, b, NAMES.get) == ["Kitchen: switched off — SB Modes leaves it alone"]
+    assert CH.describe(b, a, NAMES.get) == ["Kitchen: switched back on"]
+    b["zones"][0]["enabled"] = "no"
+    errors, _ = check(b)
+    assert any("enabled must be true or false" in e for e in errors), errors
+
 if __name__ == "__main__":
     n = 0
     for name, fn in list(globals().items()):

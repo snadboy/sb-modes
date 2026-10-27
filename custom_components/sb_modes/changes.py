@@ -129,6 +129,8 @@ def _zone_changes(a: dict, b: dict, name_of, mode_name, day_name=lambda d: d) ->
     out = []
     if _n(a) != z:
         out.append(f"Zone {_n(a)} renamed {z}")
+    if (a.get("enabled") is False) != (b.get("enabled") is False):
+        out.append(f"{z}: {'switched off — SB Modes leaves it alone' if b.get('enabled') is False else 'switched back on'}")
     if (a.get("areas") or []) != (b.get("areas") or []):
         out.append(f"{z} · areas: {', '.join(a.get('areas') or []) or NONE} → {', '.join(b.get('areas') or []) or NONE}")
     for key, label in (("lights", "own lights"), ("occupancy", "own occupancy sensors"), ("illuminance", "own light sensors")):

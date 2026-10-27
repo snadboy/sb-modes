@@ -506,3 +506,13 @@ A "while" add-on takes `entities` (or the old single `entity`): Overlay follows 
 and every player counts as presence. Family Room TV lighting = media_player.family_room_tv +
 media_player.plex_plex_for_android_tv_google_tv_streamer — under Plex the TV's own player reads
 "off", which had left the lights at the off levels.
+
+## Room on/off switch (0.33.0, 2026-10-27)
+
+`zone.enabled: false` switches a room off (user wanted "a method to disable an area"; per-mode
+off was declined for now — a mode's rule can already be "Hands off", and add-ons have When modes).
+model.resolve returns hands_off with source "disabled" in every mode; runtime starts the
+`Disabled` behaviour (status "disabled", not watched for hand changes) and skips all the room's
+add-ons in `_restart_followers`. Editor: a switch per room on the House grid (row dimmed, cells
+"off") and in the Room page header (with a note; settings kept). Card: "Off — SB Modes leaves
+this room alone". changes.py: "switched off / switched back on".

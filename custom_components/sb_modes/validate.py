@@ -150,6 +150,9 @@ def _check_config(config, state_of, area_exists, zone_entities, day_set_exists) 
                 if not area_exists(area):
                     errors.append(f"{where}: area “{area}” does not exist.")
                     areas_ok = False
+        if "enabled" in zone and not isinstance(zone["enabled"], bool):
+            _here("zones", i, "enabled")
+            errors.append(f"{where}: enabled must be true or false.")
         overrides = zone.get("overrides") or {}
         _here("zones", i, "overrides")
         if not isinstance(overrides, dict):

@@ -1994,3 +1994,29 @@ async def test_overlay_follows_the_most_active_of_several_players(hass, kitchen,
     await _tick(hass, freezer, seconds=6)
     assert pct()[-1] == 30
     assert PLEX in _zone(hass)["occupancy"]                             # watching Plex counts as someone there
+
+
+async def test_room_switched_off_runs_nothing(hass, kitchen, lights, freezer, monkeypatch) -> None:
+    """enabled: false — no rule, no add-ons, hands off in every mode; back on, it runs again."""
+    from custom_components.sb_modes import buttons as btn
+    monkeypatch.setattr(btn, "FLASH_SECONDS", 0)
+    hass.states.async_set(BIG, "2026-10-01T00:00:00+00:00", {"event_type": "multi_press_1"})
+    hass.states.async_set(SINK, "on", {"brightness": 200})
+    await _setup(hass)
+    t = _with("vacancy_off", {"lights": [SINK], "off_after_seconds": 60})
+    t["zones"][0]["addons"] = [{"id": "b", "name": "Hold", "type": "button", "entity": BIG,
+                                "presses": {"multi_press_1": {"hold": "next", "targets": {SINK: {"brightness_pct": 10}}}}}]
+    t["zones"][0]["enabled"] = False
+    await _save(hass, t)
+    z = _zone(hass)
+    assert z["source"] == "disabled" and z["status"] == "disabled"
+    lights["on"].clear(); lights["off"].clear()
+    await _press(hass, freezer, BIG, "multi_press_1")
+    await _tick(hass, freezer, minutes=10)
+    assert lights["on"] == [] and lights["off"] == []
+    del t["zones"][0]["enabled"]
+    await _save(hass, t)
+    assert _zone(hass)["source"] != "disabled"
+    await _press(hass, freezer, BIG, "multi_press_1")
+    assert any(c.data.get("brightness_pct") == 10 for c in lights["on"])
+
