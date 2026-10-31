@@ -537,3 +537,13 @@ the entity registry's capabilities; 0 = those off) and raises if there are none.
 zone light (on/off lights, switches) on or off. Both hold first. The zone sensor gains a
 `dimmable` attribute; the card shows a *Dimmable* slider and/or an *On/off* On / Off pair with
 "n of m on", only for the kinds the room has. Tests: 157 pass.
+
+## Room light controls in a dialog (0.36.0, 2026-10-31)
+
+User: the inline slider / On-Off was "much too easy to hit accidentally when I'm scrolling on the
+phone" → make it a modal. The open detail now shows only a **Set lights…** button
+(`data-lights`); it sets `this._dlg` and `_renderDialog()` fills a native `<dialog class="lights">`
+kept beside `<ha-card>` in the shadow root (`showModal`, so it sits in the top layer and the page
+cannot scroll under it). Closes on Done, Esc or a backdrop tap (content is wrapped in `.dlg` so only
+a real backdrop tap has `target === dialog`). Re-rendered on every `_render` while open; `_sliding`
+still blocks re-render mid-drag. Service errors show inside the dialog.
