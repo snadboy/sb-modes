@@ -45,8 +45,10 @@ mode, room or entity can never be left unhandled.
   - *Room*: the rule, the add-ons, the devices.
   - *Times*: the day types and their times, other rules, and the coming week.
 - A **card** (`custom:sb-modes-card`) with the current mode, each room's live status, a
-  hold / release menu, a room-level slider (every light to one level, then held), lights that
-  open their own controls when tapped, and an activity log; entries also go to the Logbook.
+  room dialog (the row's ⋮) to hold or release the room and set its lights (a slider for the
+  dimmable ones, On / Off for the ones that only switch, either holding the room for the chosen
+  time), lights that open their own controls when tapped, and an activity log; entries also go
+  to the Logbook.
 - Entities: `select.sb_modes_mode` (the mode), `sensor.sb_modes_<room>` (what the room is
   doing, its add-ons and their next runs), `binary_sensor.sb_modes_problem` (the saved
   table no longer validates — also raised as a Repairs issue).
