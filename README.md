@@ -59,8 +59,14 @@ Requires Home Assistant 2026.6 or later and
 [SB UI Kit](https://github.com/snadboy/sb-ui-kit); day types use
 [SB Scheduler](https://github.com/snadboy/sb-scheduler) calendars.
 
-**HACS:** HACS → ⋮ → *Custom repositories* → add `https://github.com/snadboy/sb-modes`
-as an *Integration*, then download **SB Modes** and restart Home Assistant.
+**Marketplace (Home Assistant 2026.11+):** *Settings → Marketplace*, connect GitHub
+(custom repositories need it), add `https://github.com/snadboy/sb-modes` as a custom
+*Integration* repository, then download **SB Modes** and restart Home Assistant. Updates then
+appear under *Settings → Updates*. A HACS install carries over on its own when Home
+Assistant is upgraded.
+
+**HACS (2026.10 and older):** HACS → ⋮ → *Custom repositories* → add the same URL as an
+*Integration*, download **SB Modes** and restart.
 
 **Manual:** copy `custom_components/sb_modes` into your `config/custom_components/` and
 restart.
