@@ -11,7 +11,7 @@
  *
  * Rows use the shared SB row style (window.SBKit, from the SB UI Kit integration).
  */
-const VERSION = "0.34.0";
+const VERSION = "0.35.0";
 const CARD = "sb-modes-card";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -246,6 +246,9 @@ button.zt ha-icon { margin-left: auto; --mdc-icon-size: 20px; }
 .lvl input { flex: 1 1 160px; max-width: 320px; accent-color: var(--primary-color); }
 .lvl .lv { min-width: 3.2em; color: var(--primary-text-color); font-variant-numeric: tabular-nums; }
 .lvl .lh { flex-basis: 100%; font-size: 12px; }
+.lvl b { min-width: 5.5em; }
+.lvl .sw { font: inherit; padding: 2px 12px; border: 1px solid var(--divider-color); border-radius: 12px; background: none; color: var(--primary-text-color); cursor: pointer; }
+.lvl .sw:hover { border-color: var(--primary-color); }
 .ent i { width: 8px; height: 8px; border-radius: 4px; display: inline-block; background: var(--disabled-color, #9e9e9e); }
 .ent.on i { background: var(--warning-color, #ffa600); }
 .ent.occ i { background: var(--success-color, #43a047); }
@@ -597,18 +600,23 @@ class SbModesCard extends HTMLElement {
       const cls = s === "on" || watching ? (kind === "occ" ? "occ" : "on") : ["unavailable", "unknown", "missing"].includes(s) && !eid.startsWith("media_player.") ? "na" : "";
       return `<button class="ent ${cls}" data-info="${esc(eid)}" title="${esc(eid)} — tap for its controls"><i></i>${esc(name)}${esc(pct)}${cls === "na" ? ` (${esc(s)})` : ""}</button>`;
     };
-    // the room slider: every light to one level (on/off ones on; 0 = off), and the room held
+    // the room controls: a slider for the dimmable lights (0 = off), On / Off for the rest; both hold the room
+    const dims = a.dimmable || (a.lights || []).filter((e) => (this._hass.states[e]?.attributes.supported_color_modes || []).some((m) => m !== "onoff"));
+    const plain = (a.lights || []).filter((e) => !dims.includes(e));
     const lvl = () => {
-      const on = (a.lights || []).map((e) => this._hass.states[e]).filter((st) => st?.state === "on");
-      const b = on.map((st) => st.attributes.brightness).filter((x) => x != null);
-      return b.length ? Math.round(b.reduce((t, x) => t + x, 0) / b.length * 100 / 255) : on.length ? 100 : 0;
+      const b = dims.map((e) => this._hass.states[e]).filter((st) => st?.state === "on").map((st) => st.attributes.brightness ?? 255);
+      return b.length ? Math.round(b.reduce((t, x) => t + x, 0) / b.length * 100 / 255) : 0;
     };
-    const slider = open && !previewing && !off && (a.lights || []).length ? `<div class="lvl"><b>Room level</b>
-        <input type="range" min="0" max="100" step="5" value="${lvl()}" data-lvl="${esc(z.id)}" aria-label="${esc(z.name)} level">
-        <span class="lv">${lvl()}%</span><span class="lh">sets every light, then holds ${esc(z.name)} until the next mode change</span></div>` : "";
+    const until = `holds ${esc(z.name)} until the next mode change`;
+    const controls = !open || previewing || off ? "" : (dims.length ? `<div class="lvl"><b>Dimmable</b>
+        <input type="range" min="0" max="100" step="5" value="${lvl()}" data-lvl="${esc(z.id)}" aria-label="${esc(z.name)} dimmable level">
+        <span class="lv">${lvl()}%</span></div>` : "") + (plain.length ? `<div class="lvl"><b>On/off</b>
+        <button class="sw" data-sw="${esc(z.id)}" data-state="on">On</button><button class="sw" data-sw="${esc(z.id)}" data-state="off">Off</button>
+        <span class="lv">${plain.filter((e) => this._hass.states[e]?.state === "on").length} of ${plain.length} on</span></div>` : "")
+      + (dims.length || plain.length ? `<div class="lvl"><span class="lh">${dims.length ? `the slider sets the ${dims.length} dimmable light${dims.length === 1 ? "" : "s"}` : ""}${dims.length && plain.length ? "; " : ""}${plain.length ? `On / Off the ${plain.length} that only switch` : ""} — each ${until}</span></div>` : "");
     const detail = open ? `<div class="detail">
         <div><b>In ${esc(modeName)}</b> ${esc(what)} <span class="src">(${esc(src)})</span></div>
-        ${slider}
+        ${controls}
         <div><b>Areas</b> ${esc((a.areas || []).join(", "))}</div>
         ${(a.addons || []).map((x) => this._addonLine(x, (a.addon_status || {})[x.id])).join("")}
         ${(a.occupancy || []).length ? `<div><b>Occupancy</b> ${a.occupancy.map((e) => ent(e, "occ")).join("")}</div>` : ""}
@@ -727,6 +735,12 @@ class SbModesCard extends HTMLElement {
         this._sliding = false; this._sig = ""; this.hass = this._hass;
       });
     });
+    root.querySelectorAll("button[data-sw]").forEach((b) => b.addEventListener("click", async () => {
+      const zone = b.dataset.sw;
+      try { await this._hass.callService("sb_modes", "switch_lights", { zone, state: b.dataset.state }); this._msg = ""; }
+      catch (e) { this._msg = `Could not switch ${zone}: ${e?.message || e}`; }
+      this._sig = ""; this._render();
+    }));
     root.querySelectorAll(".sbk-row .sbk-open").forEach((b) => b.addEventListener("click", () => {
       const id = b.closest("[data-z]").dataset.z;
       if (this._open.has(id)) this._open.delete(id); else this._open.add(id);

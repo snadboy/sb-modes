@@ -707,16 +707,40 @@ class Runtime:
 
     @callback
     def set_level(self, zone_id: str, pct: int, hold: str | int = "next", by: str = "card") -> None:
-        """Every light of a room to one level, and the room held (the card's room slider). A light
-        that cannot dim (or a switch) goes on; 0 = all off."""
-        targets = {}
-        for eid in self.zone_lights(zone_id):
-            st = self.hass.states.get(eid)
-            modes = (st.attributes.get("supported_color_modes") or []) if st is not None else []
-            dims = eid.startswith("light.") and any(m != "onoff" for m in modes)
-            targets[eid] = {"state": "off"} if pct <= 0 else {"brightness_pct": pct} if dims else {"state": "on"}
+        """A room's dimmable lights to one level, and the room held (the card's room slider; 0 = off).
+        On/off lights and switches are left alone: they have switch_lights."""
+        targets = {eid: {"state": "off"} if pct <= 0 else {"brightness_pct": pct}
+                   for eid in self.zone_dimmable(zone_id)}
+        if not targets:
+            raise ValueError(f"{zone_id} has no dimmable lights")
         self.keeper.hold(zone_id, hold, by=by)           # first: the rule sends nothing meanwhile
-        self.send(targets, f"set to {pct}% by {by}" if pct > 0 else f"all off by {by}", zone_id)
+        self.send(targets, f"dimmable lights to {pct}% by {by}" if pct > 0 else f"dimmable lights off by {by}", zone_id)
+
+    @callback
+    def switch_lights(self, zone_id: str, on: bool, hold: str | int = "next", by: str = "card") -> None:
+        """A room's on/off lights (those that cannot dim, and switches) on or off, and the room held."""
+        dims = set(self.zone_dimmable(zone_id))
+        targets = {eid: {"state": "on" if on else "off"} for eid in self.zone_lights(zone_id) if eid not in dims}
+        if not targets:
+            raise ValueError(f"{zone_id} has no on/off lights")
+        self.keeper.hold(zone_id, hold, by=by)
+        self.send(targets, f"on/off lights {'on' if on else 'off'} by {by}", zone_id)
+
+    def zone_dimmable(self, zone_id: str) -> list[str]:
+        """The room's lights that take a brightness: from the state, or (while unavailable) the registry."""
+        reg = er.async_get(self.hass)
+        out = []
+        for eid in self.zone_lights(zone_id):
+            if not eid.startswith("light."):
+                continue
+            st = self.hass.states.get(eid)
+            modes = st.attributes.get("supported_color_modes") if st is not None else None
+            if not modes:
+                entry = reg.async_get(eid)
+                modes = (entry.capabilities or {}).get("supported_color_modes") if entry else None
+            if any(m != "onoff" for m in modes or []):
+                out.append(eid)
+        return out
 
     def zone_presence(self, zone_id: str) -> list[str]:
         b = self._behaviours.get(zone_id)

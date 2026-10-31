@@ -2022,8 +2022,8 @@ async def test_room_switched_off_runs_nothing(hass, kitchen, lights, freezer, mo
 
 
 
-async def test_set_level_sets_every_light_and_holds(hass, kitchen, lights) -> None:
-    """The card's room slider: dimmable lights to the level, an on/off one just on; 0 = all off."""
+async def test_set_level_sets_only_dimmable_lights_and_holds(hass, kitchen, lights) -> None:
+    """The card's room slider: dimmable lights to the level (0 = off); an on/off light is left alone."""
     hass.states.async_set(SINK, "off", {"supported_color_modes": ["brightness"]})
     hass.states.async_set(CEILING, "off", {"supported_color_modes": ["onoff"]})
     await _setup(hass)
@@ -2031,11 +2031,34 @@ async def test_set_level_sets_every_light_and_holds(hass, kitchen, lights) -> No
     lights["on"].clear()
     await hass.services.async_call("sb_modes", "set_level", {"zone": "kitchen", "brightness_pct": 40}, blocking=True)
     await hass.async_block_till_done()
-    sent = {c.data["entity_id"]: c.data.get("brightness_pct") for c in lights["on"]}
-    assert sent == {SINK: 40, CEILING: None}
+    assert {c.data["entity_id"]: c.data.get("brightness_pct") for c in lights["on"]} == {SINK: 40}
     assert _zone(hass)["hold"]["hold"] == "next"
+    assert _zone(hass)["dimmable"] == [SINK]
     hass.states.async_set(SINK, "on", {"supported_color_modes": ["brightness"], "brightness": 102})
     hass.states.async_set(CEILING, "on", {"supported_color_modes": ["onoff"]})
+    lights["off"].clear()
     await hass.services.async_call("sb_modes", "set_level", {"zone": "kitchen", "brightness_pct": 0}, blocking=True)
     await hass.async_block_till_done()
-    assert {c.data["entity_id"] for c in lights["off"]} == {SINK, CEILING}
+    assert {c.data["entity_id"] for c in lights["off"]} == {SINK}
+
+
+async def test_switch_lights_switches_only_on_off_lights(hass, kitchen, lights) -> None:
+    """On / Off on the card: lights that cannot dim go on or off; dimmable ones are left alone."""
+    hass.states.async_set(SINK, "off", {"supported_color_modes": ["brightness"]})
+    hass.states.async_set(CEILING, "off", {"supported_color_modes": ["onoff"]})
+    await _setup(hass)
+    await _save(hass, _with("vacancy_off", {"lights": [SINK, CEILING], "off_after_seconds": 60}))
+    lights["on"].clear()
+    await hass.services.async_call("sb_modes", "switch_lights", {"zone": "kitchen", "state": "on"}, blocking=True)
+    await hass.async_block_till_done()
+    assert [c.data["entity_id"] for c in lights["on"]] == [CEILING]
+    assert _zone(hass)["hold"]["hold"] == "next"
+
+
+async def test_room_controls_refuse_a_room_without_such_lights(hass, kitchen, lights) -> None:
+    hass.states.async_set(SINK, "off", {"supported_color_modes": ["brightness"]})
+    hass.states.async_set(CEILING, "off", {"supported_color_modes": ["brightness"]})
+    await _setup(hass)
+    await _save(hass, _with("vacancy_off", {"lights": [SINK, CEILING], "off_after_seconds": 60}))
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call("sb_modes", "switch_lights", {"zone": "kitchen", "state": "on"}, blocking=True)

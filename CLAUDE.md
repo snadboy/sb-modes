@@ -526,3 +526,14 @@ calling the new action `sb_modes.set_level {zone, brightness_pct, hold=next}` �
 `Runtime.set_level`: hold first (keeper.hold, by "card"), then `send` — dimmable lights (any
 supported_color_mode but onoff) to the %, on/off lights and switches just on; 0 = all off. The
 card skips re-rendering while the slider is dragged (`_sliding`, cleared on change / blur).
+
+## Dimmable vs on/off room controls (0.35.0, 2026-10-31)
+
+User: "Room level should not effect devices without brightness. There should be a way to handle
+brightness AND on/off lights." `Runtime.set_level` now sends only to `zone_dimmable(zone)` (a
+`light.*` with any supported_color_mode but onoff, read from the state or, while unavailable,
+the entity registry's capabilities; 0 = those off) and raises if there are none. New action
+`sb_modes.switch_lights {zone, state: on|off, hold=next}` → `Runtime.switch_lights`: every other
+zone light (on/off lights, switches) on or off. Both hold first. The zone sensor gains a
+`dimmable` attribute; the card shows a *Dimmable* slider and/or an *On/off* On / Off pair with
+"n of m on", only for the kinds the room has. Tests: 157 pass.

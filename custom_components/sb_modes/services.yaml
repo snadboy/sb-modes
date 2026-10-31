@@ -49,6 +49,21 @@ set_level:
       default: next
       selector:
         text:
+switch_lights:
+  fields:
+    zone:
+      required: true
+      selector:
+        text:
+    state:
+      required: true
+      selector:
+        select:
+          options: ["on", "off"]
+    hold:
+      default: next
+      selector:
+        text:
 release_zone:
   fields:
     zone:

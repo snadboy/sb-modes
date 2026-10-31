@@ -113,4 +113,5 @@ class ZoneSensor(ModesEntity, SensorEntity):
             "addons": zone_addons(zone),
             "addon_status": self._rt.addon_status(self._zone_id),
             **{k: v for k, v in (st.get("entities") or {}).items()},
+            "dimmable": self._rt.zone_dimmable(self._zone_id),
         }
