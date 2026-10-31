@@ -30,6 +30,9 @@ HOLD_ZONE_SCHEMA = vol.Schema({
     vol.Required("zone"): str,
     vol.Optional("hold", default="next"): vol.Any(vol.In(["next", "paused"]), vol.All(vol.Coerce(int), vol.Range(min=1, max=1440))),
 })
+SET_LEVEL_SCHEMA = HOLD_ZONE_SCHEMA.extend({
+    vol.Required("brightness_pct"): vol.All(vol.Coerce(int), vol.Range(min=0, max=100)),
+})
 SET_MODE_SCHEMA = vol.Schema({
     vol.Required("mode"): str,
     vol.Optional("hold", default="next"): vol.Any(vol.In(["next", "paused"]), vol.All(vol.Coerce(int), vol.Range(min=1, max=1440))),
@@ -84,11 +87,19 @@ def async_register(hass: HomeAssistant) -> None:
         except ValueError as err:
             raise ServiceValidationError(str(err)) from err
 
+    async def set_level(call: ServiceCall) -> None:
+        rt = _runtime(hass)
+        try:
+            rt.set_level(_zone(rt, call.data["zone"]), call.data["brightness_pct"], call.data["hold"])
+        except ValueError as err:
+            raise ServiceValidationError(str(err)) from err
+
     async def release_zone(call: ServiceCall) -> None:
         rt = _runtime(hass)
         rt.keeper.release(_zone(rt, call.data["zone"]))
 
     hass.services.async_register(DOMAIN, "hold_zone", hold_zone, schema=HOLD_ZONE_SCHEMA)
+    hass.services.async_register(DOMAIN, "set_level", set_level, schema=SET_LEVEL_SCHEMA)
     hass.services.async_register(DOMAIN, "release_zone", release_zone, schema=vol.Schema({vol.Required("zone"): str}))
     hass.services.async_register(DOMAIN, "set_mode", set_mode, schema=SET_MODE_SCHEMA)
     hass.services.async_register(DOMAIN, "resume_schedule", resume_schedule)

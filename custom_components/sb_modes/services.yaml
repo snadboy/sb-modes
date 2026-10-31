@@ -32,6 +32,23 @@ hold_zone:
       default: next
       selector:
         text:
+set_level:
+  fields:
+    zone:
+      required: true
+      selector:
+        text:
+    brightness_pct:
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 100
+          unit_of_measurement: "%"
+    hold:
+      default: next
+      selector:
+        text:
 release_zone:
   fields:
     zone:

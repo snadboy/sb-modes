@@ -516,3 +516,13 @@ model.resolve returns hands_off with source "disabled" in every mode; runtime st
 add-ons in `_restart_followers`. Editor: a switch per room on the House grid (row dimmed, cells
 "off") and in the Room page header (with a note; settings kept). Card: "Off — SB Modes leaves
 this room alone". changes.py: "switched off / switched back on".
+
+## Room level slider + tappable lights on the card (0.34.0, 2026-10-31)
+
+User: "Is there no way to set light levels from SB Mode card?" → both options. In a room's open
+detail on the card: each light / sensor is a button firing `hass-more-info` (HA's own dialog), and
+a **Room level** slider (0–100, step 5; starts at the average brightness of the lights that are on)
+calling the new action `sb_modes.set_level {zone, brightness_pct, hold=next}` →
+`Runtime.set_level`: hold first (keeper.hold, by "card"), then `send` — dimmable lights (any
+supported_color_mode but onoff) to the %, on/off lights and switches just on; 0 = all off. The
+card skips re-rendering while the slider is dragged (`_sliding`, cleared on change / blur).

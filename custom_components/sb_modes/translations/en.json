@@ -100,6 +100,24 @@
         }
       }
     },
+    "set_level": {
+      "name": "Set room level",
+      "description": "Set every light of a zone to one level and hold the zone: dimmable lights to the brightness, on/off lights and switches on (0 = all off).",
+      "fields": {
+        "zone": {
+          "name": "Zone",
+          "description": "A zone id, e.g. kitchen."
+        },
+        "brightness_pct": {
+          "name": "Brightness",
+          "description": "0–100 %; 0 turns everything off."
+        },
+        "hold": {
+          "name": "Hold",
+          "description": "next (until the next mode change), paused (until released) or a number of minutes."
+        }
+      }
+    },
     "release_zone": {
       "name": "Release zone",
       "description": "End a zone's hold and its lights changed by hand; its behaviour starts again for the current mode.",

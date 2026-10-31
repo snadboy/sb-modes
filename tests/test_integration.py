@@ -2020,3 +2020,22 @@ async def test_room_switched_off_runs_nothing(hass, kitchen, lights, freezer, mo
     await _press(hass, freezer, BIG, "multi_press_1")
     assert any(c.data.get("brightness_pct") == 10 for c in lights["on"])
 
+
+
+async def test_set_level_sets_every_light_and_holds(hass, kitchen, lights) -> None:
+    """The card's room slider: dimmable lights to the level, an on/off one just on; 0 = all off."""
+    hass.states.async_set(SINK, "off", {"supported_color_modes": ["brightness"]})
+    hass.states.async_set(CEILING, "off", {"supported_color_modes": ["onoff"]})
+    await _setup(hass)
+    await _save(hass, _with("vacancy_off", {"lights": [SINK, CEILING], "off_after_seconds": 60}))
+    lights["on"].clear()
+    await hass.services.async_call("sb_modes", "set_level", {"zone": "kitchen", "brightness_pct": 40}, blocking=True)
+    await hass.async_block_till_done()
+    sent = {c.data["entity_id"]: c.data.get("brightness_pct") for c in lights["on"]}
+    assert sent == {SINK: 40, CEILING: None}
+    assert _zone(hass)["hold"]["hold"] == "next"
+    hass.states.async_set(SINK, "on", {"supported_color_modes": ["brightness"], "brightness": 102})
+    hass.states.async_set(CEILING, "on", {"supported_color_modes": ["onoff"]})
+    await hass.services.async_call("sb_modes", "set_level", {"zone": "kitchen", "brightness_pct": 0}, blocking=True)
+    await hass.async_block_till_done()
+    assert {c.data["entity_id"] for c in lights["off"]} == {SINK, CEILING}

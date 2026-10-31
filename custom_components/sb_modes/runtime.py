@@ -705,6 +705,19 @@ class Runtime:
         b = self._buttons.get(zone_id) or Buttons(self, {"id": zone_id}, {})
         b._act(action, by=by)
 
+    @callback
+    def set_level(self, zone_id: str, pct: int, hold: str | int = "next", by: str = "card") -> None:
+        """Every light of a room to one level, and the room held (the card's room slider). A light
+        that cannot dim (or a switch) goes on; 0 = all off."""
+        targets = {}
+        for eid in self.zone_lights(zone_id):
+            st = self.hass.states.get(eid)
+            modes = (st.attributes.get("supported_color_modes") or []) if st is not None else []
+            dims = eid.startswith("light.") and any(m != "onoff" for m in modes)
+            targets[eid] = {"state": "off"} if pct <= 0 else {"brightness_pct": pct} if dims else {"state": "on"}
+        self.keeper.hold(zone_id, hold, by=by)           # first: the rule sends nothing meanwhile
+        self.send(targets, f"set to {pct}% by {by}" if pct > 0 else f"all off by {by}", zone_id)
+
     def zone_presence(self, zone_id: str) -> list[str]:
         b = self._behaviours.get(zone_id)
         return list(b.entities.get("occupancy", [])) if b else []

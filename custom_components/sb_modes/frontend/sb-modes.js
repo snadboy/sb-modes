@@ -11,7 +11,7 @@
  *
  * Rows use the shared SB row style (window.SBKit, from the SB UI Kit integration).
  */
-const VERSION = "0.33.0";
+const VERSION = "0.34.0";
 const CARD = "sb-modes-card";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -239,7 +239,13 @@ button.zt ha-icon { margin-left: auto; --mdc-icon-size: 20px; }
 .detail { padding: 2px 16px 12px 68px; font-size: 13px; color: var(--secondary-text-color); line-height: 1.6;
           background: color-mix(in srgb, var(--primary-text-color) 2.5%, transparent); }
 .detail b { color: var(--primary-text-color); font-weight: 500; }
-.ent { display: inline-flex; align-items: center; gap: 4px; margin-right: 10px; white-space: nowrap; }
+.ent { display: inline-flex; align-items: center; gap: 4px; margin-right: 10px; white-space: nowrap;
+       font: inherit; color: inherit; background: none; border: 0; padding: 2px 0; cursor: pointer; }
+.ent:hover { color: var(--primary-text-color); text-decoration: underline; }
+.lvl { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin: 4px 0; }
+.lvl input { flex: 1 1 160px; max-width: 320px; accent-color: var(--primary-color); }
+.lvl .lv { min-width: 3.2em; color: var(--primary-text-color); font-variant-numeric: tabular-nums; }
+.lvl .lh { flex-basis: 100%; font-size: 12px; }
 .ent i { width: 8px; height: 8px; border-radius: 4px; display: inline-block; background: var(--disabled-color, #9e9e9e); }
 .ent.on i { background: var(--warning-color, #ffa600); }
 .ent.occ i { background: var(--success-color, #43a047); }
@@ -265,6 +271,7 @@ class SbModesCard extends HTMLElement {
 
   set hass(h) {
     this._hass = h;
+    if (this._sliding) return;                           // no re-render under a finger on the room slider
     setTimeLocale(h);
     const sel = this._select(), prob = this._problem();
     const zones = this._zones();
@@ -588,10 +595,20 @@ class SbModesCard extends HTMLElement {
       const pct = s === "on" && st?.attributes.brightness != null ? ` ${Math.round(st.attributes.brightness * 100 / 255)}%` : "";
       const watching = eid.startsWith("media_player.") && ["playing", "paused", "idle", "buffering", "on"].includes(s);
       const cls = s === "on" || watching ? (kind === "occ" ? "occ" : "on") : ["unavailable", "unknown", "missing"].includes(s) && !eid.startsWith("media_player.") ? "na" : "";
-      return `<span class="ent ${cls}" title="${esc(eid)}"><i></i>${esc(name)}${esc(pct)}${cls === "na" ? ` (${esc(s)})` : ""}</span>`;
+      return `<button class="ent ${cls}" data-info="${esc(eid)}" title="${esc(eid)} — tap for its controls"><i></i>${esc(name)}${esc(pct)}${cls === "na" ? ` (${esc(s)})` : ""}</button>`;
     };
+    // the room slider: every light to one level (on/off ones on; 0 = off), and the room held
+    const lvl = () => {
+      const on = (a.lights || []).map((e) => this._hass.states[e]).filter((st) => st?.state === "on");
+      const b = on.map((st) => st.attributes.brightness).filter((x) => x != null);
+      return b.length ? Math.round(b.reduce((t, x) => t + x, 0) / b.length * 100 / 255) : on.length ? 100 : 0;
+    };
+    const slider = open && !previewing && !off && (a.lights || []).length ? `<div class="lvl"><b>Room level</b>
+        <input type="range" min="0" max="100" step="5" value="${lvl()}" data-lvl="${esc(z.id)}" aria-label="${esc(z.name)} level">
+        <span class="lv">${lvl()}%</span><span class="lh">sets every light, then holds ${esc(z.name)} until the next mode change</span></div>` : "";
     const detail = open ? `<div class="detail">
         <div><b>In ${esc(modeName)}</b> ${esc(what)} <span class="src">(${esc(src)})</span></div>
+        ${slider}
         <div><b>Areas</b> ${esc((a.areas || []).join(", "))}</div>
         ${(a.addons || []).map((x) => this._addonLine(x, (a.addon_status || {})[x.id])).join("")}
         ${(a.occupancy || []).length ? `<div><b>Occupancy</b> ${a.occupancy.map((e) => ent(e, "occ")).join("")}</div>` : ""}
@@ -698,6 +715,18 @@ class SbModesCard extends HTMLElement {
       } catch (e) { this._msg = `Could not change ${zone}: ${e?.message || e}`; }
       this._sig = ""; this._render();
     }));
+    root.querySelectorAll("[data-info]").forEach((b) => b.addEventListener("click", () => fire(this, "hass-more-info", { entityId: b.dataset.info })));
+    root.querySelectorAll("input[data-lvl]").forEach((r) => {
+      const shown = r.parentElement.querySelector(".lv");
+      r.addEventListener("input", () => { this._sliding = true; shown.textContent = `${r.value}%`; });
+      r.addEventListener("blur", () => { if (this._sliding) { this._sliding = false; this.hass = this._hass; } });
+      r.addEventListener("change", async () => {
+        const zone = r.dataset.lvl;
+        try { await this._hass.callService("sb_modes", "set_level", { zone, brightness_pct: Number(r.value) }); this._msg = ""; }
+        catch (e) { this._msg = `Could not set ${zone}: ${e?.message || e}`; }
+        this._sliding = false; this._sig = ""; this.hass = this._hass;
+      });
+    });
     root.querySelectorAll(".sbk-row .sbk-open").forEach((b) => b.addEventListener("click", () => {
       const id = b.closest("[data-z]").dataset.z;
       if (this._open.has(id)) this._open.delete(id); else this._open.add(id);
