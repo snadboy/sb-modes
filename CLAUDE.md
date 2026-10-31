@@ -547,3 +547,14 @@ kept beside `<ha-card>` in the shadow root (`showModal`, so it sits in the top l
 cannot scroll under it). Closes on Done, Esc or a backdrop tap (content is wrapped in `.dlg` so only
 a real backdrop tap has `target === dialog`). Re-rendered on every `_render` while open; `_sliding`
 still blocks re-render mid-drag. Service errors show inside the dialog.
+
+## One room dialog: hold + lights (0.37.0, 2026-10-31)
+
+User: "Hold and Levels/On-Off shouldn't be so disjointed" → the row's ⋮ (`.zkb`) no longer opens
+the kit hold menu; it opens the `<dialog class="lights">` (`_renderDialog`, state `_dlg` = zone,
+`_dlgHold` = chosen hold). Hold section: current hold text, chips 15 min / 30 min / 1 hour / Next
+mode / Until released (tap = `hold_zone` now; the chip matching the current hold is selected) and
+Release. Lights section: Dimmable slider and On/off buttons, which pass the chosen hold to
+`set_level` / `switch_lights`. The detail's Set lights… button is gone. The card's head ⋮ menu
+(open page / editor) is unchanged. Checked in headless Chromium with a stub hass (live states,
+real sb-ui-kit.js): renders, calls carry the hold, no errors.
