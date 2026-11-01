@@ -64,6 +64,20 @@ switch_lights:
       default: next
       selector:
         text:
+set_lights:
+  fields:
+    zone:
+      required: true
+      selector:
+        text:
+    lights:
+      required: true
+      selector:
+        object:
+    hold:
+      default: next
+      selector:
+        text:
 release_zone:
   fields:
     zone:

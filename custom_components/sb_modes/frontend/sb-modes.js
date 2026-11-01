@@ -11,7 +11,7 @@
  *
  * Rows use the shared SB row style (window.SBKit, from the SB UI Kit integration).
  */
-const VERSION = "0.37.0";
+const VERSION = "0.38.0";
 const CARD = "sb-modes-card";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -71,6 +71,7 @@ const whenKit = () => kitPromise || (kitPromise = new Promise((resolve) => {
 }));
 // Collapsed or not, per card (type + title), per browser — the same keys and button as the
 // other SB cards. Storage can be blocked (private window): then it is simply not remembered.
+const HOLD_MINUTES = [15, 30, 45, 60, 90, 120];
 const foldKey = (card, title) => `sb-card-collapsed:${card}:${title || ""}`;
 const foldGet = (k) => { try { return localStorage.getItem(k) === "1"; } catch (e) { return false; } };
 const foldSet = (k, v) => { try { if (v) localStorage.setItem(k, "1"); else localStorage.removeItem(k); } catch (e) { /* not remembered */ } };
@@ -259,7 +260,15 @@ dialog.lights::backdrop { background: rgba(0,0,0,.45); }
 .dlg .lh { color: var(--secondary-text-color); font-size: 12px; }
 .dlg .err { color: var(--error-color, #db4437); font-size: 13px; }
 .dlg .sw { font: inherit; padding: 6px 16px; border: 1px solid var(--divider-color); border-radius: 16px; background: none; color: var(--primary-text-color); cursor: pointer; }
+.sbk-head .sbk-count { min-width: 0; white-space: normal; }
+.sbk-head > .sbk-kb { flex: none; }
 .dlg .sect { margin: 14px 0 6px; }
+.dlg .opts { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 8px; }
+.dlg .opt { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.dlg .opt input[type=radio] { accent-color: var(--primary-color); width: 18px; height: 18px; margin: 0; }
+.dlg select { font: inherit; color: var(--primary-text-color); background: var(--card-background-color, #fff); border: 1px solid var(--divider-color); border-radius: 6px; padding: 2px 4px; }
+.dlg .lvl.off { opacity: .45; }
+.dlg-foot { gap: 8px; }
 .dlg .sect:first-of-type { margin-top: 0; }
 .dlg .chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0; }
 .dlg .sw.sel { background: var(--primary-color); border-color: var(--primary-color); color: var(--text-primary-color, #fff); }
@@ -693,7 +702,7 @@ class SbModesCard extends HTMLElement {
       const k = foldKey(CARD, this._config.title); foldSet(k, !foldGet(k)); this._render();
     });
     root.querySelectorAll(".sbk-row .zkb").forEach((b) => b.addEventListener("click", () => {
-      this._dlg = b.closest("[data-z]").dataset.z; this._dlgHold = null; this._msg = ""; this._renderDialog();
+      this._openDialog(b.closest("[data-z]").dataset.z);
     }));
     root.querySelectorAll(".sbk-menu button").forEach((b) => b.addEventListener("click", () => {
       const act = b.dataset.act;
@@ -709,8 +718,46 @@ class SbModesCard extends HTMLElement {
     this._renderDialog();
   }
 
-  // The room dialog (the row's ⋮): how long to hold the room, and its lights — a slider for the dimmable
-  // ones (0 = off), On / Off for the rest. A light change holds the room for the chosen time too.
+  // The room dialog (the row's ⋮): hold the room, then set its lights live. Picking a hold applies it at
+  // once; the light controls work only while the room is held. Cancel puts the lights and the hold back
+  // as they were when the dialog opened; Set keeps them.
+  _openDialog(zid) {
+    const z = this._zones().find((x) => x.id === zid);
+    if (!z) return;
+    const lights = {};
+    for (const e of z.attr.lights || []) {
+      const st = this._hass.states[e];
+      if (st?.state === "off") lights[e] = { state: "off" };
+      else if (st?.state === "on") lights[e] = st.attributes.brightness != null ? { brightness_pct: Math.max(1, Math.round(st.attributes.brightness * 100 / 255)) } : { state: "on" };
+    }
+    const h = z.attr.hold;
+    const mins = h?.hold === "timed" ? Math.round((Date.parse(h.until) - Date.parse(h.since)) / 60000) : 15;
+    this._dlg = zid;
+    this._dlgEntry = { hold: h ? { ...h } : null, lights };
+    this._dlgTouched = false;
+    this._dlgMin = HOLD_MINUTES.reduce((b, m) => (Math.abs(m - mins) < Math.abs(b - mins) ? m : b), 15);
+    this._msg = "";
+    this._renderDialog();
+  }
+
+  async _dlgCall(svc, data, what) {
+    try { await this._hass.callService("sb_modes", svc, { zone: this._dlg, ...data }); this._msg = ""; return true; }
+    catch (e) { this._msg = `Could not ${what}: ${e?.message || e}`; return false; }
+    finally { this._sig = ""; this._render(); }
+  }
+
+  async _dlgCancel() {
+    const dlg = this.shadowRoot.querySelector("dialog.lights");
+    const entry = this._dlgEntry, h = entry?.hold;
+    let back = null;                                     // the hold to put back, null = not held
+    if (h?.hold === "timed") { const left = Math.ceil((Date.parse(h.until) - Date.now()) / 60000); back = left > 0 ? left : null; }
+    else if (h) back = h.hold;
+    if (this._dlgTouched && Object.keys(entry.lights).length) await this._dlgCall("set_lights", { lights: entry.lights, hold: back ?? "next" }, "put the lights back");
+    else if (back != null) await this._dlgCall("hold_zone", { hold: back }, "put the hold back");
+    if (back == null && this._zones().find((x) => x.id === this._dlg)?.attr.hold) await this._dlgCall("release_zone", {}, "release");
+    if (!this._msg) dlg.close();
+  }
+
   _renderDialog() {
     const dlg = this.shadowRoot.querySelector("dialog.lights");
     const z = this._dlg && this._zones().find((x) => x.id === this._dlg);
@@ -718,64 +765,58 @@ class SbModesCard extends HTMLElement {
     if (!dlg._wired) {
       dlg._wired = true;
       dlg.addEventListener("close", () => { this._dlg = null; this._sliding = false; this._sig = ""; this._render(); });
-      dlg.addEventListener("click", (e) => { if (e.target === dlg) dlg.close(); });   // a tap on the backdrop
+      dlg.addEventListener("cancel", (e) => { e.preventDefault(); this._dlgCancel(); });   // Esc / back = Cancel
     }
     const a = z.attr, st = (e) => this._hass.states[e];
-    const h = a.hold;
-    const heldAs = !h ? null : h.hold === "timed" ? String(Math.round((Date.parse(h.until) - Date.parse(h.since)) / 60000)) : h.hold;
-    const pick = this._dlgHold || (heldAs && ["15", "30", "60", "next", "paused"].includes(heldAs) ? heldAs : "next");
-    const holdTxt = !h ? "Not held — the rule is in charge." : h.hold === "timed"
-      ? `Held until ${new Date(h.until).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.`
-      : h.hold === "next" ? "Held until the next mode change." : "Held until released.";
-    const hands = Object.keys(a.overrides || {}).length;
+    const h = a.hold, held = !!h;
+    const kind = !h ? "" : h.hold === "timed" ? "for" : h.hold === "paused" ? "paused" : "next";
     const sel = this._select(), modeName = sel ? this._modeName(sel.state) : "the mode";
-    const HOLDS = [["15", "15 min"], ["30", "30 min"], ["60", "1 hour"], ["next", "Next mode"], ["paused", "Until released"]];
     const dims = a.dimmable || (a.lights || []).filter((e) => (st(e)?.attributes.supported_color_modes || []).some((m) => m !== "onoff"));
     const plain = (a.lights || []).filter((e) => !dims.includes(e));
     const on = dims.map(st).filter((x) => x?.state === "on").map((x) => x.attributes.brightness ?? 255);
     const lvl = on.length ? Math.round(on.reduce((t, x) => t + x, 0) / on.length * 100 / 255) : 0;
-    const n = (k, w) => `${k} ${w}${k === 1 ? "" : "s"}`;
-    dlg.innerHTML = `<div class="dlg"><h3>${esc(z.name)}</h3>
-      <div class="sect"><b>Hold</b> <span class="lh">${esc(holdTxt)}</span></div>
-      <div class="chips">${HOLDS.map(([v, t]) => `<button class="sw chip ${v === pick ? "sel" : ""}" data-hold="${v}" aria-pressed="${v === pick}">${t}</button>`).join("")}</div>
-      <div class="chips"><button class="sw" data-release ${h || hands ? "" : "disabled"}>Release — back to ${esc(modeName)}</button></div>
-      ${dims.length || plain.length ? `<div class="sect"><b>Lights</b> <span class="lh">a change also holds ${esc(z.name)} for the time above</span></div>` : ""}
-      ${dims.length ? `<div class="lvl"><b>Dimmable</b>
-        <input type="range" min="0" max="100" step="5" value="${lvl}" data-lvl="${esc(z.id)}" aria-label="${esc(z.name)} dimmable level">
-        <span class="lv">${lvl}%</span><span class="lh">${n(dims.length, "light")} that dim${dims.length === 1 ? "s" : ""}; 0 turns ${dims.length === 1 ? "it" : "them"} off</span></div>` : ""}
-      ${plain.length ? `<div class="lvl"><b>On/off</b>
-        <button class="sw" data-sw="${esc(z.id)}" data-state="on">On</button><button class="sw" data-sw="${esc(z.id)}" data-state="off">Off</button>
-        <span class="lv">${plain.filter((e) => st(e)?.state === "on").length} of ${plain.length} on</span><span class="lh">${n(plain.length, "light")} that only switch${plain.length === 1 ? "es" : ""}</span></div>` : ""}
+    const until = h?.hold === "timed" ? ` (until ${new Date(h.until).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })})` : "";
+    const radio = (v, label) => `<label class="opt"><input type="radio" name="hold" value="${v}" ${kind === v ? "checked" : ""}> ${label}</label>`;
+    const dis = (ok) => (ok ? "" : "disabled");
+    dlg.innerHTML = `<div class="dlg"><h3>${esc(z.name)} Hold</h3>
+      <div class="sect"><b>Hold</b></div>
+      <div class="opts">
+        <div class="opt">${radio("for", "For")}<select data-min aria-label="Minutes">${HOLD_MINUTES.map((m) => `<option ${m === this._dlgMin ? "selected" : ""}>${m}</option>`).join("")}</select> minutes${kind === "for" ? esc(until) : ""}</div>
+        ${radio("paused", "Until released")}
+        ${radio("next", "Until mode change")}
+      </div>
+      <div class="chips"><button class="sw" data-release ${dis(held)}>Release to ${esc(modeName)}</button></div>
+      <div class="sect"><b>Light settings</b> <span class="lh">${held ? "live — changes apply now" : "hold the room first"}</span></div>
+      <div class="lvl ${held && dims.length ? "" : "off"}"><b>Dimmable</b>
+        <input type="range" min="0" max="100" step="5" value="${lvl}" data-lvl aria-label="${esc(z.name)} dimmable level" ${dis(held && dims.length)}>
+        <span class="lv">${dims.length ? `${lvl}%` : "none"}</span></div>
+      <div class="lvl ${held && plain.length ? "" : "off"}"><b>On/off</b>
+        <button class="sw" data-sw="off" ${dis(held && plain.length)}>All off</button><button class="sw" data-sw="on" ${dis(held && plain.length)}>All on</button>
+        <span class="lv">${plain.length ? `${plain.filter((e) => st(e)?.state === "on").length} of ${plain.length} on` : "none"}</span></div>
       ${this._msg ? `<p class="err">${esc(this._msg)}</p>` : ""}
-      <div class="dlg-foot"><button class="sw" data-close autofocus>Done</button></div></div>`;
-    const holdArg = () => (/^\d+$/.test(pick) ? Number(pick) : pick);
-    const call = async (svc, data, what) => {
-      try { await this._hass.callService("sb_modes", svc, { zone: z.id, ...data }); this._msg = ""; }
-      catch (e) { this._msg = `Could not ${what} ${z.name}: ${e?.message || e}`; }
-      this._sig = ""; this._render();
-    };
-    dlg.querySelectorAll("button[data-hold]").forEach((b) => b.addEventListener("click", () => {
-      this._dlgHold = b.dataset.hold;
-      call("hold_zone", { hold: /^\d+$/.test(b.dataset.hold) ? Number(b.dataset.hold) : b.dataset.hold }, "hold");
-    }));
-    dlg.querySelector("button[data-release]").addEventListener("click", () => { this._dlgHold = null; call("release_zone", {}, "release"); });
-    dlg.querySelector("[data-close]").addEventListener("click", () => dlg.close());
-    dlg.querySelectorAll("input[data-lvl]").forEach((r) => {
-      const shown = r.parentElement.querySelector(".lv");
-      r.addEventListener("input", () => { this._sliding = true; shown.textContent = `${r.value}%`; });
-      r.addEventListener("blur", () => { if (this._sliding) { this._sliding = false; this.hass = this._hass; } });
-      r.addEventListener("change", async () => {
-        const zone = r.dataset.lvl;
-        try { await this._hass.callService("sb_modes", "set_level", { zone, brightness_pct: Number(r.value), hold: holdArg() }); this._msg = ""; }
-        catch (e) { this._msg = `Could not set ${zone}: ${e?.message || e}`; }
-        this._sliding = false; this._sig = ""; this.hass = this._hass;
-      });
+      <div class="dlg-foot"><button class="sw" data-cancel>Cancel</button><button class="sw sel" data-set autofocus>Set</button></div></div>`;
+    const holdNow = (v) => this._dlgCall("hold_zone", { hold: v === "for" ? this._dlgMin : v }, `hold ${z.name}`);
+    dlg.querySelectorAll("input[name=hold]").forEach((r) => r.addEventListener("change", () => holdNow(r.value)));
+    const minSel = dlg.querySelector("select[data-min]");
+    minSel.addEventListener("focus", () => { this._sliding = true; });
+    minSel.addEventListener("blur", () => { this._sliding = false; });
+    minSel.addEventListener("change", () => {
+      this._dlgMin = Number(minSel.value); this._sliding = false;
+      if (kind === "for" || dlg.querySelector("input[value=for]").checked) holdNow("for");
     });
-    dlg.querySelectorAll("button[data-sw]").forEach((b) => b.addEventListener("click", async () => {
-      const zone = b.dataset.sw;
-      try { await this._hass.callService("sb_modes", "switch_lights", { zone, state: b.dataset.state, hold: holdArg() }); this._msg = ""; }
-      catch (e) { this._msg = `Could not switch ${zone}: ${e?.message || e}`; }
-      this._sig = ""; this._render();
+    dlg.querySelector("[data-release]").addEventListener("click", () => this._dlgCall("release_zone", {}, `release ${z.name}`));
+    dlg.querySelector("[data-cancel]").addEventListener("click", () => this._dlgCancel());
+    dlg.querySelector("[data-set]").addEventListener("click", () => dlg.close());
+    const r = dlg.querySelector("input[data-lvl]"), shown = r.parentElement.querySelector(".lv");
+    r.addEventListener("input", () => { this._sliding = true; shown.textContent = `${r.value}%`; });
+    r.addEventListener("blur", () => { if (this._sliding) { this._sliding = false; this.hass = this._hass; } });
+    r.addEventListener("change", async () => {
+      this._dlgTouched = true; this._sliding = false;
+      await this._dlgCall("set_level", { brightness_pct: Number(r.value), hold: "keep" }, `set ${z.name}`);
+    });
+    dlg.querySelectorAll("button[data-sw]").forEach((b) => b.addEventListener("click", () => {
+      this._dlgTouched = true;
+      this._dlgCall("switch_lights", { state: b.dataset.sw, hold: "keep" }, `switch ${z.name}`);
     }));
     if (!dlg.open) dlg.showModal();
   }

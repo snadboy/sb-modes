@@ -2062,3 +2062,25 @@ async def test_room_controls_refuse_a_room_without_such_lights(hass, kitchen, li
     await _save(hass, _with("vacancy_off", {"lights": [SINK, CEILING], "off_after_seconds": 60}))
     with pytest.raises(ServiceValidationError):
         await hass.services.async_call("sb_modes", "switch_lights", {"zone": "kitchen", "state": "on"}, blocking=True)
+
+
+async def test_keep_leaves_a_hold_and_set_lights_puts_lights_back(hass, kitchen, lights) -> None:
+    """The card's room dialog: a light change with hold "keep" leaves a 45-minute hold as it is, and
+    Cancel's set_lights sends each light back to its own target."""
+    hass.states.async_set(SINK, "off", {"supported_color_modes": ["brightness"]})
+    hass.states.async_set(CEILING, "off", {"supported_color_modes": ["onoff"]})
+    await _setup(hass)
+    await _save(hass, _with("vacancy_off", {"lights": [SINK, CEILING], "off_after_seconds": 60}))
+    await hass.services.async_call("sb_modes", "hold_zone", {"zone": "kitchen", "hold": 45}, blocking=True)
+    until = _zone(hass)["hold"]["until"]
+    await hass.services.async_call("sb_modes", "set_level", {"zone": "kitchen", "brightness_pct": 30, "hold": "keep"}, blocking=True)
+    await hass.async_block_till_done()
+    assert _zone(hass)["hold"]["until"] == until
+    lights["on"].clear()
+    lights["off"].clear()
+    await hass.services.async_call("sb_modes", "set_lights", {"zone": "kitchen", "hold": "keep",
+                                   "lights": {SINK: {"brightness_pct": 70}, CEILING: {"state": "off"}}}, blocking=True)
+    await hass.async_block_till_done()
+    assert {c.data["entity_id"]: c.data.get("brightness_pct") for c in lights["on"]} == {SINK: 70}
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call("sb_modes", "set_lights", {"zone": "kitchen", "lights": {"light.elsewhere": {"state": "on"}}}, blocking=True)

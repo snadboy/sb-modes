@@ -136,6 +136,24 @@
         }
       }
     },
+    "set_lights": {
+      "name": "Set room lights",
+      "description": "Set given lights of a zone (each to on, off or a brightness) and hold the zone. The card uses it to put lights back on Cancel.",
+      "fields": {
+        "zone": {
+          "name": "Zone",
+          "description": "A zone id, e.g. kitchen."
+        },
+        "lights": {
+          "name": "Lights",
+          "description": "Light → target, e.g. {\"light.lamp\": {\"brightness_pct\": 40}, \"switch.plug\": {\"state\": \"off\"}}."
+        },
+        "hold": {
+          "name": "Hold",
+          "description": "next, paused, keep (leave a hold in place) or a number of minutes."
+        }
+      }
+    },
     "release_zone": {
       "name": "Release zone",
       "description": "End a zone's hold and its lights changed by hand; its behaviour starts again for the current mode.",

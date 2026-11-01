@@ -558,3 +558,24 @@ Release. Lights section: Dimmable slider and On/off buttons, which pass the chos
 `set_level` / `switch_lights`. The detail's Set lights… button is gone. The card's head ⋮ menu
 (open page / editor) is unchanged. Checked in headless Chromium with a stub hass (live states,
 real sb-ui-kit.js): renders, calls carry the hold, no errors.
+
+## Room dialog per the user's sketch (0.38.0, 2026-10-31)
+
+From a hand-drawn sketch ("Living Room Hold"). `_openDialog(zid)` snapshots the room's hold and each
+light (`off` / `brightness_pct` / `on`; unavailable skipped) into `_dlgEntry`. Hold = radios *For
+[15/30/45/60/90/120] minutes* (`HOLD_MINUTES`; the select is outside the radio's label so picking
+minutes doesn't start a hold) / *Until released* / *Until mode change*; picking one calls
+`hold_zone` at once; always enabled. *Release to <mode>* only when held. *Light settings* (Dimmable
+slider, All off / All on) are disabled unless the room is held (and unless it has that kind of light)
+and are live, calling `set_level` / `switch_lights` with the new hold value **"keep"** (leave a hold
+as it is; else next). **Cancel** (also Esc/back via the dialog's `cancel` event; backdrop taps do
+nothing): if a light was touched, `set_lights` the snapshot (new action: `{zone, lights: {eid:
+target}, hold}`, rejects lights not in the zone), with the entry hold (timed → minutes left); else
+`hold_zone` the entry hold; then `release_zone` if the room was not held on entry. **Set** just
+closes. `_sliding` also guards the minutes select while it is focused (a re-render would close it
+on a phone).
+
+Header fix in the same release: `.sbk-count` (kit: `flex:1; white-space:nowrap`, no min-width) pushed
+the ⋮ / › past the card border when "· n needs attention" showed; the card now sets
+`.sbk-head .sbk-count { min-width:0; white-space:normal }` so the text wraps. The same kit rule
+may bite sb-background / sb-watch (they use `sbk-hwrap` heads too); a real fix belongs in sb-ui-kit.

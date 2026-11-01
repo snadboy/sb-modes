@@ -713,7 +713,7 @@ class Runtime:
                    for eid in self.zone_dimmable(zone_id)}
         if not targets:
             raise ValueError(f"{zone_id} has no dimmable lights")
-        self.keeper.hold(zone_id, hold, by=by)           # first: the rule sends nothing meanwhile
+        self._hold_for_lights(zone_id, hold, by)         # first: the rule sends nothing meanwhile
         self.send(targets, f"dimmable lights to {pct}% by {by}" if pct > 0 else f"dimmable lights off by {by}", zone_id)
 
     @callback
@@ -723,8 +723,23 @@ class Runtime:
         targets = {eid: {"state": "on" if on else "off"} for eid in self.zone_lights(zone_id) if eid not in dims}
         if not targets:
             raise ValueError(f"{zone_id} has no on/off lights")
-        self.keeper.hold(zone_id, hold, by=by)
+        self._hold_for_lights(zone_id, hold, by)
         self.send(targets, f"on/off lights {'on' if on else 'off'} by {by}", zone_id)
+
+    @callback
+    def set_lights(self, zone_id: str, lights: dict[str, dict], hold: str | int = "next", by: str = "card") -> None:
+        """Given lights of a room to given targets, and the room held (the card's Cancel puts lights back)."""
+        own = set(self.zone_lights(zone_id))
+        if stray := sorted(set(lights) - own):
+            raise ValueError(f"not lights of {zone_id}: {', '.join(stray)}")
+        self._hold_for_lights(zone_id, hold, by)
+        self.send({e: dict(t) for e, t in lights.items()}, f"lights put back by {by}", zone_id)
+
+    def _hold_for_lights(self, zone_id: str, hold: str | int, by: str) -> None:
+        """Hold the room before a light change; "keep" leaves a hold in place (else until the next mode)."""
+        if hold == "keep" and self.keeper.held(zone_id):
+            return
+        self.keeper.hold(zone_id, "next" if hold == "keep" else hold, by=by)
 
     def zone_dimmable(self, zone_id: str) -> list[str]:
         """The room's lights that take a brightness: from the state, or (while unavailable) the registry."""
