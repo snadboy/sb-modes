@@ -11,7 +11,7 @@
  *
  * Rows use the shared SB row style (window.SBKit, from the SB UI Kit integration).
  */
-const VERSION = "0.39.0";
+const VERSION = "0.40.0";
 const CARD = "sb-modes-card";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -297,6 +297,7 @@ dialog.lights::backdrop { background: rgba(0,0,0,.45); }
 .pc .rules { padding: 0 16px 14px; }
 .zh .lead { margin-left: 0 !important; --mdc-icon-size: 18px; color: var(--warning-color, #ffa600); }
 .att-h.bad .lead, .sub.err { color: var(--error-color); }
+.att-h.quiet .lead { color: var(--secondary-text-color); }
 .zh .cnt { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-left: 6px; }
 ul.att { margin: 4px 0 10px; padding-left: 18px; font-size: 13px; color: var(--secondary-text-color); line-height: 1.5; }
 ul.att.err { color: var(--error-color); }
@@ -500,7 +501,7 @@ class SbModesCard extends HTMLElement {
           <div class="switch-l">Modes · tap one to see what it does</div>
           <div class="modes" role="group" aria-label="See a mode">${chips}</div>
           ${banner}</section>
-        ${this._attentionHtml(errs, warns)}
+        ${this._attentionHtml(errs, warns, prob?.attributes.out_of_service || [])}
         <section class="pc">${this._roomsTableHtml(zones, viewed, nm(viewed), previewing)}</section>
         <section class="pc">${this._scheduleHtml(sel, nm)}</section>
         <section class="pc">${this._activityHtml()}</section>
@@ -857,8 +858,8 @@ class SbModesCard extends HTMLElement {
   }
 
   /** Errors and warnings, closed to one line; warnings about the same unavailable device as one entry. */
-  _attentionHtml(errs, warns) {
-    if (!errs.length && !warns.length) return "";
+  _attentionHtml(errs, warns, oos = []) {
+    if (!errs.length && !warns.length && !oos.length) return "";
     const groups = new Map(), other = [];
     for (const w of warns) {
       const m = /\b([a-z_]+\.[a-z0-9_]+) is unavailable/.exec(w);
@@ -868,15 +869,18 @@ class SbModesCard extends HTMLElement {
     const devs = [...groups].sort((x, y) => byName(this._name(x[0]), this._name(y[0])));
     const bits = [errs.length ? `${errs.length} error${errs.length === 1 ? "" : "s"} in the table` : "",
       ...devs.map(([e, l]) => `${this._name(e)} unavailable · ${l.length} setting${l.length === 1 ? "" : "s"}`),
-      other.length ? `${other.length} other warning${other.length === 1 ? "" : "s"}` : ""].filter(Boolean);
+      other.length ? `${other.length} other warning${other.length === 1 ? "" : "s"}` : "",
+      oos.length ? `out of service: ${oos.map((o) => o.name).join(", ")}` : ""].filter(Boolean);
+    const quiet = !errs.length && !warns.length;      // only out of service: nothing to fix, just a reminder
     const open = this._isOpen("__attention");
     const body = !open ? "" : `<div class="rules">
         ${errs.length ? `<div class="sub err">Errors</div><ul class="att err">${errs.map((e) => `<li>${esc(e)}</li>`).join("")}</ul>` : ""}
         ${devs.map(([e, list]) => `<div class="att-d"><button class="ent" data-info="${esc(e)}">${esc(this._name(e))}</button> <span class="mut">unavailable · used in ${list.length} setting${list.length === 1 ? "" : "s"}</span>
           <ul class="att">${list.sort(byName).map((x) => `<li>${esc(x.replace(/^Zone /, ""))}</li>`).join("")}</ul></div>`).join("")}
-        ${other.length ? `<div class="sub">Other warnings</div><ul class="att">${other.map((e) => `<li>${esc(e)}</li>`).join("")}</ul>` : ""}</div>`;
-    return `<section class="pc"><button class="zh zt att-h ${errs.length ? "bad" : ""}" data-x="__attention" aria-expanded="${open}">
-        <ha-icon class="lead" icon="mdi:alert-outline"></ha-icon>Needs attention <span class="cnt">${esc(bits.join(" · "))}</span>
+        ${other.length ? `<div class="sub">Other warnings</div><ul class="att">${other.map((e) => `<li>${esc(e)}</li>`).join("")}</ul>` : ""}
+        ${oos.length ? `<div class="sub">Out of service</div><ul class="att">${oos.map((o) => `<li>${esc(o.name)} <span class="mut">(${esc(o.entity_id)}) — disabled in Home Assistant, so SB Modes skips it; its settings are kept. Enable it again to bring it back.</span></li>`).join("")}</ul>` : ""}</div>`;
+    return `<section class="pc"><button class="zh zt att-h ${errs.length ? "bad" : ""} ${quiet ? "quiet" : ""}" data-x="__attention" aria-expanded="${open}">
+        <ha-icon class="lead" icon="${quiet ? "mdi:power-plug-off-outline" : "mdi:alert-outline"}"></ha-icon>${quiet ? "Out of service" : "Needs attention"} <span class="cnt">${esc(quiet ? oos.map((o) => o.name).join(", ") : bits.join(" · "))}</span>
         <ha-icon icon="${open ? "mdi:chevron-down" : "mdi:chevron-right"}"></ha-icon></button>${body}</section>`;
   }
 

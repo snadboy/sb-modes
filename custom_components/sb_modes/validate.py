@@ -8,7 +8,8 @@ schema, an entity that does not exist or that no driver can control, an unknown 
 A zone whose behaviour, in any mode, needs lights, occupancy or illuminance sensors
 that its areas do not have is an error too.
 
-WARNINGS never block: an entity that is unavailable right now.
+WARNINGS never block: an entity that is unavailable right now. An entity DISABLED in Home
+Assistant is out of service: neither (state_of gives "disabled"; the runtime lists it).
 
 Every message starts with where the problem is ("Zone Kitchen, Overnight: …"), so a
 list of them reads on its own in Repairs and in the editor. The lists returned are Issues: each
@@ -460,6 +461,8 @@ def _check_entity(eid: Any, domains: list[str] | None, where: str, state_of, err
     st = state_of(eid)
     if st is None:
         errors.append(f"{where}: {eid} does not exist.")
+    elif st == "disabled":
+        pass                                             # out of service on purpose: skipped quietly
     elif st in UNAVAILABLE:
         warnings.append(f"{where}: {eid} is {st}.")
 

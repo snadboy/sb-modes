@@ -633,3 +633,15 @@ being open only for the browser session (sessionStorage `sb-modes-open`, keys `s
   section; the coming week a days × modes table.
 - Checked against the live HA in headless Chromium (local JS routed in for /sb_modes_static/),
   desktop 1440 and phone 390, plus a click-through (sort, mode page, back, browser back).
+
+## Out of service = disabled in HA (0.40.0, 2026-11-01)
+
+User: a way to mark an entity out of service (the Mova bulb won't be replaced for a while) →
+"Enabled = out of service". `state_lookup` now returns "disabled" for a registry entity with
+`disabled_by` (was None = "does not exist" = an ERROR that blocked saving); validate's
+`_check_entity` skips "disabled" silently (other `state_of(x) is None` checks pass it too). The
+driver already skips entities with no state. `Runtime._out_of_service()` (in `check()`, every tick)
+lists table-named disabled entities [{entity_id, name}] (registry name / device name) →
+`binary_sensor.sb_modes_problem` attribute `out_of_service` → Status "Needs attention" gets an
+Out of service list (a quiet grey "Out of service" header when that's all there is).
+Tests: test_validate entity checks; test_disabled_entity_is_out_of_service.

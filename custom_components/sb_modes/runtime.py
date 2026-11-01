@@ -12,7 +12,9 @@ A table change reloads the entry, which stops and starts them too.
 
 from __future__ import annotations
 
+import json
 import logging
+import re
 from collections import deque
 from collections.abc import Callable
 from datetime import date, datetime, timedelta
@@ -22,6 +24,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 from homeassistant.core import CALLBACK_TYPE, Context, CoreState, HassJob, HomeAssistant, callback
 from homeassistant.helpers import area_registry as ar
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.event import (
@@ -55,14 +58,15 @@ HOLDS = ("next", "timed", "paused")
 
 def state_lookup(hass: HomeAssistant) -> Callable[[str], str | None]:
     """state_of() for validation: a registered entity with no state yet (its integration
-    still loading) reads 'unavailable', not missing; a disabled one counts as missing."""
+    still loading) reads 'unavailable', not missing; one disabled in Home Assistant reads
+    'disabled' — out of service: skipped, and neither an error nor a warning (2026-11-01)."""
     reg = er.async_get(hass)
 
     def state_of(eid: str) -> str | None:
         if (st := hass.states.get(eid)) is not None:
             return st.state
         if (e := reg.async_get(eid)) is not None:
-            return "unavailable" if not e.disabled_by else None
+            return "disabled" if e.disabled_by else "unavailable"
         return None
 
     return state_of
@@ -90,6 +94,7 @@ class Runtime:
         self._hold_unsub: CALLBACK_TYPE | None = None
         self._occ_unsub: CALLBACK_TYPE | None = None
         self.errors: list[str] = []
+        self.out_of_service: list[dict] = []           # [{entity_id, name}] disabled in HA, named in the table
         self.warnings: list[str] = []
         self.ready = False                                # behaviours may run
         self.own_contexts: deque[str] = deque(maxlen=500)  # ids of the contexts of our own calls
@@ -790,8 +795,9 @@ class Runtime:
     @callback
     def check(self) -> None:
         errors, warnings = self.validate(self.config)
-        changed = (errors, warnings) != (self.errors, self.warnings)
-        self.errors, self.warnings = errors, warnings
+        oos = self._out_of_service()
+        changed = (errors, warnings, oos) != (self.errors, self.warnings, self.out_of_service)
+        self.errors, self.warnings, self.out_of_service = errors, warnings, oos
         if errors:
             if self._issue_raised:
                 self._raise_issue()                 # keep the text current
@@ -805,6 +811,22 @@ class Runtime:
                 self._issue_raised = False
         if changed:
             self.notify()
+
+    def _out_of_service(self) -> list[dict]:
+        """Entities the table names that are disabled in Home Assistant, A to Z by name."""
+        reg, devs = er.async_get(self.hass), dr.async_get(self.hass)
+        out = []
+        for eid in sorted(set(re.findall(r'"([a-z_]+\.[a-z0-9_]+)"', json.dumps(self.config)))):
+            e = reg.async_get(eid)
+            if e is None or not e.disabled_by:
+                continue
+            name = e.name or e.original_name
+            dev = devs.async_get(e.device_id) if e.device_id else None
+            dname = dev and (dev.name_by_user or dev.name)
+            if dname and (not name or e.has_entity_name):
+                name = f"{dname} {name}" if name else dname
+            out.append({"entity_id": eid, "name": name or eid})
+        return sorted(out, key=lambda x: x["name"].lower())
 
     @callback
     def _grace_over(self, _now=None) -> None:

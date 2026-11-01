@@ -2084,3 +2084,22 @@ async def test_keep_leaves_a_hold_and_set_lights_puts_lights_back(hass, kitchen,
     assert {c.data["entity_id"]: c.data.get("brightness_pct") for c in lights["on"]} == {SINK: 70}
     with pytest.raises(ServiceValidationError):
         await hass.services.async_call("sb_modes", "set_lights", {"zone": "kitchen", "lights": {"light.elsewhere": {"state": "on"}}}, blocking=True)
+
+
+async def test_disabled_entity_is_out_of_service(hass, kitchen, lights) -> None:
+    """An entity disabled in Home Assistant is out of service: the table stays valid (no error, no
+    warning), SB Modes skips it, and the problem sensor lists it under out_of_service."""
+    reg = er.async_get(hass)
+    e = reg.async_get_or_create("light", "test", "mova", suggested_object_id="mova_bulb", original_name="Mova Bulb",
+                                disabled_by=er.RegistryEntryDisabler.USER)
+    await _setup(hass)
+    await _save(hass, _with("vacancy_off", {"lights": [SINK, e.entity_id], "off_after_seconds": 60}))
+    attrs = hass.states.get(PROBLEM).attributes
+    assert hass.states.get(PROBLEM).state == "off"
+    assert attrs["errors"] == [] and not any("mova" in w for w in attrs["warnings"]), attrs
+    assert attrs["out_of_service"] == [{"entity_id": e.entity_id, "name": "Mova Bulb"}]
+    reg.async_update_entity(e.entity_id, disabled_by=None)       # back in service: listed no more
+    rt = hass.config_entries.async_entries("sb_modes")[0].runtime_data
+    rt.check()
+    await hass.async_block_till_done()
+    assert hass.states.get(PROBLEM).attributes["out_of_service"] == []

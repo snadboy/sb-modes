@@ -33,6 +33,7 @@ STATES = {
     "light.kitchen_aux_sink": "on",
     "light.kitchen_aux_cabinet": "off",
     "light.dining_room_aux_sideboard": "unavailable",
+    "light.mova_bulb": "disabled",
     "switch.kitchen_aux_cabinet": "on",
     "climate.bedroom_ac": "cool",
 }
@@ -150,6 +151,8 @@ def test_entity_checks():
     assert e == ["Zone Kitchen, Overnight, nightlight: no driver controls climate entities (climate.bedroom_ac)."], e
     e, w = edit(nl("light.dining_room_aux_sideboard"))
     assert e == [] and w == ["Zone Kitchen, Overnight, nightlight: light.dining_room_aux_sideboard is unavailable."], (e, w)
+    e, w = edit(nl("light.mova_bulb"))                  # disabled in HA = out of service: no error, no warning
+    assert e == [] and w == [], (e, w)
 
 
 FOUND = {

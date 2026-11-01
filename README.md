@@ -30,6 +30,9 @@ mode, room or entity can never be left unhandled.
 - **People win.** A light changed by hand is left alone until the room has been empty
   for its delay; a light turned off by hand stays off until someone comes back. A room
   can be **held** (for minutes, until the next mode, or until released).
+- **Out of service.** Disable a device's entity in Home Assistant and SB Modes skips it everywhere,
+  with no error or warning, keeping its settings; Status lists it so it isn't forgotten. Enable it
+  again (with the same entity ID) to bring it back.
 - **Presence.** Any of a room's sensors counts; an offline sensor never blocks "empty";
   a TV that is playing counts as someone there.
 - **Light groups** are checked and set lamp by lamp, and a light that is off is turned
