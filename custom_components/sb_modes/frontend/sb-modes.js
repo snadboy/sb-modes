@@ -11,7 +11,7 @@
  *
  * Rows use the shared SB row style (window.SBKit, from the SB UI Kit integration).
  */
-const VERSION = "0.40.0";
+const VERSION = "0.41.0";
 const CARD = "sb-modes-card";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -297,6 +297,14 @@ dialog.lights::backdrop { background: rgba(0,0,0,.45); }
 .pc .rules { padding: 0 16px 14px; }
 .zh .lead { margin-left: 0 !important; --mdc-icon-size: 18px; color: var(--warning-color, #ffa600); }
 .att-h.bad .lead, .sub.err { color: var(--error-color); }
+.held { margin: 0 12px 10px; padding: 8px 12px; border-radius: 8px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; font-size: 13.5px;
+        background: color-mix(in srgb, var(--warning-color, #ffa600) 14%, transparent); }
+.held > ha-icon { --mdc-icon-size: 18px; color: var(--warning-color, #ffa600); }
+.held > b { font-weight: 500; margin-right: 2px; }
+.held .hz { display: inline-flex; align-items: center; gap: 6px; }
+.held .hn { font-weight: 500; }
+.held .rel { height: 28px; padding: 0 10px; font-size: 12.5px; }
+.pc .held { margin: 4px 12px 10px; }
 .att-h.quiet .lead { color: var(--secondary-text-color); }
 .zh .cnt { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-left: 6px; }
 ul.att { margin: 4px 0 10px; padding-left: 18px; font-size: 13px; color: var(--secondary-text-color); line-height: 1.5; }
@@ -515,6 +523,7 @@ class SbModesCard extends HTMLElement {
         <div><div class="cur-l">Current mode</div><div class="cur">${esc(nm(sel.state))}</div>
           <div class="since">since ${esc(hhmm(since))} (${esc(ago(since))} ago) · fallback ${esc(nm(sel.attributes.fallback_mode))}</div></div></div>
       ${status}
+      ${this._heldHtml(zones)}
       <div class="switch-l">Modes · tap one to see what it does</div>
       <div class="modes" role="group" aria-label="See a mode">${chips}</div>
       ${banner}
@@ -783,6 +792,17 @@ class SbModesCard extends HTMLElement {
              look: previewing ? { icon: look(beh, "").icon, tint: "idle" } : look(beh, a.status) };
   }
 
+  /** "Held: Office (until next mode) · Laundry Room (until 3:15 PM)", each with Release — only
+   *  while a room is held; on the card under the current mode, on the page above the rooms. */
+  _heldHtml(zones) {
+    const held = zones.filter((z) => z.attr.hold);
+    if (!held.length) return "";
+    const until = (h) => (h.hold === "timed" ? `until ${hhmm(h.until)}` : h.hold === "next" ? "until next mode" : "until released");
+    return `<div class="held" role="group" aria-label="Held rooms"><ha-icon icon="mdi:hand-back-right-outline"></ha-icon><b>Held</b>${held.map((z) =>
+      `<span class="hz"><span class="hn">${esc(z.name)}</span> <span class="mut">${esc(until(z.attr.hold))}</span>
+        <button class="sbk-btn rel" data-release-zone="${esc(z.id)}" aria-label="Release ${esc(z.name)}">Release</button></span>`).join("")}</div>`;
+  }
+
   /** The page's rooms: a table (Room · Rule now · Doing · Hold), each row opening its details. */
   _roomsTableHtml(zones, viewed, modeName, previewing) {
     const sort = this._sortOf("rooms");
@@ -806,6 +826,7 @@ class SbModesCard extends HTMLElement {
         </div>${hand.length ? `<div class="rt-x">Changed by hand: ${esc(hand.join(", "))}</div>` : ""}${open ? this._roomDetailHtml(z, i, modeName, previewing) : ""}`;
     }).join("");
     return `<div class="sh">Rooms${previewing ? ` in ${esc(modeName)} <span class="pvtag">preview</span>` : ""}<span class="cnt">${zones.length} · tap one for its details</span></div>
+      ${previewing ? "" : this._heldHtml(zones)}
       <div class="rt" role="list">${head}${body || `<div class="sbk-empty">No rooms yet.</div>`}</div>`;
   }
 
@@ -999,6 +1020,13 @@ class SbModesCard extends HTMLElement {
       }
     }));
     root.querySelectorAll("[data-info]").forEach((b) => b.addEventListener("click", () => fire(this, "hass-more-info", { entityId: b.dataset.info })));
+    root.querySelectorAll("[data-release-zone]").forEach((b) => b.addEventListener("click", async () => {
+      const zone = b.dataset.releaseZone;
+      b.disabled = true;
+      try { await this._hass.callService("sb_modes", "release_zone", { zone }); this._msg = ""; }
+      catch (e) { this._msg = `Could not release ${zone}: ${e?.message || e}`; }
+      this._sig = ""; this._render();
+    }));
     root.querySelectorAll("[data-sort]").forEach((b) => b.addEventListener("click", () => {
       const [table, key] = b.dataset.sort.split("|"); this._setSort(table, key); this._render();
     }));

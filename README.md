@@ -51,7 +51,8 @@ mode, room or entity can never be left unhandled.
   - *Room*: the rule (its light settings as tabs), by mode, the add-ons, the devices.
   - *Mode*: name and icon, when it begins, what each room does in it, its default rule.
   - *Times*: the day types and their times, other rules, and the coming week.
-- A **card** (`custom:sb-modes-card`) with the current mode, each room's live status, a
+- A **card** (`custom:sb-modes-card`) with the current mode, a *Held* line (only while a room is
+  held: each held room, until when, and Release), each room's live status, a
   room dialog (the row's ⋮): hold the room (for N minutes, until released, until the mode
   changes) or release it, then set its lights live — a slider for the dimmable ones, All off /
   All on for the ones that only switch; Cancel puts the lights and the hold back as they were, lights that open their own controls when tapped, and an activity log; entries also go
