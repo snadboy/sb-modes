@@ -37,6 +37,24 @@ const MODE_FILL = ["#3d2b5a", "#1f5a4f", "#5a2b44", "#4a4a2a"];          // for 
 const KNOWN_FILL = { overnight: "#2b3a5a", night: "#2b3a5a", morning: "#6a4f1f", day: "#56541b", evening: "#6b3a26", away: "#3a3a3a" };
 const OVERLAY_STATES = ["playing", "paused", "idle", "off"];
 
+/** In-app navigation (the page's routes: /sb-modes/house, /times, /room/<id>, /mode/<id>). */
+const navigate = (path) => { history.pushState(null, "", path); window.dispatchEvent(new CustomEvent("location-changed")); };
+const PATHS = { house: () => "/sb-modes/house", times: () => "/sb-modes/times",
+  room: (id) => `/sb-modes/room/${encodeURIComponent(id)}`, mode: (id) => `/sb-modes/mode/${encodeURIComponent(id)}` };
+/** Sections start closed and stay as left for the browser session (agreed 2026-11-01). */
+const SESS = "sb-modes-open";
+const sessGet = (k) => { try { return (JSON.parse(sessionStorage.getItem(SESS) || "[]")).includes(k); } catch (e) { return false; } };
+const sessSet = (k, on) => {
+  try {
+    const all = new Set(JSON.parse(sessionStorage.getItem(SESS) || "[]"));
+    if (on) all.add(k); else all.delete(k);
+    sessionStorage.setItem(SESS, JSON.stringify([...all]));
+  } catch (e) { /* not remembered */ }
+};
+const sortGet = (t) => { try { return JSON.parse(sessionStorage.getItem(`sb-modes-sort:${t}`) || "null") || { key: "name", dir: 1 }; } catch (e) { return { key: "name", dir: 1 }; } };
+const sortFlip = (t, key) => { const c = sortGet(t); try { sessionStorage.setItem(`sb-modes-sort:${t}`, JSON.stringify({ key, dir: c.key === key ? -c.dir : 1 })); } catch (e) { /* not remembered */ } };
+const byName = (a, b) => String(a).localeCompare(String(b), undefined, { sensitivity: "base", numeric: true });
+
 const ADDON_LEGACY = ["overlay", "buttons", "follow", "auto_off", "wake_up", "on_enter"];
 /** An older table's per-room keys as add-on instances (model.zone_addons in Python). */
 function toAddons(z) {
@@ -110,8 +128,10 @@ const offInput = (v) => {
 
 const STYLE = `
 :host { display: block; }
-.bar { position: sticky; top: var(--header-height, 56px); z-index: 2; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-       padding: 10px 14px; margin-bottom: 12px; border-radius: 12px; background: var(--card-background-color); border: 1px solid var(--divider-color); }
+.bar { position: sticky; bottom: 12px; z-index: 2; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 16px;
+       padding: 10px 14px; border-radius: 12px; background: var(--card-background-color); border: 1px solid var(--primary-color);
+       box-shadow: 0 6px 24px rgba(0,0,0,.45); }
+.bar[hidden] { display: none; }
 .bar .st { flex: 1; font-size: 14px; min-width: 160px; }
 .bar .st b { font-weight: 500; }
 .err { color: var(--error-color); }
@@ -186,9 +206,11 @@ select, input.in { font: inherit; font-size: 14px; color: var(--primary-text-col
 .box .bh { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
 .box .bh b { flex: 1; font-weight: 500; }
 .tlabel { font-weight: 500; font-size: 14px; margin: 12px 0 2px; }
-table.tg { width: 100%; border-collapse: collapse; font-size: 14px; }
-table.tg td { padding: 4px 4px 4px 0; vertical-align: middle; }
-table.tg td.n { width: 40%; }
+table.tg { width: 100%; max-width: 760px; border-collapse: collapse; font-size: 14px; table-layout: fixed; }
+table.tg td { padding: 5px 6px 5px 0; vertical-align: middle; border-bottom: 1px solid color-mix(in srgb, var(--divider-color) 60%, transparent); }
+table.tg td.n { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+table.tg td { white-space: nowrap; }
+table.tg input[type=number] { width: 58px; }
 table.tg input[type=number] { width: 64px; }
 .step { border-left: 3px solid var(--divider-color); padding-left: 10px; margin: 10px 0; }
 .step .sh { display: flex; align-items: center; gap: 8px; font-size: 14px; }
@@ -279,12 +301,69 @@ table.tg input[type=number] { width: 64px; }
 .grid table.fixed { table-layout: fixed; }
 .grid table.fixed td, .grid table.fixed th { overflow: hidden; }
 .grid td.room { width: auto; }
-details.secd > summary { list-style: none; cursor: pointer; display: flex; align-items: baseline; gap: 6px; }
+details.secd > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 10px; padding: 12px 16px; min-height: 52px; box-sizing: border-box; }
 details.secd > summary::-webkit-details-marker { display: none; }
-details.secd > summary h3 { margin: 0; flex: 1; }
-details.secd > summary ha-icon { --mdc-icon-size: 18px; color: var(--secondary-text-color); align-self: center; }
-details.secd[open] > summary { margin-bottom: 8px; }
-details.secd:not([open]) > summary .sub { color: var(--primary-text-color); }
+details.secd > summary b { font-weight: 500; font-size: 16px; flex: none; min-width: 100px; }
+details.secd > summary .sum { flex: 1; min-width: 0; color: var(--secondary-text-color); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+details.secd > summary .chev { --mdc-icon-size: 20px; color: var(--secondary-text-color); transition: transform .15s; flex: none; }
+details.secd[open] > summary .chev { transform: rotate(90deg); }
+details.secd > summary:focus-visible { outline: 2px solid var(--primary-color); outline-offset: -2px; border-radius: 12px; }
+.secbody { padding: 4px 16px 16px; border-top: 1px solid var(--divider-color); }
+/* the page's tables */
+.crumb { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin: 0 4px 12px; }
+.crumb .live { flex: 1; min-width: 200px; }
+button.th { all: unset; cursor: pointer; font: inherit; }
+button.th:hover { color: var(--primary-text-color); }
+button.th:focus-visible { outline: 2px solid var(--primary-color); }
+table.lt { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 14px; }
+table.lt th, table.tg th { text-align: left; font-size: 11.5px; font-weight: 500; letter-spacing: .05em; text-transform: uppercase; color: var(--secondary-text-color); padding: 6px 8px 6px 0; border-bottom: 1px solid var(--divider-color); }
+table.lt td { padding: 9px 8px 9px 0; border-bottom: 1px solid var(--divider-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+table.lt tr[data-mroom] { cursor: pointer; }
+table.lt tr[data-mroom]:hover td { background: rgba(127,127,127,.06); }
+table.lt tr.dim td { opacity: .55; }
+table.lt td.chev { color: var(--secondary-text-color); text-align: right; }
+table.lt.wk tr.today td { background: rgba(127,127,127,.08); }
+.tag { display: inline-block; font-size: 10.5px; letter-spacing: .06em; color: var(--primary-color); border: 1px solid rgba(3,169,244,.6); border-radius: 4px; padding: 0 5px; margin-right: 6px; }
+.seg { display: inline-flex; flex-wrap: wrap; gap: 4px; padding: 4px; border-radius: 18px; background: var(--secondary-background-color, rgba(127,127,127,.1)); margin: 10px 0 4px; }
+.seg button { border: 0; background: none; color: var(--secondary-text-color); font: inherit; font-size: 13.5px; border-radius: 14px; padding: 7px 14px; cursor: pointer; }
+.seg button.on { background: var(--primary-text-color); color: var(--card-background-color); font-weight: 500; }
+.seg .n { margin-left: 6px; font-size: 11.5px; opacity: .7; }
+/* fields sized to their content, not the page */
+.pickrow .form, .form[data-form="pick"] { max-width: 360px; }
+.form[data-form="params"] { max-width: 520px; }
+.form[data-form="mode"] { flex: 0 1 420px; }
+.form[data-form="basics"], .form[data-form^="ad-"] { max-width: 640px; }
+.mform { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-end; }
+.tools .add { max-width: 420px; }
+/* House on a phone: a list, not the grid */
+.hlist { display: none; }
+.hl-modes { display: flex; gap: 6px; overflow-x: auto; padding: 0 0 10px; }
+.hl-modes button { flex: none; padding: 8px 14px; border-radius: 18px; border: 1px solid var(--divider-color); background: none; color: inherit; font: inherit; font-size: 14px; cursor: pointer; }
+.hl-modes button.on { background: var(--primary-text-color); color: var(--card-background-color); border-color: var(--primary-text-color); font-weight: 500; }
+button.hl-r { display: flex; align-items: center; gap: 10px; width: 100%; box-sizing: border-box; min-height: 60px; padding: 10px 12px; border: 0; border-top: 1px solid var(--divider-color);
+              background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+button.hl-r.card { border: 1px solid var(--divider-color); }
+.card > button.hl-r:first-child { border-top: 0; }
+.hl-t { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.hl-n { font-size: 15px; } .hl-n.off { opacity: .55; }
+.hl-s { font-size: 12.5px; color: var(--secondary-text-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hl-c { color: var(--secondary-text-color); }
+.band .chg { align-self: center; flex: none; white-space: nowrap; }
+.band .chg.on { border-color: var(--primary-color); }
+@media (max-width: 700px) {
+  .hgrid { display: none !important; }
+  .hlist { display: block; }
+  details.secd > summary { flex-wrap: wrap; row-gap: 2px; }
+  details.secd > summary .sum { flex-basis: 100%; padding-left: 30px; }
+  .secbody { padding: 4px 10px 14px; }
+  table.tg, table.tg tbody { display: block; }
+  table.tg colgroup, table.tg thead { display: none; }
+  table.tg tr { display: grid; grid-template-columns: auto auto auto 1fr auto; align-items: center; gap: 4px 8px; padding: 8px 0; border-bottom: 1px solid var(--divider-color); }
+  table.tg td { padding: 0; }
+  table.tg td.n { grid-column: 1 / -1; width: auto; }
+  .mform .form[data-form="mode"] { flex-basis: 100%; }
+  table.lt col:nth-child(2) { width: 90px !important; }
+}
 `;
 
 export class SbModesEditor extends HTMLElement {
@@ -305,7 +384,26 @@ export class SbModesEditor extends HTMLElement {
     this.shadowRoot?.querySelectorAll("ha-form, ha-selector").forEach((f) => { f.hass = h; });
   }
 
-  set zone(z) { if (z) { this._room = z; this._view = "room"; } }
+  /** Set by the page from the URL: {view: house | times | room | mode, id}. */
+  set route(r) {
+    const same = r.view === this._view && (r.id || null) === (this._routeId || null);
+    this._view = r.view; this._routeId = r.id || null;
+    if (r.view === "room") this._room = r.id;
+    if (r.view === "mode") this._modeId = r.id;
+    if (!this._draft || same) return;
+    this._review = false;
+    this._render();
+    const box = this._scrollTo && this.shadowRoot.querySelector(`[data-box="${this._scrollTo}"]`);
+    this._scrollTo = null;
+    if (box) box.scrollIntoView({ block: "start", behavior: "smooth" }); else window.scrollTo({ top: 0 });
+  }
+  _go(view, id) { navigate(PATHS[view](id)); }
+  /** The page's app bar shows the room's or mode's name (with House › before it). */
+  _title() {
+    const v = this._view, z = v === "room" ? this._zoneObj(this._room) : null, m = v === "mode" ? this._mode(this._modeId) : null;
+    const title = z ? z.name || z.id : m ? m.name || m.id : "SB Modes";
+    this.dispatchEvent(new CustomEvent("sb-modes-title", { detail: { view: v, title, crumb: z || m ? `House › ${title}` : "" }, bubbles: true, composed: true }));
+  }
 
   async _init() {
     if (!this.shadowRoot) this.attachShadow({ mode: "open" });
@@ -331,7 +429,8 @@ export class SbModesEditor extends HTMLElement {
     this._stale = !!r.stale;
     this._changes = r.changes || [];
     this._check = { errors: r.errors || [], warnings: r.warnings || [] };
-    if (this._room && !this._zoneObj(this._room)) { this._room = null; this._view = "house"; }
+    if (this._view === "room" && !this._zoneObj(this._room)) { this._go("house"); return; }
+    if (this._view === "mode" && !this._mode(this._modeId)) { this._go("house"); return; }
     this._preview = null;
     this._render();
   }
@@ -489,10 +588,10 @@ export class SbModesEditor extends HTMLElement {
   // ── rendering ──────────────────────────────────────────────────────────
   _render() {
     const root = this.shadowRoot;
-    const tab = (k, l) => `<button role="tab" data-view="${k}" class="${(this._view === k || (k === "house" && this._view === "room")) ? "on" : ""}">${l}<span class="tdot" data-tdot="${k}"></span></button>`;
-    const body = this._view === "times" ? this._timesHtml() : this._view === "room" ? this._roomHtml() : this._houseHtml();
-    root.innerHTML = `<style>${STYLE}</style><div class="bar"></div>${this._review ? this._reviewHtml() : ""}
-      <div class="tabs" role="tablist" aria-label="Edit">${tab("house", "House")}${tab("times", "Times")}</div>${body}`;
+    const v = this._view;
+    const body = v === "times" ? this._timesHtml() : v === "room" ? this._roomHtml() : v === "mode" ? this._modePageHtml() : this._houseHtml();
+    root.innerHTML = `<style>${STYLE}</style>${this._review ? this._reviewHtml() : ""}${body}<div class="bar" hidden></div>`;
+    this._title();
     this._renderBar();
     this._mountForms();
     this._wire();
@@ -504,6 +603,9 @@ export class SbModesEditor extends HTMLElement {
     const bar = this.shadowRoot.querySelector(".bar");
     if (!bar) return;
     const n = this._changes.length, ne = this._check.errors.length;
+    // only while there is something to say: unsaved changes, a message, or "Saved"
+    bar.hidden = !(this._hasDraft || this._dirty || this._msg || this._toast);
+    if (bar.hidden) return;
     bar.innerHTML = `<span class="st">${this._hasDraft || this._dirty
         ? `<b>Draft</b> · ${n} change${n === 1 ? "" : "s"}${ne ? ` · <span class="err">${ne} error${ne === 1 ? "" : "s"}</span>` : ""}${this._dirty ? " · storing…" : ""}${
           this._stale ? ` · <span class="err">the table was saved elsewhere since</span>` : ""}`
@@ -572,14 +674,15 @@ export class SbModesEditor extends HTMLElement {
     }
     return out;
   }
-  _foldOpen(zid) { return !(this._folded || new Set()).has(zid); }
+  _foldOpen(zid) { return sessGet(`house:addons:${zid}`); }
+  _sortedZones() { return [...this._zones()].sort((a, b) => byName(a.name || a.id, b.name || b.id)); }
 
   _houseHtml() {
     const modes = this._modes();
     const head = modes.map((m) => `<th><button class="mh" data-mode-open="${esc(m.id)}" aria-label="Edit mode ${esc(m.name || m.id)}">
         <span class="mn"><ha-icon icon="${esc(this._modeIcon(m.id))}"></ha-icon>${esc(m.name || m.id)}${this._errorsAt(["modes", this._modeIndex(m.id)]).length ? `<span class="dot"></span>` : ""}</span>
         <span class="mt">${esc(this._modeTimes(m.id))}</span></button></th>`).join("");
-    const rows = this._zones().map((z) => {
+    const rows = this._sortedZones().map((z) => {
       const ov = z.overrides || {}, normal = ov[ALL], addons = z.addons || [], open = this._foldOpen(z.id), off = z.enabled === false;
       const cells = off ? `<td class="cell zoff" colspan="${modes.length}" data-room="${esc(z.id)}"><span class="usual">off — SB Modes leaves this room alone</span></td>` : modes.map((m) => {
         const own = ov[m.id];
@@ -590,41 +693,71 @@ export class SbModesEditor extends HTMLElement {
         return `<td class="cell" data-cell="${esc(z.id)}|${esc(m.id)}" title="${own ? "A different rule in this mode" : "The normal rule — tap to give this mode a different one"}">${what}</td>`;
       }).join("");
       const nerr = this._errorsAt(["zones", this._zoneIndex(z.id)]).length;
-      const fold = addons.length ? `<span class="help" style="margin:0 2px 0 6px">·</span><button class="fold" data-fold="${esc(z.id)}">${open ? "hide" : "show"} ${addons.length} add-on${addons.length === 1 ? "" : "s"} ${open ? "▴" : "▾"}</button>` : "";
-      const room = `<tr class="${off ? "zoff" : ""}"><td class="room"><ha-switch data-zone-on="${esc(z.id)}" ${off ? "" : "checked"} title="SB Modes runs this room — on / off"></ha-switch><button data-room="${esc(z.id)}">${esc(z.name || z.id)} ›</button>${off ? "" : fold}${nerr ? `<span class="dot" title="Has errors"></span>` : ""}
-          <span class="us">${esc(off ? "Off: no rule, no add-ons" : normal ? this._sayChoice(normal, z.id) : "No normal rule")}</span></td>${cells}</tr>`;
+      const fold = addons.length ? `<button class="fold" data-fold="${esc(z.id)}" aria-expanded="${open}">${addons.length} add-on${addons.length === 1 ? "" : "s"} ${open ? "▾" : "▸"}</button>` : "";
+      const room = `<tr class="${off ? "zoff" : ""}"><td class="room"><ha-switch data-zone-on="${esc(z.id)}" ${off ? "" : "checked"} title="SB Modes runs this room — on / off"></ha-switch><button data-room="${esc(z.id)}">${esc(z.name || z.id)} ›</button>${nerr ? `<span class="dot" title="Has errors"></span>` : ""}
+          <span class="us">${esc(off ? "Off: no rule, no add-ons" : normal ? this._sayChoice(normal, z.id) : "No normal rule")}</span>${off ? "" : fold}</td>${cells}</tr>`;
       const subs = open && !off ? addons.map((a) => `<tr class="arow ${a.enabled === false ? "off" : ""}"><td class="an"><span class="ar">↳</span><button data-addon="${esc(z.id)}|${esc(a.id)}">${esc(a.name || a.id)}${a.enabled === false ? " (off)" : ""}</button></td>${this._addonCells(a, z.id)}</tr>`).join("") : "";
       return room + subs;
     }).join("");
-    return `${this._modePanelHtml()}
-      <div class="tools" style="margin:0 0 8px"><span class="help" style="margin:0">Add-on rows:</span><button class="lk" data-fold-all="open">Show all</button><button class="lk" data-fold-all="close">Hide all</button></div>
-      <div class="card"><div class="grid"><table class="fixed"><colgroup><col style="width:250px">${modes.map(() => "<col>").join("")}</colgroup>
+    return `<div class="tools hgrid" style="margin:0 0 8px"><span class="help" style="margin:0;flex:1">Rooms × modes · tap a room or a mode to open it</span>
+        <button class="lk" data-fold-all="open">Show all add-ons</button><button class="lk" data-fold-all="close">Hide all</button></div>
+      <div class="card hgrid"><div class="grid"><table class="fixed"><colgroup><col style="width:250px">${modes.map(() => "<col>").join("")}</colgroup>
         <thead><tr><th class="lbl">Room — its normal rule<br><span style="text-transform:none;letter-spacing:0;font-weight:400">↳ its add-ons</span></th>${head}</tr></thead>
         <tbody>${rows || `<tr><td colspan="${modes.length + 1}" class="empty">No rooms yet.</td></tr>`}</tbody></table></div></div>
-      <div class="legend"><span><b style="font-weight:500">Rule</b> = what's in charge of the room's lights; a blank cell is the normal rule (left)</span>
-        <span><span class="difr" style="padding:1px 7px;font-size:11px">DIFFERENT RULE</span> replaces it in that mode</span>
-        <span><span class="mk beg">▸</span> add-on runs when that mode begins</span><span><span class="mk on">● ──</span> add-on active throughout those modes</span>
-        <span><span class="mk clk">🕒 ──</span> add-on on the clock</span><span><span class="mk dev">⚡ ──</span> add-on on a device's state</span>
-        <span>Tap a room or a cell to edit · tap a mode for its name, icon and order</span></div>
+      ${this._houseListHtml()}
       <div class="tools" style="margin-bottom:12px"><button class="b add" data-act="add-zone">+ Room</button><button class="b add" data-act="add-mode">+ Mode</button>
         <span class="grow" style="flex:1"></span><span class="form" data-form="fallback" style="min-width:260px"></span></div>`;
   }
 
-  _modePanelHtml() {
-    const m = this._modePanel && this._mode(this._modePanel);
-    if (!m) return "";
-    const i = this._modeIndex(m.id), n = this._modes().length;
-    return `<div class="card modepanel"><div class="sec">
-      <h3>Mode · ${esc(m.name || m.id)}<span class="sub">${esc(m.id)}</span></h3>
-      <div class="errs-slot" data-path='${esc(JSON.stringify(["modes", i]))}'></div>
-      <div class="form" data-form="mode" data-mode="${esc(m.id)}"></div>
-      <div class="help">When it begins: ${esc(this._modeTimes(m.id))} — change that under Times.</div>
-      <details style="margin:8px 0"><summary class="help" style="cursor:pointer">Rooms with no setting of their own (advanced)</summary>
-        ${this._choiceEditorHtml({ kind: "mode", mode: m.id }, m.default)}</details>
-      <div class="tools"><button class="b sm" data-move-mode="${i}" data-dir="-1" ${i ? "" : "disabled"}>← Earlier</button>
-        <button class="b sm" data-move-mode="${i}" data-dir="1" ${i < n - 1 ? "" : "disabled"}>Later →</button>
-        <button class="b sm danger" data-del-mode="${esc(m.id)}">Delete mode</button><span style="flex:1"></span>
-        <button class="b sm" data-act="mode-close">Done</button></div></div></div>`;
+  /** House on a phone: no grid — pick a mode, see what each room does in it. */
+  _houseListHtml() {
+    const modes = this._modes();
+    const live = Object.values(this._hass.states).find((st) => st.entity_id.startsWith("select.") && st.attributes.sb_modes)?.state;
+    const mid = this._hMode && this._mode(this._hMode) ? this._hMode : this._mode(live) ? live : modes[0]?.id;
+    if (!mid) return "";
+    const mi = this._modeIndex(mid);
+    const rows = this._sortedZones().map((z) => {
+      const off = z.enabled === false, own = (z.overrides || {})[mid], normal = (z.overrides || {})[ALL];
+      const ch = own || normal || this._mode(mid)?.default;
+      const n = (z.addons || []).filter((a) => a.enabled !== false && this._addonMarks(a, z.id).some((m) => m.cols.includes(mi))).length;
+      return `<button class="hl-r" data-room="${esc(z.id)}"><span class="hl-t"><span class="hl-n ${off ? "off" : ""}">${esc(z.name || z.id)}</span>
+          <span class="hl-s">${off ? "switched off — SB Modes leaves it alone" : `${own ? `<span class="tag">OWN</span>` : ""}${esc(this._sayChoice(ch, z.id))}`}</span>
+          ${!off && n ? `<span class="hl-s">${n} add-on${n === 1 ? " runs" : "s run"} in ${esc(this._modeName(mid))}</span>` : ""}</span><span class="hl-c">›</span></button>`;
+    }).join("");
+    return `<div class="hlist"><div class="help" style="margin:0 4px 6px">What each room does in</div>
+      <div class="hl-modes" role="tablist" aria-label="Mode">${modes.map((m) => `<button role="tab" aria-selected="${m.id === mid}" class="${m.id === mid ? "on" : ""}" data-hmode="${esc(m.id)}">${esc(m.name || m.id)}</button>`).join("")}</div>
+      <button class="hl-r card" data-mode-open="${esc(mid)}" style="margin-bottom:10px"><span class="hl-t"><span class="hl-n">${esc(this._modeName(mid))} settings</span><span class="hl-s">${esc(this._modeTimes(mid))}</span></span><span class="hl-c">›</span></button>
+      <div class="card">${rows}</div></div>`;
+  }
+
+  /** A mode's own page: name and icon, when it begins, what each room does in it, its default rule. */
+  _modePageHtml() {
+    const m = this._mode(this._modeId);
+    if (!m) return `<div class="empty">That mode is gone.</div>`;
+    const i = this._modeIndex(m.id), n = this._modes().length, dir = sortGet("moderooms").dir;
+    const rows = this._sortedZones().sort((x, y) => byName(x.name || x.id, y.name || y.id) * dir).map((z) => {
+      const off = z.enabled === false, own = (z.overrides || {})[m.id], normal = (z.overrides || {})[ALL];
+      const ch = own || normal || m.default;
+      return `<tr class="${off ? "dim" : ""}" data-mroom="${esc(z.id)}" tabindex="0"><td>${esc(z.name || z.id)}</td>
+        <td>${off ? `<span class="help">off</span>` : own ? `<span class="tag">OWN</span>` : normal ? `<span class="help">normal rule</span>` : `<span class="help">mode default</span>`}</td>
+        <td class="ell">${esc(off ? "SB Modes leaves it alone" : this._sayChoice(ch, z.id))}</td><td class="chev">›</td></tr>`;
+    }).join("");
+    const begins = this._sortedZones().flatMap((z) => (z.addons || []).filter((a) => a.type === "lights" && (a.trigger?.mode_begins || []).includes(m.id))
+      .map((a) => `<tr><td>${esc(z.name || z.id)}</td><td>${esc(a.name || a.id)}${a.enabled === false ? " (off)" : ""}</td><td class="ell">${esc(this._addonParts(a, z.id).then)}</td></tr>`)).join("");
+    const nb = (begins.match(/<tr>/g) || []).length;
+    return `<div class="errs-slot" data-path='${esc(JSON.stringify(["modes", i]))}'></div>
+      <div class="card"><div class="sec mform"><div class="form" data-form="mode" data-mode="${esc(m.id)}"></div>
+        <div class="help" style="flex:1;min-width:220px">Begins ${esc(this._modeTimes(m.id))} · <button class="lk" data-view="times">change in Times</button></div></div></div>
+      <div class="card"><div class="sec"><h3>Rooms in ${esc(m.name || m.id)}<span class="sub">tap a room to change what it does here</span></h3>
+        <table class="lt"><colgroup><col style="width:200px"><col style="width:130px"><col><col style="width:28px"></colgroup>
+          <thead><tr><th><button class="th" data-sortt="moderooms">Room ${dir > 0 ? "▲" : "▼"}</button></th><th>Uses</th><th>Rule</th><th></th></tr></thead><tbody>${rows}</tbody></table></div></div>
+      ${this._secHtml("mbegins", "When it begins", nb ? `${nb} add-on${nb === 1 ? " runs" : "s run"} as ${m.name || m.id} begins` : "no add-on runs as it begins",
+        nb ? `<table class="lt"><colgroup><col style="width:200px"><col style="width:220px"><col></colgroup><thead><tr><th>Room</th><th>Add-on</th><th>Does</th></tr></thead><tbody>${begins}</tbody></table>` : `<div class="help">None.</div>`)}
+      ${this._secHtml("mdefault", "Default rule", `for rooms with no rule of their own: ${this._sayChoice(m.default)}`,
+        this._choiceEditorHtml({ kind: "mode", mode: m.id }, m.default))}
+      <div class="tools"><button class="b sm" data-move-mode="${i}" data-dir="-1" ${i ? "" : "disabled"}>← Move earlier</button>
+        <button class="b sm" data-move-mode="${i}" data-dir="1" ${i < n - 1 ? "" : "disabled"}>Move later →</button>
+        <span style="flex:1"></span><button class="b sm danger" data-del-mode="${esc(m.id)}">Delete mode…</button></div>`;
   }
 
   // ── Room ───────────────────────────────────────────────────────────────
@@ -636,37 +769,30 @@ export class SbModesEditor extends HTMLElement {
     const normal = (z.overrides || {})[ALL];
     const modeRows = this._modes().map((m) => this._roomModeRowHtml(z, m)).join("");
     const off = z.enabled === false;
-    return `<div class="crumb"><button class="lk" data-view="house">‹ House</button><h2>${esc(z.name || z.id)}</h2>
-        <span class="live">${esc(zs ? zs.attributes.status || "" : "new — saved rooms show their live state here")}</span>
-        <label class="zon"><ha-switch data-zone-on="${esc(z.id)}" ${off ? "" : "checked"}></ha-switch>${off ? "Off" : "On"}</label></div>
+    const own = this._modes().filter((m) => (z.overrides || {})[m.id]);
+    return `<div class="crumb"><span class="live">${esc(zs ? zs.attributes.status || "" : "new — saved rooms show their live state here")}</span>
+        <label class="zon">SB Modes runs this room <ha-switch data-zone-on="${esc(z.id)}" ${off ? "" : "checked"}></ha-switch></label></div>
       <div class="errs-slot" data-path='${esc(JSON.stringify(["zones", zi]))}'></div>
       ${off ? `<div class="card zoffnote"><div class="sec">Switched off: SB Modes leaves ${esc(z.name || z.id)} alone in every mode — no rule, no add-ons, hand changes not tracked. Its settings below are kept for when you switch it back on.</div></div>` : ""}
-      ${this._secHtml("rule", "1 · Rule", `what's in charge of ${z.name || z.id}'s lights — one at a time`,
-        `${normal ? this._sayChoice(normal, z.id) : "no normal rule"}${(() => { const n = Object.keys(z.overrides || {}).filter((k) => k !== ALL).length; return n ? ` · ${n} mode${n === 1 ? "" : "s"} with a different rule` : ""; })()}`,
-        `<h4 style="margin:4px 0">Normal rule</h4>
-        ${this._choiceEditorHtml({ kind: "zone", zone: z.id, mode: ALL }, normal)}
-        <h4 style="margin:14px 0 4px">In each mode</h4><div class="help">“Normal rule” unless the mode has a different one. Open a mode to give it its own.</div>${modeRows}`)}
-      ${this._secHtml("addons", "2 · Add-ons", "extra actions on top of the rule — each row shows the modes it runs in",
-        (z.addons || []).length ? `${z.addons.length} add-on${z.addons.length === 1 ? "" : "s"}: ${z.addons.map((a) => a.name || a.id).join(", ")}` : "none",
+      ${this._secHtml("rule", "Rule", normal ? this._sayChoice(normal, z.id) : "no normal rule — each mode's default",
+        this._choiceEditorHtml({ kind: "zone", zone: z.id, mode: ALL }, normal))}
+      ${this._secHtml("bymode", "By mode", own.length ? `own rule in ${own.map((m) => `${m.name || m.id} (${this._beh(z.overrides[m.id].behaviour).label})`).join(", ")}` : "the normal rule in every mode",
+        `<div class="help">“Normal rule” unless the mode has a different one. Open a mode to give it its own.</div>${modeRows}`)}
+      ${this._secHtml("addons", "Add-ons", (z.addons || []).length ? `${z.addons.length} · ${z.addons.map((a) => `${a.name || a.id}${a.enabled === false ? " (off)" : ""}`).join(" · ")}` : "none",
         this._addonsHtml(z))}
-      ${this._secHtml("devices", "3 · Devices", this._sayDevices(z, zs), this._sayDevices(z, zs),
+      ${this._secHtml("devices", "Devices", this._sayDevices(z, zs),
         `<div class="form" data-form="basics" style="margin-top:4px"></div>
         <div class="tools"><button class="b sm danger" data-act="del-zone">Delete room</button></div>`)}`;
   }
 
-  /** A collapsible room-page section: open → its description and body; closed → a one-line summary. */
-  _secOpen(key) {
-    if (!this._secs) {
-      try { this._secs = JSON.parse(localStorage.getItem("sb-modes-editor-sections") || "null"); } catch (e) { /* storage blocked */ }
-      this._secs ||= { rule: true, addons: true, devices: false };
-    }
-    return !!this._secs[key];
-  }
-  _secHtml(key, title, about, summary, body) {
+  /** A collapsible section: closed to start, then as the user left it this browser session; a
+   *  one-line summary beside its title either way. */
+  _secOpen(key) { return sessGet(`ed:${key}`); }
+  _secHtml(key, title, summary, body) {
     const open = this._secOpen(key);
-    return `<div class="card"><div class="sec"><details class="secd" data-sec="${key}" ${open ? "open" : ""}>
-      <summary><ha-icon icon="${open ? "mdi:chevron-down" : "mdi:chevron-right"}"></ha-icon><h3>${esc(title)}<span class="sub">${esc(open ? about : summary)}</span></h3></summary>
-      <div class="secbody">${body}</div></details></div></div>`;
+    return `<div class="card"><details class="secd" data-sec="${key}" ${open ? "open" : ""}>
+      <summary><ha-icon class="chev" icon="mdi:chevron-right"></ha-icon><b>${esc(title)}</b><span class="sum">${esc(summary)}</span></summary>
+      <div class="secbody">${body}</div></details></div>`;
   }
 
   _sayDevices(z, zs) {
@@ -804,7 +930,7 @@ export class SbModesEditor extends HTMLElement {
 
   /** "Copy an add-on from another room…": every other room's add-ons, grouped by room. */
   _copyOptionsHtml(z) {
-    const groups = this._zones().filter((o) => o.id !== z.id && (o.addons || []).length)
+    const groups = this._sortedZones().filter((o) => o.id !== z.id && (o.addons || []).length)
       .map((o) => `<optgroup label="${esc(o.name || o.id)}">${o.addons.map((a) => `<option value="${esc(o.id)}|${esc(a.id)}">${esc(a.name || a.id)}</option>`).join("")}</optgroup>`).join("");
     return groups ? `<select class="b add" data-copy-addon aria-label="Copy an add-on from another room"><option value="">Copy an add-on from another room…</option>${groups}</select>` : "";
   }
@@ -857,16 +983,25 @@ export class SbModesEditor extends HTMLElement {
     const b = this._beh(ch.behaviour), params = b.params || {};
     const scalar = Object.keys(params).some((k) => !["targets", "steps"].includes(params[k].type));
     const big = Object.entries(params).filter(([, s]) => ["targets", "steps"].includes(s.type));
-    return `${pick}<div class="help">${esc(b.help || "")}</div>
+    // several light settings (occupied / empty, dark / empty, light) → tabs, one shown at a time
+    const tg = big.filter(([, s]) => s.type === "targets"), okey = JSON.stringify(owner);
+    const cur = tg.some(([k]) => k === (this._tgTab || {})[okey]) ? this._tgTab[okey] : tg[0]?.[0];
+    const tabs = tg.length > 1 ? `<div class="seg" role="tablist" aria-label="Light settings">${tg.map(([k, s]) => {
+      const n = Object.keys((ch.params || {})[k] || {}).length;
+      return `<button role="tab" aria-selected="${k === cur}" class="${k === cur ? "on" : ""}" data-tgtab="${esc(okey)}§${esc(k)}">${esc(s.label || k)}<span class="n">${n}</span></button>`;
+    }).join("")}</div>` : "";
+    return `<div class="pickrow">${pick}</div><div class="help">${esc(b.help || "")}</div>
       <div class="errs-slot" data-path='${esc(JSON.stringify(this._ownerPath(owner)))}'></div>
       ${scalar ? `<div class="form" data-form="params" data-owner='${o}'></div>` : ""}
-      ${big.map(([k, s]) => s.type === "targets" ? this._targetsHtml({ k: "choice", owner, key: k }, (ch.params || {})[k] || {}, s)
+      ${tabs}
+      ${big.map(([k, s]) => s.type === "targets" ? (tg.length > 1 && k !== cur ? "" : this._targetsHtml({ k: "choice", owner, key: k }, (ch.params || {})[k] || {}, tg.length > 1 ? { ...s, label: "" } : s))
         : this._stepsHtml(owner, k, (ch.params || {})[k] || [], s)).join("")}`;
   }
 
   _targetsHtml(loc, targets, spec) {
     const id = esc(JSON.stringify(loc)), zoneId = this._zoneOf(loc);
-    const rows = Object.entries(targets).map(([eid, t]) => {
+    const dir = sortGet("tg").dir, nm = (e) => (zoneId ? this._short(e, zoneId) : this._name(e));
+    const rows = Object.entries(targets).sort((x, y) => byName(nm(x[0]), nm(y[0])) * dir).map(([eid, t]) => {
       const mode = t.state === "off" ? "off" : t.min_brightness_pct != null ? "min" : "on";
       const pct = mode === "min" ? t.min_brightness_pct : t.brightness_pct;
       const isLight = eid.startsWith("light.");
@@ -878,7 +1013,8 @@ export class SbModesEditor extends HTMLElement {
     }).join("");
     return `<div class="tg-wrap" data-loc='${id}'>
       ${spec.label ? `<div class="tlabel">${esc(spec.label)}</div>` : ""}${spec.help ? `<div class="help">${esc(spec.help)}</div>` : ""}
-      ${rows ? `<table class="tg"><tbody>${rows}</tbody></table>` : `<div class="empty">No lights set.</div>`}
+      ${rows ? `<table class="tg"><colgroup><col class="cn"><col style="width:112px"><col style="width:104px"><col style="width:124px"><col style="width:40px"></colgroup>
+        <thead><tr><th><button class="th" data-sortt="tg">Light ${dir > 0 ? "▲" : "▼"}</button></th><th>Setting</th><th>Level</th><th>Colour temp</th><th></th></tr></thead><tbody>${rows}</tbody></table>` : `<div class="empty">No lights set.</div>`}
       <div class="tools"><div class="add" data-picker='${id}'></div>
         <button class="b sm" data-tg="capture" title="Fill from how the lights are right now">Use the lights as they are now</button>
         ${zoneId ? `<button class="b sm" data-tg="try" ${rows ? "" : "disabled"} title="Set these now and hold the zone 15 min">Try it</button>` : ""}</div>
@@ -916,7 +1052,7 @@ export class SbModesEditor extends HTMLElement {
         ${typeRows || `<div class="empty">No day types — the house follows only the other rules below.</div>`}
         <div class="tools">${types.length ? `<button class="b sm" data-act="add-type">+ Day type</button>` : `<button class="b sm" data-act="start-types">Use day types</button>`}</div></div>
       ${types.length ? `<div class="sec"><div class="axis"><span>12 AM</span><span>6 AM</span><span>12 PM</span><span>6 PM</span><span>12 AM</span></div>${bands}</div>` : ""}</div>
-      <div class="card"><div class="sec"><h3>Other rules<span class="sub">one weekday, another calendar — they add to the day types' times</span></h3>${this._rulesHtml()}</div></div>
+      ${this._secHtml("rules", "Other rules", `${(this._draft.schedule || []).length || "none"} · one weekday, another calendar — they add to the day types' times`, this._rulesHtml())}
       <div class="card"><div class="sec"><h3>The coming week</h3><div class="pvbody" style="overflow-x:auto"><div class="empty">Working it out…</div></div></div></div>`;
   }
 
@@ -961,11 +1097,13 @@ export class SbModesEditor extends HTMLElement {
         <span class="grow"></span><button class="ic" data-s="rm" title="Remove" aria-label="Remove">×</button>
         <div class="errs-slot" style="flex-basis:100%" data-path='${esc(JSON.stringify(["times", t.id, j]))}'></div></div>`;
     }).join("");
+    const open = sessGet(`times:${t.id}`), nerr = this._errorsAt(["times", t.id]).length;
     return `<div class="band"><div class="bn"><b>${esc(t.name || t.id)}</b><small>${esc(t.day_set ? (this._schema.day_sets || []).find((s) => s.id === t.day_set)?.name || t.day_set : "every other day")}</small></div>
-        <div class="strip">${strip}</div></div>
-      <div class="stops">${rows || `<div class="empty">No mode changes on these days.</div>`}
+        <div class="strip">${strip}</div>
+        <button class="b sm chg ${open ? "on" : ""}" data-tchg="${esc(t.id)}" aria-expanded="${open}">${entries.length} change${entries.length === 1 ? "" : "s"} ${open ? "▾" : "▸"}${nerr ? `<span class="dot"></span>` : ""}</button></div>
+      ${open ? `<div class="stops">${rows || `<div class="empty">No mode changes on these days.</div>`}
         <div class="errs-slot" data-path='${esc(JSON.stringify(["times", t.id]))}'></div>
-        <div class="tools"><button class="b sm" data-add-stop="${esc(t.id)}">+ Mode change</button></div></div>`;
+        <div class="tools"><button class="b sm" data-add-stop="${esc(t.id)}">+ Mode change</button></div></div>` : ""}`;
   }
 
   _rulesHtml() {
@@ -1011,13 +1149,17 @@ export class SbModesEditor extends HTMLElement {
     const byDay = {};
     for (const c of p.changes) (byDay[dayKey(new Date(c.at))] ||= []).push(c);
     const today = dayKey(new Date());
+    // days × modes, the modes in their order; a mode set twice in a day shows both times
+    const modes = this._modes();
     el.innerHTML = `<div class="help">Now: ${esc(p.now ? this._modeName(p.now) : "no scheduled mode")}</div>${
       p.missing_day_sets?.length ? `<div class="warns">Calendar not found: ${esc(p.missing_day_sets.join(", "))} — its days are skipped.</div>` : ""}
-      <div class="week">${days.map((k) => {
-        const d = new Date(`${k}T12:00:00`);
-        return `<div class="wd"><b>${esc(fmtDay(d))}</b><small>${esc(typeName(p.day_types[k]))}${k === today ? " · today" : ""}</small>${
-          (byDay[k] || []).map((c) => `<div class="ch"><span class="t">${esc(fmtTime(new Date(c.at)))}</span><span>${esc(this._modeName(c.mode))}</span></div>`).join("") || `<div class="ch help">no change</div>`}</div>`;
-      }).join("")}</div>`;
+      <table class="lt wk"><colgroup><col style="width:120px"><col style="width:110px">${modes.map(() => "<col>").join("")}</colgroup>
+        <thead><tr><th>Day</th><th>Type</th>${modes.map((m) => `<th>${esc(m.name || m.id)}</th>`).join("")}</tr></thead>
+        <tbody>${days.map((k) => {
+          const d = new Date(`${k}T12:00:00`), ch = byDay[k] || [];
+          return `<tr class="${k === today ? "today" : ""}"><td>${esc(fmtDay(d))}${k === today ? ` <span class="help">today</span>` : ""}</td><td class="help">${esc(typeName(p.day_types[k]))}</td>${
+            modes.map((m) => { const at = ch.filter((c) => c.mode === m.id).map((c) => fmtTime(new Date(c.at))); return `<td>${at.length ? esc(at.join(", ")) : `<span class="help">—</span>`}</td>`; }).join("")}</tr>`;
+        }).join("")}</tbody></table>`;
   }
 
   // ── HA form elements ───────────────────────────────────────────────────
@@ -1263,31 +1405,30 @@ export class SbModesEditor extends HTMLElement {
     const root = this.shadowRoot, q = (sel, fn) => root.querySelectorAll(sel).forEach(fn);
     const room = this._view === "room" ? this._room : null;
     const zone = (d) => d.zones.find((x) => x.id === room);
-    q("[data-view]", (b) => b.addEventListener("click", () => { this._view = b.dataset.view; this._modePanel = null; this._render(); window.scrollTo({ top: 0 }); }));
+    q("[data-view]", (b) => b.addEventListener("click", () => this._go(b.dataset.view)));
+    q("[data-hmode]", (b) => b.addEventListener("click", () => { this._hMode = b.dataset.hmode; this._render(); }));
     q("[data-room]", (b) => b.addEventListener("click", () => this._goRoom(b.dataset.room)));
     q("[data-zone-on]", (sw) => sw.addEventListener("change", () => this._edit((d) => {
       const z = d.zones.find((x) => x.id === sw.dataset.zoneOn);
       if (sw.checked) delete z.enabled; else z.enabled = false;
     }, true)));
-    q("[data-fold]", (b) => b.addEventListener("click", () => {
-      const f = (this._folded ||= new Set()), id = b.dataset.fold;
-      if (f.has(id)) f.delete(id); else f.add(id);
-      this._render();
-    }));
+    q("[data-fold]", (b) => b.addEventListener("click", () => { sessSet(`house:addons:${b.dataset.fold}`, !this._foldOpen(b.dataset.fold)); this._render(); }));
     q("[data-fold-all]", (b) => b.addEventListener("click", () => {
-      this._folded = b.dataset.foldAll === "open" ? new Set() : new Set(this._zones().map((z) => z.id));
+      for (const z of this._zones()) sessSet(`house:addons:${z.id}`, b.dataset.foldAll === "open");
       this._render();
     }));
     q("[data-addon]", (b) => b.addEventListener("click", (e) => { e.stopPropagation(); const [z, k] = b.dataset.addon.split("|"); this._goRoom(z, k); }));
-    q("[data-cell]", (td) => td.addEventListener("click", () => { const [z, m] = td.dataset.cell.split("|"); this._open.add(`${z}|${m}`); this._goRoom(z); }));
-    q("[data-mode-open]", (b) => b.addEventListener("click", () => { this._modePanel = this._modePanel === b.dataset.modeOpen ? null : b.dataset.modeOpen; this._render(); }));
+    q("[data-cell]", (td) => td.addEventListener("click", () => { const [z, m] = td.dataset.cell.split("|"); this._open.add(`${z}|${m}`); sessSet("ed:bymode", true); this._goRoom(z); }));
+    q("[data-mode-open]", (b) => b.addEventListener("click", () => this._go("mode", b.dataset.modeOpen)));
     q("[data-row]", (b) => b.addEventListener("click", () => this._toggle(b.dataset.row)));
-    q("[data-sec]", (det) => det.addEventListener("toggle", () => {
-      if (this._secOpen(det.dataset.sec) === det.open) return;
-      this._secs[det.dataset.sec] = det.open;
-      try { localStorage.setItem("sb-modes-editor-sections", JSON.stringify(this._secs)); } catch (e) { /* storage blocked */ }
-      this._render();                                    // swap the description / summary line and the chevron
-    }));
+    q("[data-sec]", (det) => det.addEventListener("toggle", () => sessSet(`ed:${det.dataset.sec}`, det.open)));
+    q("[data-mroom]", (tr) => {
+      const go = () => { this._open.add(`${tr.dataset.mroom}|${this._modeId}`); sessSet("ed:bymode", true); this._go("room", tr.dataset.mroom); };
+      tr.addEventListener("click", go);
+      tr.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
+    });
+    q("[data-sortt]", (b) => b.addEventListener("click", () => { sortFlip(b.dataset.sortt, "name"); this._render(); }));
+    q("[data-tgtab]", (b) => b.addEventListener("click", () => { const [o, k] = b.dataset.tgtab.split("§"); (this._tgTab ||= {})[o] = k; this._render(); }));
     q("[data-act]", (b) => { if (!b.closest(".bar")) b.addEventListener("click", () => this._act(b.dataset.act)); });
     q("[data-move-mode]", (b) => b.addEventListener("click", () => this._edit((d) => {
       const i = Number(b.dataset.moveMode), j = i + Number(b.dataset.dir); [d.modes[i], d.modes[j]] = [d.modes[j], d.modes[i]];
@@ -1421,6 +1562,7 @@ export class SbModesEditor extends HTMLElement {
       if (!confirm(`Remove the day type “${t.name}” and its times (in the draft)?`)) return;
       this._edit((d) => { d.day_types.splice(Number(b.dataset.dtRm), 1); if (d.times) delete d.times[t.id]; }, true);
     }));
+    q("[data-tchg]", (b) => b.addEventListener("click", () => { sessSet(`times:${b.dataset.tchg}`, !sessGet(`times:${b.dataset.tchg}`)); this._render(); }));
     q("[data-add-stop]", (b) => b.addEventListener("click", () => this._edit((d) => {
       ((d.times ||= {})[b.dataset.addStop] ||= []).push({ mode: this._modes()[0]?.id, at: "12:00" });
     }, true)));
@@ -1429,11 +1571,8 @@ export class SbModesEditor extends HTMLElement {
   }
 
   _goRoom(id, box = null) {
-    this._room = id; this._view = "room"; this._modePanel = null;
-    if (box) this._openAddon = `${id}|${box}`;
-    this._render();
-    const el = box && this.shadowRoot.querySelector(`[data-box="${box}"]`);
-    if (el) el.scrollIntoView({ block: "start", behavior: "smooth" }); else window.scrollTo({ top: 0 });
+    if (box) { this._openAddon = `${id}|${box}`; this._scrollTo = box; sessSet("ed:addons", true); }
+    this._go("room", id);
   }
   _toggle(k) { if (this._open.has(k)) this._open.delete(k); else this._open.add(k); this._render(); }
 
@@ -1555,7 +1694,6 @@ export class SbModesEditor extends HTMLElement {
     if (blocks.length) { alert(`“${this._modeName(id)}” can't be deleted yet:\n• ${blocks.join("\n• ")}\nChange those first.`); return; }
     if (this._modes().length <= 1) { alert("The table needs at least one mode."); return; }
     if (!confirm(`Delete the mode “${this._modeName(id)}” from the draft?${uses.length ? `\nThese go with it:\n• ${uses.join("\n• ")}` : ""}\nNothing changes until you save.`)) return;
-    this._modePanel = null;
     this._edit((dd) => {
       dd.modes = dd.modes.filter((m) => m.id !== id);
       for (const z of dd.zones || []) {
@@ -1563,7 +1701,8 @@ export class SbModesEditor extends HTMLElement {
       }
       for (const k of Object.keys(dd.times || {})) dd.times[k] = dd.times[k].filter((e) => e.mode !== id);
       if (dd.schedule) { dd.schedule = dd.schedule.filter((r) => r.mode !== id); if (!dd.schedule.length) delete dd.schedule; }
-    }, true);
+    });
+    this._go("house");
   }
 
   async _act(act) {
@@ -1587,6 +1726,7 @@ export class SbModesEditor extends HTMLElement {
         await this._load();
         this._toast = `Saved as version ${r.version}`;
         this._renderBar();
+        setTimeout(() => { this._toast = ""; this._renderBar(); }, 5000);
       } catch (e) { this._msg = `Not saved: ${e?.message || e}`; this._renderBar(); }
       return;
     }
@@ -1594,24 +1734,24 @@ export class SbModesEditor extends HTMLElement {
       const name = prompt("Name of the new room:");
       if (!name) return;
       const id = uniqueId(name, new Set(this._zones().map((z) => z.id)));
-      this._secOpen("devices"); this._secs.devices = true;   // a new room needs its areas first
-      this._room = id; this._view = "room";
-      this._edit((d) => { (d.zones ||= []).push({ id, name, areas: [], overrides: { [ALL]: { behaviour: "hands_off", params: {} } } }); }, true);
+      sessSet("ed:devices", true);                          // a new room needs its areas first
+      this._edit((d) => { (d.zones ||= []).push({ id, name, areas: [], overrides: { [ALL]: { behaviour: "hands_off", params: {} } } }); });
+      this._go("room", id);
       return;
     }
     if (act === "del-zone") {
       const z = this._zoneObj(this._room);
       if (!z || !confirm(`Delete the room “${z.name || z.id}” from the draft? Nothing changes until you save.`)) return;
-      this._view = "house"; this._room = null;
-      this._edit((d) => { d.zones = d.zones.filter((x) => x.id !== z.id); }, true);
+      this._edit((d) => { d.zones = d.zones.filter((x) => x.id !== z.id); });
+      this._go("house");
       return;
     }
     if (act === "add-mode") {
       const name = prompt("Name of the new mode:");
       if (!name) return;
       const id = uniqueId(name, new Set(this._modes().map((m) => m.id)));
-      this._modePanel = id;
-      this._edit((d) => { (d.modes ||= []).push({ id, name, default: { behaviour: "hands_off", params: {} } }); }, true);
+      this._edit((d) => { (d.modes ||= []).push({ id, name, default: { behaviour: "hands_off", params: {} } }); });
+      this._go("mode", id);
       return;
     }
     if (act === "start-types") {

@@ -37,12 +37,16 @@ mode, room or entity can never be left unhandled.
 
 ## What you get
 
-- **SB Modes** in the sidebar: a *Status* view and an *Edit* view. The editor works on a
-  shared draft — nothing reaches the house until you review and save, and every save is
-  a version you can restore.
-  - *House*: rooms × modes, a row per room's rule and a row per add-on, marked by the
-    modes it runs in.
-  - *Room*: the rule, the add-ons, the devices.
+- **SB Modes** in the sidebar: *Status*, *House* and *Times*, with a page per room and per
+  mode (← back to House) and a **?** legend. Edits go into a shared draft — nothing reaches
+  the house until you review and save (the bar at the bottom shows while there are unsaved
+  changes), and every save is a version you can restore. Sections start closed and stay as
+  you leave them for the browser session; rooms, lights and sensors are A to Z, and the
+  larger tables sort by a tap on a heading.
+  - *House*: rooms × modes, a row per room's rule and (opened) a row per add-on, marked by
+    the modes it runs in; on a phone, a list of what each room does in a chosen mode.
+  - *Room*: the rule (its light settings as tabs), by mode, the add-ons, the devices.
+  - *Mode*: name and icon, when it begins, what each room does in it, its default rule.
   - *Times*: the day types and their times, other rules, and the coming week.
 - A **card** (`custom:sb-modes-card`) with the current mode, each room's live status, a
   room dialog (the row's ⋮): hold the room (for N minutes, until released, until the mode

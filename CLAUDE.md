@@ -580,7 +580,7 @@ the ⋮ / › past the card border when "· n needs attention" showed; the card 
 `.sbk-head .sbk-count { min-width:0; white-space:normal }` so the text wraps. The same kit rule
 may bite sb-background / sb-watch (they use `sbk-hwrap` heads too); a real fix belongs in sb-ui-kit.
 
-## AGREED, NOT BUILT: page redesign (2026-11-01)
+## Page redesign (0.39.0, 2026-11-01) — BUILT
 
 Mock-ups: https://claude.ai/artifact/LTdsG5k8wupmDmQuhjxd7r (Design canvas: Status, House, Room
 desktop + phone; Mode; Legend; Times). The user's asks: a back button top-left on every sub-page;
@@ -607,3 +607,29 @@ Agreed design:
   the choice remembered.
 - Open questions put to the user: drop the separate Edit mode (editing always available, draft bar
   as the only signal)? remember open sections?
+
+Built as 0.39.0. The user answered: Edit stops being a separate mode (yes); sections remember
+being open only for the browser session (sessionStorage `sb-modes-open`, keys `status:<x>`,
+`ed:<section>`, `house:addons:<room>`, `times:<daytype>`; table sorts `sb-modes-sort:<table>`).
+- Panel (sb-modes.js `SbModesPanel`): routes `/sb-modes` (Status), `/house` (old `/edit`,
+  `/edit?zone=` → room), `/times`, `/room/<id>`, `/mode/<id>`; app bar = ha-menu-button or
+  ← back (room/mode → House) · title (+ "House › X", from the editor's `sb-modes-title` event)
+  · nav Status | House | Times (under the bar on a phone) · ? → `<dialog class="legend">`
+  (LEGEND: the old intro paragraphs + grid colours). `navigate()` = pushState + location-changed.
+- Status = the card with `panel: true` (host attr `panel`): sections as `.pc` cards; rooms as a
+  div grid table `_roomsTableHtml` (Room · Rule now · Doing · Hold; `_th` sortable headings);
+  `_roomInfo` shared with the dashboard row; opened room `_roomDetailHtml`: In <mode>, Lights /
+  Sensors / Add-ons (`_addonInfo` When/Does) / Recent tables; names lose the room's prefix
+  (`_inRoom` while rendering a room, used by `_name`). "Needs attention" `_attentionHtml`
+  groups "<entity> is unavailable" warnings per device.
+- Card on dashboards: rooms A to Z (`_zones()` sorts by name; the `order` attribute is unused).
+- Editor: `route` setter (no tabs, no crumb link); `_go(view,id)`; draft bar sticky at the
+  bottom and hidden when there is nothing to say ("Saved" clears after 5 s). House: rooms A to
+  Z, add-on rows closed ("n add-ons ▸"), mode headings → mode page, `_houseListHtml` on phones
+  (CSS swaps `.hgrid` / `.hlist` at 700 px). Room: sections Rule / By mode / Add-ons / Devices
+  (`_secHtml(key,title,summary,body)`); several light settings → `.seg` tabs (`_tgTab`); the
+  light table has headings, A to Z, one-line names, a phone layout. `_modePageHtml` replaces
+  the inline mode panel. Times: each day type's changes behind "n changes ▸"; Other rules a
+  section; the coming week a days × modes table.
+- Checked against the live HA in headless Chromium (local JS routed in for /sb_modes_static/),
+  desktop 1440 and phone 390, plus a click-through (sort, mode page, back, browser back).
