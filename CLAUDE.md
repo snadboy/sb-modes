@@ -579,3 +579,31 @@ Header fix in the same release: `.sbk-count` (kit: `flex:1; white-space:nowrap`,
 the ⋮ / › past the card border when "· n needs attention" showed; the card now sets
 `.sbk-head .sbk-count { min-width:0; white-space:normal }` so the text wraps. The same kit rule
 may bite sb-background / sb-watch (they use `sbk-hwrap` heads too); a real fix belongs in sb-ui-kit.
+
+## AGREED, NOT BUILT: page redesign (2026-11-01)
+
+Mock-ups: https://claude.ai/artifact/LTdsG5k8wupmDmQuhjxd7r (Design canvas: Status, House, Room
+desktop + phone; Mode; Legend; Times). The user's asks: a back button top-left on every sub-page;
+every collapsible starts collapsed; lists as tables, not word wrap; nothing spilling out of its box.
+Agreed design:
+- One app bar: HA menu (top-level) or **← back** (Room, Mode = their own pages) · title · nav
+  Status | House | Times · **?** legend popup (the intro paragraphs move into it).
+- Draft bar only when there are unsaved changes, sticky at the bottom.
+- Sections start collapsed with a one-line summary; (proposed) remember open/closed per section.
+- Status: rooms as a table (Room ▲ · Rule now · Doing · Hold · ⋮); an opened room shows Lights /
+  Sensors / Add-ons / Recent tables. Warnings grouped per device ("Mova Bulb L535E unavailable ·
+  6 settings").
+- House: fixed-width grid cells, chips ellipsize inside their cell; add-on rows collapsed to
+  "n add-ons ▸". On a phone: no grid — pick a mode, list what each room does in it.
+- Room: Rule / By mode / Add-ons / Devices sections; fields sized to content; light settings as a
+  table with the three settings (Occupied and dark · Empty, dark · Empty, light) as tabs; long
+  names one line + ellipsis.
+- Mode: own page (name, icon, begins-at, rooms table, when-it-begins, default rule, delete).
+- Times: day types with bands; each type's mode changes collapsed ("4 changes ▸") into a table;
+  the coming week as a days × modes table.
+- **Sorting:** rooms alphabetical everywhere (card too, replacing the editor's room order);
+  lights, sensors, devices, warnings alphabetical; modes keep time-of-day order, day types and
+  add-ons keep priority order, week/activity by time. Larger tables get sortable headings,
+  the choice remembered.
+- Open questions put to the user: drop the separate Edit mode (editing always available, draft bar
+  as the only signal)? remember open sections?
