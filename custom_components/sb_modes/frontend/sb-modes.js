@@ -11,7 +11,7 @@
  *
  * Rows use the shared SB row style (window.SBKit, from the SB UI Kit integration).
  */
-const VERSION = "0.41.0";
+const VERSION = "0.41.1";
 const CARD = "sb-modes-card";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -297,12 +297,16 @@ dialog.lights::backdrop { background: rgba(0,0,0,.45); }
 .pc .rules { padding: 0 16px 14px; }
 .zh .lead { margin-left: 0 !important; --mdc-icon-size: 18px; color: var(--warning-color, #ffa600); }
 .att-h.bad .lead, .sub.err { color: var(--error-color); }
-.held { margin: 0 12px 10px; padding: 8px 12px; border-radius: 8px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; font-size: 13.5px;
+.held { margin: 0 12px 10px; padding: 8px 12px 6px; border-radius: 8px; font-size: 13.5px;
         background: color-mix(in srgb, var(--warning-color, #ffa600) 14%, transparent); }
-.held > ha-icon { --mdc-icon-size: 18px; color: var(--warning-color, #ffa600); }
-.held > b { font-weight: 500; margin-right: 2px; }
-.held .hz { display: inline-flex; align-items: center; gap: 6px; }
-.held .hn { font-weight: 500; }
+.held .hh { display: flex; align-items: center; gap: 8px; }
+.held .hh ha-icon { --mdc-icon-size: 18px; color: var(--warning-color, #ffa600); }
+.held .hh b { font-weight: 500; }
+.held ul { list-style: none; margin: 4px 0 0; padding: 0 0 0 26px; }
+.held li { display: grid; grid-template-columns: minmax(90px, 200px) minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 3px 0;
+           border-top: 1px solid color-mix(in srgb, var(--warning-color, #ffa600) 20%, transparent); }
+.held li:first-child { border-top: 0; }
+.held .hn { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .held .rel { height: 28px; padding: 0 10px; font-size: 12.5px; }
 .pc .held { margin: 4px 12px 10px; }
 .att-h.quiet .lead { color: var(--secondary-text-color); }
@@ -798,9 +802,10 @@ class SbModesCard extends HTMLElement {
     const held = zones.filter((z) => z.attr.hold);
     if (!held.length) return "";
     const until = (h) => (h.hold === "timed" ? `until ${hhmm(h.until)}` : h.hold === "next" ? "until next mode" : "until released");
-    return `<div class="held" role="group" aria-label="Held rooms"><ha-icon icon="mdi:hand-back-right-outline"></ha-icon><b>Held</b>${held.map((z) =>
-      `<span class="hz"><span class="hn">${esc(z.name)}</span> <span class="mut">${esc(until(z.attr.hold))}</span>
-        <button class="sbk-btn rel" data-release-zone="${esc(z.id)}" aria-label="Release ${esc(z.name)}">Release</button></span>`).join("")}</div>`;
+    return `<div class="held" role="group" aria-label="Held rooms"><div class="hh"><ha-icon icon="mdi:hand-back-right-outline"></ha-icon><b>Held</b>
+        <span class="mut">${held.length} room${held.length === 1 ? "" : "s"}</span></div>
+      <ul>${held.map((z) => `<li><span class="hn">${esc(z.name)}</span><span class="mut">${esc(until(z.attr.hold))}</span>
+        <button class="sbk-btn rel" data-release-zone="${esc(z.id)}" aria-label="Release ${esc(z.name)}">Release</button></li>`).join("")}</ul></div>`;
   }
 
   /** The page's rooms: a table (Room · Rule now · Doing · Hold), each row opening its details. */

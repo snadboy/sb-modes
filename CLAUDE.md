@@ -649,7 +649,7 @@ Tests: test_validate entity checks; test_disabled_entity_is_out_of_service.
 ## Held rooms at a glance (0.41.0, 2026-11-01)
 
 User: "Is there a convenient method for finding all 'held' rooms?" → `_heldHtml(zones)` in the card:
-"Held: Office until next mode [Release] · Laundry Room until 3:15 PM [Release]", only while a zone
+"Held" heading, then one row per held room (name · until when · Release), only while a zone
 sensor has `hold`; on the dashboard card under the current mode, on the page above the Rooms table
 (not while previewing another mode). Release = `sb_modes.release_zone`. Also documented for
 templates: `sensor.sb_modes_deviations` → attribute `deviations`, entries `type: zone_hold`.
