@@ -1441,9 +1441,31 @@ async def test_off_by_hand_stays_off_until_someone_returns(hass, kitchen, lights
     await _tick(hass, freezer, minutes=20)           # past the 15-min empty delay
     assert [c.data["entity_id"] for c in lights["on"]] == []          # not re-lit by 'empty'
     assert SINK in _rt(hass).keeper.overridden("kitchen")
+    assert _zone(hass)["overrides"][SINK]["until_back"] is True     # 'empty' lights the sink
     hass.states.async_set(OCC, "on")
     await hass.async_block_till_done()
     assert SINK not in _rt(hass).keeper.overridden("kitchen")         # someone came back: normal again
+
+
+async def test_off_by_hand_ends_once_empty_when_empty_means_off(hass, kitchen, lights, freezer) -> None:
+    """The Laundry Room, 2026-11-01: switched off at the wall on the way out. Its empty
+    setting is off anyway, so the room going empty ends the hand change."""
+    await _setup(hass)
+    hass.states.async_set(OCC, "on")
+    hass.states.async_set(CEILING, "on", {"brightness": 255})
+    await _save(hass, _with("vacancy_off", {"lights": [CEILING], "off_after_seconds": 300, "on_when_occupied": True}))
+    hass.states.async_set(CEILING, "off", context=Context(user_id="u"))
+    await hass.async_block_till_done()
+    assert CEILING in _rt(hass).keeper.overridden("kitchen")
+    assert _zone(hass)["overrides"][CEILING]["until_back"] is False
+    hass.states.async_set(OCC, "off")
+    await _tick(hass, freezer, minutes=4)
+    assert CEILING in _rt(hass).keeper.overridden("kitchen")
+    await _tick(hass, freezer, minutes=2)                  # empty its 5 min
+    assert _rt(hass).keeper.overridden("kitchen") == {}
+    lights["on"].clear()
+    await _tick(hass, freezer, minutes=10)
+    assert lights["on"] == []                              # nothing turned back on while empty
 
 
 async def test_off_by_hand_survives_a_sensor_dropout(hass, kitchen, lights, freezer) -> None:

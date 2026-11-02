@@ -11,7 +11,7 @@
  *
  * Rows use the shared SB row style (window.SBKit, from the SB UI Kit integration).
  */
-const VERSION = "0.41.1";
+const VERSION = "0.41.2";
 const CARD = "sb-modes-card";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -799,12 +799,22 @@ class SbModesCard extends HTMLElement {
   /** "Held: Office (until next mode) · Laundry Room (until 3:15 PM)", each with Release — only
    *  while a room is held; on the card under the current mode, on the page above the rooms. */
   _heldHtml(zones) {
-    const held = zones.filter((z) => z.attr.hold);
+    // held rooms, and rooms with lights changed by hand (release_zone ends both)
+    const held = zones.filter((z) => z.attr.hold || Object.keys(z.attr.overrides || {}).length);
     if (!held.length) return "";
-    const until = (h) => (h.hold === "timed" ? `until ${hhmm(h.until)}` : h.hold === "next" ? "until next mode" : "until released");
-    return `<div class="held" role="group" aria-label="Held rooms"><div class="hh"><ha-icon icon="mdi:hand-back-right-outline"></ha-icon><b>Held</b>
+    const hand = (z) => {
+      const ov = z.attr.overrides || {}, nm = (e) => { const r = this._inRoom; this._inRoom = z.name; const n = this._name(e); this._inRoom = r; return n; };
+      const on = Object.keys(ov).filter((e) => !ov[e].off).map(nm), off = Object.keys(ov).filter((e) => ov[e].off).map(nm);
+      const parts = [];
+      if (on.length || !off.length) parts.push("changed by hand" + (on.length ? `: ${on.join(", ")}` : ""));
+      if (off.length) parts.push(`off by hand: ${off.join(", ")}`);
+      return parts.join(" · ");
+    };
+    const until = (z) => { const h = z.attr.hold; return !h ? hand(z) : h.hold === "timed" ? `until ${hhmm(h.until)}` : h.hold === "next" ? "until next mode" : "until released"; };
+    const anyHand = held.some((z) => !z.attr.hold);
+    return `<div class="held" role="group" aria-label="Held rooms"><div class="hh"><ha-icon icon="mdi:hand-back-right-outline"></ha-icon><b>${anyHand ? "Held or by hand" : "Held"}</b>
         <span class="mut">${held.length} room${held.length === 1 ? "" : "s"}</span></div>
-      <ul>${held.map((z) => `<li><span class="hn">${esc(z.name)}</span><span class="mut">${esc(until(z.attr.hold))}</span>
+      <ul>${held.map((z) => `<li><span class="hn">${esc(z.name)}</span><span class="mut">${esc(until(z))}</span>
         <button class="sbk-btn rel" data-release-zone="${esc(z.id)}" aria-label="Release ${esc(z.name)}">Release</button></li>`).join("")}</ul></div>`;
   }
 
@@ -949,7 +959,8 @@ class SbModesCard extends HTMLElement {
     const ov = previewing ? {} : (a.overrides || {});
     const ovName = (e) => this._hass.states[e]?.attributes.friendly_name || e;
     const ovNames = Object.keys(ov).filter((e) => !ov[e].off).map(ovName);
-    const offNames = Object.keys(ov).filter((e) => ov[e].off).map(ovName);
+    const offNames = Object.keys(ov).filter((e) => ov[e].off && ov[e].until_back).map(ovName);
+    const offEmpty = Object.keys(ov).filter((e) => ov[e].off && !ov[e].until_back).map(ovName);
     // the same delay SB Modes uses (bookkeeping.release_delay): delay / vacant_after / off-when-empty (capped)
     const pp = pick.params || {};
     let rel = pp.delay ?? pp.vacant_after_minutes;
@@ -958,6 +969,7 @@ class SbModesCard extends HTMLElement {
     const relTxt = rel < 1 ? `${Math.round(rel * 60)} s` : `${Math.round(rel * 10) / 10} min`;
     const third = [
       ovNames.length ? `Changed by hand: ${ovNames.join(", ")} · left alone until ${z.name} has been empty ${relTxt} or the mode changes` : "",
+      offEmpty.length ? `Turned off by hand: ${offEmpty.join(", ")} · left alone until ${z.name} has been empty ${relTxt} or the mode changes` : "",
       offNames.length ? `Turned off by hand: ${offNames.join(", ")} · stays off until someone comes back after ${relTxt} empty, or the mode changes` : "",
     ].filter(Boolean).map((t) => `<span class="sbk-m warn">${esc(t)}</span>`).join("");
     return `<div class="sbk-row ${previewing ? "pv" : ""}" data-z="${esc(z.id)}">
@@ -1095,7 +1107,7 @@ class SbModesCard extends HTMLElement {
       dlg.addEventListener("cancel", (e) => { e.preventDefault(); this._dlgCancel(); });   // Esc / back = Cancel
     }
     const a = z.attr, st = (e) => this._hass.states[e];
-    const h = a.hold, held = !!h;
+    const h = a.hold, held = !!h, byHand = Object.keys(a.overrides || {}).length > 0;
     const kind = !h ? "" : h.hold === "timed" ? "for" : h.hold === "paused" ? "paused" : "next";
     const sel = this._select(), modeName = sel ? this._modeName(sel.state) : "the mode";
     const dims = a.dimmable || (a.lights || []).filter((e) => (st(e)?.attributes.supported_color_modes || []).some((m) => m !== "onoff"));
@@ -1112,7 +1124,7 @@ class SbModesCard extends HTMLElement {
         ${radio("paused", "Until released")}
         ${radio("next", "Until mode change")}
       </div>
-      <div class="chips"><button class="sw" data-release ${dis(held)}>Release to ${esc(modeName)}</button></div>
+      <div class="chips"><button class="sw" data-release ${dis(held || byHand)}>Release to ${esc(modeName)}</button></div>
       <div class="sect"><b>Light settings</b> <span class="lh">${held ? "live — changes apply now" : "hold the room first"}</span></div>
       <div class="lvl ${held && dims.length ? "" : "off"}"><b>Dimmable</b>
         <input type="range" min="0" max="100" step="5" value="${lvl}" data-lvl aria-label="${esc(z.name)} dimmable level" ${dis(held && dims.length)}>

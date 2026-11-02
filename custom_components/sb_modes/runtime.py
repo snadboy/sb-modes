@@ -375,7 +375,10 @@ class Runtime:
         ov = self._overlays.get(zone_id)
         picked["overlay"] = {"entity": ov.entity, "entities": ov.entities, "state": ov.state, "holding": ov.holding} if ov else None
         picked["hold"] = self.keeper.held(zone_id)
-        picked["overrides"] = self.keeper.overridden(zone_id)
+        # lights turned off by hand that stay off until someone comes back (bookkeeping.py)
+        lit = self.lit_when_empty(zone_id)
+        picked["overrides"] = {e: {**o, "until_back": bool(o.get("off")) and e in lit}
+                               for e, o in self.keeper.overridden(zone_id).items()}
         return picked
 
     # ── the active mode ──────────────────────────────────────────────────────
@@ -761,6 +764,10 @@ class Runtime:
             if any(m != "onoff" for m in modes or []):
                 out.append(eid)
         return out
+
+    def lit_when_empty(self, zone_id: str) -> set[str]:
+        b = self._behaviours.get(zone_id)
+        return b.lit_when_empty() if b else set()
 
     def zone_presence(self, zone_id: str) -> list[str]:
         b = self._behaviours.get(zone_id)

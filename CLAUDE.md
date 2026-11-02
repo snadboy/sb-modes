@@ -281,6 +281,7 @@ spot and working as expected (user, 2026-10-21); seated TV viewers are covered b
   (occupancy group), Laundry Room (occupancy group), Living Room (light group incl. the
   Christmas tree light). An explicit zone `lights` list can still name one.
 Card: the TV lights up as presence; "Turned off by hand: … stays off until someone comes back".
+(0.41.2 narrowed this to lights the empty setting would light: see below.)
 
 ## Bedside 1 % floor (0.16.0, 2026-10-19)
 
@@ -653,3 +654,14 @@ User: "Is there a convenient method for finding all 'held' rooms?" → `_heldHtm
 sensor has `hold`; on the dashboard card under the current mode, on the page above the Rooms table
 (not while previewing another mode). Release = `sb_modes.release_zone`. Also documented for
 templates: `sensor.sb_modes_deviations` → attribute `deviations`, entries `type: zone_hold`.
+
+## By-hand rooms releasable; off by hand ends when empty (0.41.2, 2026-11-01)
+- Card: the Held list also lists rooms with lights changed by hand ("Held or by hand",
+  naming the lights) with Release; the room popup's Release works for them too.
+- Off by hand now ends after the room has been empty its delay, like any hand change, unless
+  the behaviour's empty setting would turn that light ON (`Behaviour.lit_when_empty()`:
+  presence_lux vacant/vacant_bright, occupied_vacant vacant, static targets; others none).
+  Those still end only on an arrival (the bedtime case: Living Room plants lamp).
+  Bookkeeping._end_when_empty picks what ends; zone attribute overrides[e].until_back says
+  which rule applies, and the card words it accordingly.
+  Why: Laundry Room light switched off at the wall 18:58 stayed "by hand" all evening.

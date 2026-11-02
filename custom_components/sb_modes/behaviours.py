@@ -40,6 +40,12 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 
+def _lit(targets: dict | None) -> set[str]:
+    """The lights a set of targets turns on (anything but off / 0%)."""
+    return {e for e, t in (targets or {}).items()
+            if t.get("state") != STATE_OFF and t.get("brightness_pct", 1) != 0}
+
+
 class Behaviour:
     name = "hands_off"
 
@@ -61,6 +67,11 @@ class Behaviour:
         for unsub in self._unsubs:
             unsub()
         self._unsubs.clear()
+
+    def lit_when_empty(self) -> set[str]:
+        """Lights this behaviour's empty setting turns on (a light turned off by hand stays
+        off through the vacancy only for these; bookkeeping.py)."""
+        return set()
 
     @callback
     def _set_status(self, status: str) -> None:
@@ -114,6 +125,9 @@ class Held(Behaviour):
 
 class Static(Behaviour):
     name = "static"
+
+    def lit_when_empty(self) -> set[str]:
+        return _lit(self.params.get("targets"))
 
     @callback
     def start(self) -> None:
@@ -321,6 +335,9 @@ class OccupiedVacant(_Occupancy):
         self._was_occupied: bool | None = None
         self._vacant_done = False
 
+    def lit_when_empty(self) -> set[str]:
+        return _lit(self.params.get("vacant"))
+
     @callback
     def start(self) -> None:
         self._unsubs.append(async_track_state_change_event(self.hass, self._sensors, self._changed))
@@ -405,6 +422,9 @@ class PresenceLux(_Occupancy):
             except (AttributeError, TypeError, ValueError):
                 continue
         return min(vals) if vals else None
+
+    def lit_when_empty(self) -> set[str]:
+        return _lit(self.params.get("vacant")) | _lit(self.params.get("vacant_bright"))
 
     DAYLIGHT_MAX_AGE = 3600            # seconds a lights-off reading stays usable
 
