@@ -212,6 +212,16 @@ table.tg td.n { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; 
 table.tg td { white-space: nowrap; }
 table.tg input[type=number] { width: 58px; }
 table.tg input[type=number] { width: 64px; }
+/* the light table goes to one light per block when ITS width is short (not the screen's:
+   a wide screen can still give it a narrow column) */
+.tg-wrap { container-type: inline-size; }
+@container (max-width: 600px) {
+  table.tg, table.tg tbody { display: block; }
+  table.tg colgroup, table.tg thead { display: none; }
+  table.tg tr { display: grid; grid-template-columns: auto auto auto 1fr auto; align-items: center; gap: 4px 8px; padding: 8px 0; border-bottom: 1px solid var(--divider-color); }
+  table.tg td { padding: 0; border-bottom: 0; }
+  table.tg td.n { grid-column: 1 / -1; width: auto; }
+}
 .step { border-left: 3px solid var(--divider-color); padding-left: 10px; margin: 10px 0; }
 .step .sh { display: flex; align-items: center; gap: 8px; font-size: 14px; }
 .step input { width: 64px; }
@@ -356,11 +366,6 @@ button.hl-r.card { border: 1px solid var(--divider-color); }
   details.secd > summary { flex-wrap: wrap; row-gap: 2px; }
   details.secd > summary .sum { flex-basis: 100%; padding-left: 30px; }
   .secbody { padding: 4px 10px 14px; }
-  table.tg, table.tg tbody { display: block; }
-  table.tg colgroup, table.tg thead { display: none; }
-  table.tg tr { display: grid; grid-template-columns: auto auto auto 1fr auto; align-items: center; gap: 4px 8px; padding: 8px 0; border-bottom: 1px solid var(--divider-color); }
-  table.tg td { padding: 0; }
-  table.tg td.n { grid-column: 1 / -1; width: auto; }
   .mform .form[data-form="mode"] { flex-basis: 100%; }
   table.lt col:nth-child(2) { width: 90px !important; }
 }
