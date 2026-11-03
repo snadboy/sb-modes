@@ -665,3 +665,7 @@ templates: `sensor.sb_modes_deviations` → attribute `deviations`, entries `typ
   Bookkeeping._end_when_empty picks what ends; zone attribute overrides[e].until_back says
   which rule applies, and the card words it accordingly.
   Why: Laundry Room light switched off at the wall 18:58 stayed "by hand" all evening.
+- 0.41.3: the light table (`.tg-wrap`) stacks via a container query (≤600 px of its own width)
+  instead of the 700 px viewport media query — a wide screen with the sidebar open gave a
+  mode's own rule a narrow column and names shrank to one letter. The @container block must
+  come AFTER the base `table.tg` rules (same specificity; order wins).
