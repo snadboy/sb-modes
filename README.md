@@ -15,7 +15,8 @@ mode, room or entity can never be left unhandled.
   until the next scheduled change.
 - **Rules.** One per room is in charge at a time: *off when empty*, *occupied / empty*,
   *presence + light level*, *nightlight, then dark*, *static*, or *hands off*. A room has a
-  normal rule and may use a different one in a given mode.
+  **default rule** and may have its own rule in a given mode (shown in that mode's square on
+  the House page; a blank square means the default).
 - **Add-ons.** Extra actions on top of the rule, each with a **trigger**, an optional
   **When** (modes, days, a time window) and steps that set lights (or "at least"), hold
   or release the room, or run a Home Assistant script. Triggers: a time of day, a mode

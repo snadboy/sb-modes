@@ -6,7 +6,7 @@
  * changes in words. Save turns the draft into the table (a new version); Discard drops it.
  *
  * Three views (the structure agreed from the mock-ups, 2026-10-21):
- *   House — rooms × modes: what each room does in each mode, "Usual" or its own setting, and
+ *   House — rooms × modes: what each room does in each mode (blank: its default rule), and
  *           what is set when a mode begins; mode headings open the mode (name, icon, order).
  *   Times — the day types (Vacation, Workdays, Days off…) in priority order, each with its
  *           mode changes on a 24-hour band; other rules; the coming week.
@@ -695,23 +695,20 @@ export class SbModesEditor extends HTMLElement {
       const ov = z.overrides || {}, normal = ov[ALL], addons = z.addons || [], open = this._foldOpen(z.id), off = z.enabled === false;
       const cells = off ? `<td class="cell zoff" colspan="${modes.length}" data-room="${esc(z.id)}"><span class="usual">off — SB Modes leaves this room alone</span></td>` : modes.map((m) => {
         const own = ov[m.id];
-        const fallback = !own && !normal ? this._mode(m.id)?.default : null;
-        const what = own ? `<span class="difr"><small>Different rule</small>${esc(this._sayChoice(own, z.id, true))}</span>`
-          : fallback && fallback.behaviour !== "hands_off" ? `<span class="usual">mode default: ${esc(this._beh(fallback.behaviour).label)}</span>`
-          : !normal ? `<span class="usual">not controlled</span>` : "";
-        return `<td class="cell" data-cell="${esc(z.id)}|${esc(m.id)}" title="${own ? "A different rule in this mode" : "The normal rule — tap to give this mode a different one"}">${what}</td>`;
+        const what = own ? `<span class="difr">${esc(this._sayChoice(own, z.id, true))}</span>` : !normal ? `<span class="usual">no rule</span>` : "";
+        return `<td class="cell" data-cell="${esc(z.id)}|${esc(m.id)}" title="${own ? `${esc(z.name || z.id)}'s own rule in this mode` : "The default rule — tap to give this mode its own"}">${what}</td>`;
       }).join("");
       const nerr = this._errorsAt(["zones", this._zoneIndex(z.id)]).length;
       const fold = addons.length ? `<button class="fold" data-fold="${esc(z.id)}" aria-expanded="${open}">${addons.length} add-on${addons.length === 1 ? "" : "s"} ${open ? "▾" : "▸"}</button>` : "";
       const room = `<tr class="${off ? "zoff" : ""}"><td class="room"><ha-switch data-zone-on="${esc(z.id)}" ${off ? "" : "checked"} title="SB Modes runs this room — on / off"></ha-switch><button data-room="${esc(z.id)}">${esc(z.name || z.id)} ›</button>${nerr ? `<span class="dot" title="Has errors"></span>` : ""}
-          <span class="us">${esc(off ? "Off: no rule, no add-ons" : normal ? this._sayChoice(normal, z.id) : "No normal rule")}</span>${off ? "" : fold}</td>${cells}</tr>`;
+          <span class="us">${esc(off ? "Off: no rule, no add-ons" : normal ? this._sayChoice(normal, z.id) : "No default rule")}</span>${off ? "" : fold}</td>${cells}</tr>`;
       const subs = open && !off ? addons.map((a) => `<tr class="arow ${a.enabled === false ? "off" : ""}"><td class="an"><span class="ar">↳</span><button data-addon="${esc(z.id)}|${esc(a.id)}">${esc(a.name || a.id)}${a.enabled === false ? " (off)" : ""}</button></td>${this._addonCells(a, z.id)}</tr>`).join("") : "";
       return room + subs;
     }).join("");
     return `<div class="tools hgrid" style="margin:0 0 8px"><span class="help" style="margin:0;flex:1">Rooms × modes · tap a room or a mode to open it</span>
         <button class="lk" data-fold-all="open">Show all add-ons</button><button class="lk" data-fold-all="close">Hide all</button></div>
       <div class="card hgrid"><div class="grid"><table class="fixed"><colgroup><col style="width:250px">${modes.map(() => "<col>").join("")}</colgroup>
-        <thead><tr><th class="lbl">Room — its normal rule<br><span style="text-transform:none;letter-spacing:0;font-weight:400">↳ its add-ons</span></th>${head}</tr></thead>
+        <thead><tr><th class="lbl">Room — its default rule<br><span style="text-transform:none;letter-spacing:0;font-weight:400">↳ its add-ons</span></th>${head}</tr></thead>
         <tbody>${rows || `<tr><td colspan="${modes.length + 1}" class="empty">No rooms yet.</td></tr>`}</tbody></table></div></div>
       ${this._houseListHtml()}
       <div class="tools" style="margin-bottom:12px"><button class="b add" data-act="add-zone">+ Room</button><button class="b add" data-act="add-mode">+ Mode</button>
@@ -739,7 +736,9 @@ export class SbModesEditor extends HTMLElement {
       <div class="card">${rows}</div></div>`;
   }
 
-  /** A mode's own page: name and icon, when it begins, what each room does in it, its default rule. */
+  /** A mode's own page: name and icon, when it begins, what each room does in it. (A mode's
+   *  "default" — for rooms with no default rule — is kept in the table but not shown: every
+   *  room has a default rule, so it is never reached.) */
   _modePageHtml() {
     const m = this._mode(this._modeId);
     if (!m) return `<div class="empty">That mode is gone.</div>`;
@@ -748,7 +747,7 @@ export class SbModesEditor extends HTMLElement {
       const off = z.enabled === false, own = (z.overrides || {})[m.id], normal = (z.overrides || {})[ALL];
       const ch = own || normal || m.default;
       return `<tr class="${off ? "dim" : ""}" data-mroom="${esc(z.id)}" tabindex="0"><td>${esc(z.name || z.id)}</td>
-        <td>${off ? `<span class="help">off</span>` : own ? `<span class="tag">OWN</span>` : normal ? `<span class="help">normal rule</span>` : `<span class="help">mode default</span>`}</td>
+        <td>${off ? `<span class="help">off</span>` : own ? `<span class="tag">OWN</span>` : normal ? `<span class="help">default rule</span>` : `<span class="help">no rule</span>`}</td>
         <td class="ell">${esc(off ? "SB Modes leaves it alone" : this._sayChoice(ch, z.id))}</td><td class="chev">›</td></tr>`;
     }).join("");
     const begins = this._sortedZones().flatMap((z) => (z.addons || []).filter((a) => a.type === "lights" && (a.trigger?.mode_begins || []).includes(m.id))
@@ -762,8 +761,6 @@ export class SbModesEditor extends HTMLElement {
           <thead><tr><th><button class="th" data-sortt="moderooms">Room ${dir > 0 ? "▲" : "▼"}</button></th><th>Uses</th><th>Rule</th><th></th></tr></thead><tbody>${rows}</tbody></table></div></div>
       ${this._secHtml("mbegins", "When it begins", nb ? `${nb} add-on${nb === 1 ? " runs" : "s run"} as ${m.name || m.id} begins` : "no add-on runs as it begins",
         nb ? `<table class="lt"><colgroup><col style="width:200px"><col style="width:220px"><col></colgroup><thead><tr><th>Room</th><th>Add-on</th><th>Does</th></tr></thead><tbody>${begins}</tbody></table>` : `<div class="help">None.</div>`)}
-      ${this._secHtml("mdefault", "Default rule", `for rooms with no rule of their own: ${this._sayChoice(m.default)}`,
-        this._choiceEditorHtml({ kind: "mode", mode: m.id }, m.default))}
       <div class="tools"><button class="b sm" data-move-mode="${i}" data-dir="-1" ${i ? "" : "disabled"}>← Move earlier</button>
         <button class="b sm" data-move-mode="${i}" data-dir="1" ${i < n - 1 ? "" : "disabled"}>Move later →</button>
         <span style="flex:1"></span><button class="b sm danger" data-del-mode="${esc(m.id)}">Delete mode…</button></div>`;
@@ -783,10 +780,10 @@ export class SbModesEditor extends HTMLElement {
         <label class="zon">SB Modes runs this room <ha-switch data-zone-on="${esc(z.id)}" ${off ? "" : "checked"}></ha-switch></label></div>
       <div class="errs-slot" data-path='${esc(JSON.stringify(["zones", zi]))}'></div>
       ${off ? `<div class="card zoffnote"><div class="sec">Switched off: SB Modes leaves ${esc(z.name || z.id)} alone in every mode — no rule, no add-ons, hand changes not tracked. Its settings below are kept for when you switch it back on.</div></div>` : ""}
-      ${this._secHtml("rule", "Rule", normal ? this._sayChoice(normal, z.id) : "no normal rule — each mode's default",
+      ${this._secHtml("rule", "Default rule", normal ? this._sayChoice(normal, z.id) : "none set — choose a behaviour",
         this._ruleCtxHtml(z, own) + this._choiceEditorHtml({ kind: "zone", zone: z.id, mode: ALL }, normal))}
-      ${this._secHtml("bymode", "By mode", own.length ? `own rule in ${own.map((m) => `${m.name || m.id} (${this._beh(z.overrides[m.id].behaviour).label})`).join(", ")}` : "the normal rule in every mode",
-        `<div class="help">“Normal rule” unless the mode has a different one. Open a mode to give it its own.</div>${modeRows}`)}
+      ${this._secHtml("bymode", "By mode", own.length ? `own rule in ${own.map((m) => `${m.name || m.id} (${this._beh(z.overrides[m.id].behaviour).label})`).join(", ")}` : "the default rule in every mode",
+        `<div class="help">Each mode uses the default rule unless it has its own. Open a mode to give it its own.</div>${modeRows}`)}
       ${this._secHtml("addons", "Add-ons", (z.addons || []).length ? `${z.addons.length} · ${z.addons.map((a) => `${a.name || a.id}${a.enabled === false ? " (off)" : ""}`).join(" · ")}` : "none",
         this._addonsHtml(z))}
       ${this._secHtml("devices", "Devices", this._sayDevices(z, zs),
@@ -794,10 +791,10 @@ export class SbModesEditor extends HTMLElement {
         <div class="tools"><button class="b sm danger" data-act="del-zone">Delete room</button></div>`)}`;
   }
 
-  /** Which modes the normal rule is for, above its editor: it is easy to land here meaning one mode. */
+  /** Which modes the default rule is for, above its editor: it is easy to land here meaning one mode. */
   _ruleCtxHtml(z, own) {
     const nm = (m) => m.name || m.id, uses = this._modes().filter((m) => !own.includes(m));
-    return `<div class="ctx"><b>${esc(z.name || z.id)} normal rule</b> · used in ${uses.length ? esc(uses.map(nm).join(", ")) : "no mode"}${
+    return `<div class="ctx"><b>${esc(z.name || z.id)} default rule</b> · used in ${uses.length ? esc(uses.map(nm).join(", ")) : "no mode"}${
       own.length ? ` — not ${esc(own.map(nm).join(", "))}, which ${own.length === 1 ? "has its" : "have their"} own (By mode below)` : ""}</div>`;
   }
 
@@ -820,13 +817,13 @@ export class SbModesEditor extends HTMLElement {
 
   _roomModeRowHtml(z, m) {
     const ov = (z.overrides || {})[m.id], key = `${z.id}|${m.id}`, open = this._open.has(key);
-    const what = ov ? `Different rule: ${this._sayChoice(ov, z.id, true)}` : (z.overrides || {})[ALL] ? "Normal rule" : `Mode default: ${this._beh(m.default?.behaviour).label}`;
+    const what = ov ? this._sayChoice(ov, z.id, true) : (z.overrides || {})[ALL] ? "Default" : "No rule";
     const nerr = this._errorsAt(["zones", this._zoneIndex(z.id), "overrides", m.id]).length;
     return `<div class="mrow" data-box="mode-${esc(m.id)}"><button class="mhead" data-row="${esc(key)}" aria-expanded="${open}">
         <span class="mn">${esc(m.name || m.id)}<small>${esc(this._modeTimes(m.id))}</small></span>
         <span class="what ${ov ? "own" : ""}">${esc(what)}${nerr ? ` <span class="err">· ${nerr} error${nerr === 1 ? "" : "s"}</span>` : ""}</span>
         <ha-icon icon="${open ? "mdi:chevron-down" : "mdi:chevron-right"}"></ha-icon></button>
-      ${open ? `<div class="mbody"><div class="col"><div class="ctx"><b>${esc(z.name || z.id)} in ${esc(m.name || m.id)} only</b>${ov ? " · its own rule; the other modes are not affected" : " · uses the normal rule now: choose a behaviour to give it its own"}</div>${this._choiceEditorHtml({ kind: "zone", zone: z.id, mode: m.id }, ov)}</div></div>` : ""}</div>`;
+      ${open ? `<div class="mbody"><div class="col"><div class="ctx"><b>${esc(z.name || z.id)} in ${esc(m.name || m.id)} only</b>${ov ? " · its own rule; the other modes are not affected" : " · uses the default rule now: choose a behaviour to give it its own"}</div>${this._choiceEditorHtml({ kind: "zone", zone: z.id, mode: m.id }, ov)}</div></div>` : ""}</div>`;
   }
 
   // ── add-ons ────────────────────────────────────────────────────────────
@@ -1332,7 +1329,8 @@ export class SbModesEditor extends HTMLElement {
     root.querySelectorAll('[data-form="pick"]').forEach((slot) => {
       const owner = JSON.parse(slot.dataset.owner), ch = this._choice(this._draft, owner);
       const NONE = "__none__";
-      const opts = [...(owner.kind === "zone" ? [{ value: NONE, label: owner.mode === ALL ? "Not set — each mode's default" : "Same as usual" }] : []),
+      // a room's default rule is always set (nothing shows a mode's fallback any more); a mode can go back to it
+      const opts = [...(owner.kind === "zone" && owner.mode !== ALL ? [{ value: NONE, label: "Default rule" }] : []),
         ...Object.entries(this._schema.behaviours).map(([k, b]) => ({ value: k, label: b.label }))];
       slot.appendChild(this._form([{ name: "behaviour", selector: { select: { mode: "dropdown", options: opts } } }], { behaviour: ch?.behaviour || NONE },
         (v) => this._edit((d) => {
@@ -1590,7 +1588,7 @@ export class SbModesEditor extends HTMLElement {
     if (box) { this._openAddon = `${id}|${box}`; this._scrollTo = box; sessSet("ed:addons", true); }
     this._go("room", id);
   }
-  /** A room, opened at one mode's setting (not its normal rule, which sits above it). */
+  /** A room, opened at one mode's setting (not its default rule, which sits above it). */
   _goRoomMode(z, m) {
     this._open.add(`${z}|${m}`); sessSet("ed:bymode", true); sessSet("ed:rule", false);
     this._scrollTo = `mode-${m}`;

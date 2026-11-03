@@ -674,3 +674,11 @@ templates: `sensor.sb_modes_deviations` → attribute `deviations`, entries `typ
   the session-remembered Rule section sat open on top and the user edited the normal rule
   thinking it was Overnight. Context banners (`.ctx`): "<Room> in <Mode> only" in a mode row;
   "<Room> normal rule · used in … — not …" above the normal rule.
+
+## "Default rule" wording; mode default hidden (0.42.0, 2026-11-02)
+User found "Normal rule" / "Different rule" confusing. Now: a room's rule for all modes is its
+**Default rule** (section title, headings, mode rows show "Default"); a mode's own rule shows as
+the rule itself (no "Different rule" label) and a blank House square means the default. The
+mode-level `default` (fallback for rooms with no default rule) is no longer shown or editable:
+every room has a default rule (new rooms start with hands_off) so it was never reached. Data and
+model.resolve are unchanged. The room's default-rule picker no longer offers "Not set".

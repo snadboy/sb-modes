@@ -11,7 +11,7 @@
  *
  * Rows use the shared SB row style (window.SBKit, from the SB UI Kit integration).
  */
-const VERSION = "0.41.4";
+const VERSION = "0.42.0";
 const CARD = "sb-modes-card";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -791,7 +791,7 @@ class SbModesCard extends HTMLElement {
     const h = previewing ? null : a.hold;
     const hand = previewing ? 0 : Object.keys(a.overrides || {}).length;
     const hold = !h ? (hand ? "by hand" : "") : h.hold === "timed" ? `until ${hhmm(h.until)}` : h.hold === "next" ? "until next mode" : "until released";
-    const src = off ? "switched off in the editor" : pick.source === "override" ? "this room's own setting for this mode" : pick.source === "zone" ? "this room's normal rule" : "the mode's default";
+    const src = off ? "switched off in the editor" : pick.source === "override" ? "this room's own setting for this mode" : pick.source === "zone" ? "this room's default rule" : "no rule";
     return { a, pick, beh, off, what, doing, hold, held: !!h, hand, src, rule: off ? "Switched off" : BEHAVIOUR_NAMES[beh] || beh,
              look: previewing ? { icon: look(beh, "").icon, tint: "idle" } : look(beh, a.status) };
   }
@@ -937,7 +937,7 @@ class SbModesCard extends HTMLElement {
     const doing = previewing ? what : [occ, fmtTimes(rest)].filter(Boolean).join(" · ");
     const l = previewing ? { icon: look(beh, "").icon, tint: "idle" } : look(beh, a.status);
     const open = this._isOpen(z.id);
-    const src = off ? "switched off in the editor" : pick.source === "override" ? "this zone's own setting for this mode" : pick.source === "zone" ? "this zone's setting for all modes" : "the mode's default";
+    const src = off ? "switched off in the editor" : pick.source === "override" ? "this zone's own setting for this mode" : pick.source === "zone" ? "this room's default rule" : "no rule";
     const ent = (eid, kind) => {
       const st = this._hass.states[eid];
       const name = st?.attributes.friendly_name || eid;
@@ -1201,7 +1201,7 @@ const LEGEND = `<h3>The house</h3>
   <div class="lg"><span class="mut">Changed by hand</span><span>a light changed at the device is left alone until the room has been empty for its delay</span></div>
   <div class="lg"><span class="mut">Switched off</span><span>SB Modes leaves the room alone in every mode</span></div>
   <h3>House grid</h3>
-  <div class="lg"><span class="difr"><small>Different rule</small></span><span>the room uses its own rule in that mode instead of its normal one</span></div>
+  <div class="lg"><span class="difr">Nightlight, then dark</span><span>the room's own rule in that mode; a blank square means it uses its default rule</span></div>
   <div class="lg"><span class="mk clk">🕒 7:30 PM</span><span>an add-on at a time of day or sunrise / sunset</span></div>
   <div class="lg"><span class="mk beg">▸ when it begins</span><span>an add-on that runs once as that mode begins</span></div>
   <div class="lg"><span class="mk on">● throughout</span><span>an add-on active the whole time in those modes</span></div>
