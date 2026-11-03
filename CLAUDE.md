@@ -669,3 +669,8 @@ templates: `sensor.sb_modes_deviations` → attribute `deviations`, entries `typ
   instead of the 700 px viewport media query — a wide screen with the sidebar open gave a
   mode's own rule a narrow column and names shrank to one letter. The @container block must
   come AFTER the base `table.tg` rules (same specificity; order wins).
+- 0.41.4: a House cell (or the phone list, or a mode page's room row) opens the room at THAT
+  mode (`_goRoomMode`: By mode open, Rule collapsed, scrolled to `[data-box=mode-<id>]`). Before,
+  the session-remembered Rule section sat open on top and the user edited the normal rule
+  thinking it was Overnight. Context banners (`.ctx`): "<Room> in <Mode> only" in a mode row;
+  "<Room> normal rule · used in … — not …" above the normal rule.
