@@ -1289,13 +1289,18 @@ export class SbModesEditor extends HTMLElement {
         { name: "lights", selector: { entity: { multiple: true, filter: { domain: ["light", "switch"] } } } },
         { name: "occupancy", selector: { entity: { multiple: true, filter: { domain: "binary_sensor", device_class: ["occupancy", "presence"] } } } },
         { name: "illuminance", selector: { entity: { multiple: true, filter: { domain: "sensor", device_class: "illuminance" } } } },
-      ], { name: z.name || "", areas: z.areas || [], lights: z.lights || [], occupancy: z.occupancy || [], illuminance: z.illuminance || [] },
+        { name: "hand_max_minutes", selector: { number: { min: 1, max: 1440, mode: "box", unit_of_measurement: "min" } } },
+      ], { name: z.name || "", areas: z.areas || [], lights: z.lights || [], occupancy: z.occupancy || [], illuminance: z.illuminance || [],
+        hand_max_minutes: z.hand_max_minutes ?? undefined },
       (v) => this._edit((d) => {
         const x = d.zones.find((q) => q.id === z.id);
         x.name = v.name; x.areas = v.areas || [];
         for (const k of ["lights", "occupancy", "illuminance"]) { if (v[k]?.length) x[k] = v[k]; else delete x[k]; }
-      }), { name: "Name", areas: "Areas", lights: "Own lights", occupancy: "Own presence sensors", illuminance: "Own light sensors" },
-      { lights: "Leave empty to use every light in the areas.", occupancy: "Leave empty to use the areas' presence sensors.", illuminance: "Leave empty to use (the average of) the areas' light sensors." }));
+        if (typeof v.hand_max_minutes === "number") x.hand_max_minutes = v.hand_max_minutes; else delete x.hand_max_minutes;
+      }), { name: "Name", areas: "Areas", lights: "Own lights", occupancy: "Own presence sensors", illuminance: "Own light sensors",
+        hand_max_minutes: "Hand changes last at most" },
+      { lights: "Leave empty to use every light in the areas.", occupancy: "Leave empty to use the areas' presence sensors.", illuminance: "Leave empty to use (the average of) the areas' light sensors.",
+        hand_max_minutes: "Minutes a light changed by hand is left alone, even with the room still occupied. Leave empty for no limit (until the room is empty)." }));
     }
     const ad = z && this._openAddon?.startsWith(`${z.id}|`) ? (z.addons || []).find((x) => `${z.id}|${x.id}` === this._openAddon) : null;
     const adEdit = (fn, redraw = false) => this._edit((d) => { const x = d.zones.find((q) => q.id === z.id).addons.find((y) => y.id === ad.id); fn(x); }, redraw);

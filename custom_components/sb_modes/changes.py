@@ -124,6 +124,11 @@ def _calendar(t: dict) -> str:
 
 
 # ── zones ───────────────────────────────────────────────────────────────────
+def _cap(m) -> str:
+    """A zone's hand_max_minutes, in words."""
+    return f"at most {m:g} min" if isinstance(m, (int, float)) and not isinstance(m, bool) else "no limit"
+
+
 def _zone_changes(a: dict, b: dict, name_of, mode_name, day_name=lambda d: d) -> list[str]:
     z = _n(b)
     out = []
@@ -131,6 +136,8 @@ def _zone_changes(a: dict, b: dict, name_of, mode_name, day_name=lambda d: d) ->
         out.append(f"Zone {_n(a)} renamed {z}")
     if (a.get("enabled") is False) != (b.get("enabled") is False):
         out.append(f"{z}: {'switched off — SB Modes leaves it alone' if b.get('enabled') is False else 'switched back on'}")
+    if a.get("hand_max_minutes") != b.get("hand_max_minutes"):
+        out.append(f"{z} · hand changes: {_cap(a.get('hand_max_minutes'))} → {_cap(b.get('hand_max_minutes'))}")
     if (a.get("areas") or []) != (b.get("areas") or []):
         out.append(f"{z} · areas: {', '.join(a.get('areas') or []) or NONE} → {', '.join(b.get('areas') or []) or NONE}")
     for key, label in (("lights", "own lights"), ("occupancy", "own occupancy sensors"), ("illuminance", "own light sensors")):

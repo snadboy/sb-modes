@@ -694,3 +694,19 @@ Gotcha: the dialog's class must not be `det` — `.det { all: unset }` (the link
 Same release: the Status page's room detail "In <mode>" line uses `_brief` (behaviour name + timings,
 no devices) instead of `_describe`; the lights table under it already shows them. The card's own
 detail still uses `_describe`.
+
+## Cap on hand changes: `hand_max_minutes` (0.44.0, 2026-11-09, branch `hand-max`, NOT released)
+- Optional zone key `hand_max_minutes` (1–1440; absent/null = no cap, the old behaviour): a light
+  changed by hand is released once its mark is that old, even with the zone still occupied — all of
+  the zone's marks, off-by-hand ones included; then `restart_zone` re-resolves (presence_lux lights
+  an occupied dark room again). Why: the Kitchen FP300 falsely held "occupied" 1 h 46 min on
+  2026-11-08, so a Google "kitchen lights off" never ended and the lights stayed off for the next person.
+- `Keeper._arm_cap` / `_cap_due` (timer per zone in `_capped`, armed from `watch()` and on each hand
+  change, counted from each mark's `since` so restored marks expire on time or at once); runtime
+  `_rewatch` passes `max` = `bookkeeping.hand_max_minutes(zone)`. Log: `hand_end` "hand change expired
+  after 60 min: Ceiling". Holds are untouched. validate.py checks it (path `zones.i.hand_max_minutes`),
+  changes.py words it, zone sensor attribute `hand_max_minutes`, editor basics form field "Hand changes
+  last at most", card's by-hand line adds "(at most N min)".
+- Tests: test_validate `test_hand_max_minutes`; integration `test_hand_change_expires_after_the_cap_while_occupied`,
+  `test_no_cap_hand_change_stays_while_occupied`, `…_across_a_reload`, `…_already_past_the_cap_ends_on_restore`,
+  `test_hand_cap_does_not_end_a_hold`. Not set on any live zone yet (suggest Kitchen 60).

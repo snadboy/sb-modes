@@ -21,6 +21,11 @@ A zone may also set `on_enter`: {mode id: targets} — set ONCE when that mode b
 mode change, scheduled or by hand; not a restart or a table reload), alongside its behaviour.
 E.g. "when Morning begins: the kitchen aux lights on".
 
+A zone may set `hand_max_minutes` (1–1440): a light changed by hand is left alone at most that
+long, even while the zone stays occupied (a presence sensor stuck "occupied" would otherwise keep
+the change forever); then the zone's behaviour runs again. Left out (or null) = no limit: hand
+changes end only on vacancy, an arrival, the mode changing or a release (bookkeeping.py).
+
 A mode exists only because it has a default. A zone without an override for a mode
 inherits that mode's default, so every (mode, zone) pair resolves to exactly one
 behaviour and its parameters.

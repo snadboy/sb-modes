@@ -11,7 +11,7 @@
  *
  * Rows use the shared SB row style (window.SBKit, from the SB UI Kit integration).
  */
-const VERSION = "0.43.0";
+const VERSION = "0.44.0";
 const CARD = "sb-modes-card";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -983,10 +983,11 @@ class SbModesCard extends HTMLElement {
     if (rel == null && pp.off_after_seconds != null) rel = Math.min(pp.off_after_seconds / 60, pp.max_on_minutes || Infinity);
     rel = rel ?? 10;
     const relTxt = rel < 1 ? `${Math.round(rel * 60)} s` : `${Math.round(rel * 10) / 10} min`;
+    const capTxt = a.hand_max_minutes ? ` (at most ${a.hand_max_minutes} min)` : "";   // bookkeeping._arm_cap
     const third = [
-      ovNames.length ? `Changed by hand: ${ovNames.join(", ")} · left alone until ${z.name} has been empty ${relTxt} or the mode changes` : "",
-      offEmpty.length ? `Turned off by hand: ${offEmpty.join(", ")} · left alone until ${z.name} has been empty ${relTxt} or the mode changes` : "",
-      offNames.length ? `Turned off by hand: ${offNames.join(", ")} · stays off until someone comes back after ${relTxt} empty, or the mode changes` : "",
+      ovNames.length ? `Changed by hand: ${ovNames.join(", ")} · left alone until ${z.name} has been empty ${relTxt} or the mode changes${capTxt}` : "",
+      offEmpty.length ? `Turned off by hand: ${offEmpty.join(", ")} · left alone until ${z.name} has been empty ${relTxt} or the mode changes${capTxt}` : "",
+      offNames.length ? `Turned off by hand: ${offNames.join(", ")} · stays off until someone comes back after ${relTxt} empty, or the mode changes${capTxt}` : "",
     ].filter(Boolean).map((t) => `<span class="sbk-m warn">${esc(t)}</span>`).join("");
     return `<div class="sbk-row ${previewing ? "pv" : ""}" data-z="${esc(z.id)}">
         <button class="sbk-open" aria-expanded="${open}" title="${open ? "Hide" : "Show"} what ${esc(z.name)} holds">

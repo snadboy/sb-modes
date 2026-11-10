@@ -2125,3 +2125,87 @@ async def test_disabled_entity_is_out_of_service(hass, kitchen, lights) -> None:
     rt.check()
     await hass.async_block_till_done()
     assert hass.states.get(PROBLEM).attributes["out_of_service"] == []
+
+
+# ── hand_max_minutes: a cap on hand changes, occupied or not ─────────────────
+
+def _capped(cap=60) -> dict:
+    t = _with("presence_lux", PL, mode="evening")
+    if cap is not None:
+        t["zones"][0]["hand_max_minutes"] = cap
+    return t
+
+
+async def _ceiling_off_by_hand(hass, lights, cap=60):
+    """Evening, occupied and dark: the ceiling comes on; then someone turns it off by hand."""
+    await _setup(hass)
+    await _save(hass, _capped(cap))
+    hass.states.async_set(OCC, "on")
+    await _mode(hass, "evening")
+    hass.states.async_set(LUX, "5")
+    await hass.async_block_till_done()
+    assert [c.data["entity_id"] for c in lights["on"]] == [CEILING]
+    hass.states.async_set(CEILING, "on", {"brightness": 209}, context=Context())   # the device echoing us
+    await hass.async_block_till_done()
+    assert _zone(hass)["overrides"] == {}
+    hass.states.async_set(CEILING, "off", context=Context(user_id="someone"))
+    await hass.async_block_till_done()
+    assert _zone(hass)["overrides"][CEILING]["off"] is True
+
+
+async def test_hand_change_expires_after_the_cap_while_occupied(hass, kitchen, lights, freezer) -> None:
+    await _ceiling_off_by_hand(hass, lights)
+    acts = _acts(hass)
+    n = len(lights["on"])
+    await _tick(hass, freezer, minutes=59)                                # still occupied (the stuck FP300)
+    assert CEILING in _zone(hass)["overrides"]
+    assert len(lights["on"]) == n
+    await _tick(hass, freezer, minutes=1, seconds=2)
+    assert _zone(hass)["overrides"] == {}
+    assert [c.data["entity_id"] for c in lights["on"][n:]] == [CEILING]   # occupied and dark: back on
+    assert ("hand_end", "hand change expired after 60 min: ceiling") in [(a.data["kind"], a.data["message"]) for a in acts]
+
+
+async def test_no_cap_hand_change_stays_while_occupied(hass, kitchen, lights, freezer) -> None:
+    await _ceiling_off_by_hand(hass, lights, cap=None)
+    n = len(lights["on"])
+    await _tick(hass, freezer, minutes=120)
+    assert CEILING in _zone(hass)["overrides"]
+    assert len(lights["on"]) == n
+
+
+async def test_hand_change_cap_counts_from_its_since_across_a_reload(hass, kitchen, lights, freezer) -> None:
+    await _ceiling_off_by_hand(hass, lights)
+    await _tick(hass, freezer, minutes=30)
+    await _save(hass, _capped())                                          # reload: the marks are restored
+    assert CEILING in _zone(hass)["overrides"]
+    await _tick(hass, freezer, minutes=29)
+    assert CEILING in _zone(hass)["overrides"]                            # not restarted from the reload
+    await _tick(hass, freezer, minutes=1, seconds=2)
+    assert _zone(hass)["overrides"] == {}
+
+
+async def test_hand_change_already_past_the_cap_ends_on_restore(hass, kitchen, lights, freezer) -> None:
+    from homeassistant.util import dt as dt_util
+    await _ceiling_off_by_hand(hass, lights)
+    rt = _rt(hass)
+    for unsub in rt.keeper._capped.values():                             # as if HA was down past the cap
+        unsub()
+    rt.keeper._capped.clear()
+    old = dt_util.utcnow() - timedelta(hours=2)
+    rt.keeper.overrides["kitchen"][CEILING]["since"] = old.isoformat()
+    acts = _acts(hass)
+    n = len(lights["on"])
+    await _save(hass, _capped())                                          # reload
+    assert _zone(hass)["overrides"] == {}
+    assert CEILING in [c.data["entity_id"] for c in lights["on"][n:]]
+    assert "hand change expired after 60 min: ceiling" in [a.data["message"] for a in acts]
+
+
+async def test_hand_cap_does_not_end_a_hold(hass, kitchen, lights, freezer) -> None:
+    await _setup(hass)
+    await _save(hass, _capped(5))
+    await hass.services.async_call(DOMAIN, "hold_zone", {"zone": "kitchen", "hold": "paused"}, blocking=True)
+    await _mode(hass, "evening")
+    await _tick(hass, freezer, minutes=30)
+    assert _zone(hass)["hold"]["hold"] == "paused"

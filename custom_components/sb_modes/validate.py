@@ -154,6 +154,9 @@ def _check_config(config, state_of, area_exists, zone_entities, day_set_exists) 
         if "enabled" in zone and not isinstance(zone["enabled"], bool):
             _here("zones", i, "enabled")
             errors.append(f"{where}: enabled must be true or false.")
+        if zone.get("hand_max_minutes") is not None and not _num(zone["hand_max_minutes"], 1, 1440):
+            _here("zones", i, "hand_max_minutes")
+            errors.append(f"{where}: hand_max_minutes must be 1–1440 minutes (or left out: hand changes have no time limit).")
         overrides = zone.get("overrides") or {}
         _here("zones", i, "overrides")
         if not isinstance(overrides, dict):

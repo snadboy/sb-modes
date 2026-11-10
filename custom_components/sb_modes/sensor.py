@@ -108,6 +108,7 @@ class ZoneSensor(ModesEntity, SensorEntity):
             "control": self._rt.zone_control(self._zone_id),
             "hold": st.get("hold"),
             "overrides": st.get("overrides") or {},
+            "hand_max_minutes": zone.get("hand_max_minutes"),
             "by_mode": self._rt.zone_by_mode(self._zone_id),
             "overlay": st.get("overlay"),
             "addons": zone_addons(zone),
