@@ -171,8 +171,7 @@ select, input.in { font: inherit; font-size: 14px; color: var(--primary-text-col
 .grid th + th, .grid td + td { border-left: 1px solid var(--divider-color); }
 .grid th { font-weight: 500; background: var(--secondary-background-color, rgba(127,127,127,.06)); }
 .grid th.lbl { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--secondary-text-color); vertical-align: bottom; }
-.grid th button.mh { all: unset; cursor: pointer; display: flex; flex-direction: column; gap: 3px; }
-.grid th button.mh:focus-visible { outline: 2px solid var(--primary-color); }
+.grid th .mh { display: flex; flex-direction: column; gap: 3px; align-items: flex-start; }
 .grid th .mn { display: flex; align-items: center; gap: 8px; font-size: 15px; }
 .grid th .mt { font-size: 12px; color: var(--secondary-text-color); font-weight: 400; }
 .grid th ha-icon { --mdc-icon-size: 20px; }
@@ -299,9 +298,12 @@ table.tg input[type=number] { width: 64px; }
 .grid tr.arow td.an .ar { color: var(--secondary-text-color); margin-right: 6px; }
 .grid .fold { all: unset; cursor: pointer; font-size: 12px; color: var(--primary-color); margin-left: 8px; }
 .difr { display: inline-block; padding: 5px 9px; border-radius: 8px; background: rgba(3,169,244,.12); border: 1px solid rgba(3,169,244,.45); font-size: 13px; line-height: 1.35; }
-.det { all: unset; cursor: pointer; display: block; margin-top: 4px; font-size: 12px; color: var(--primary-color); }
+.det { all: unset; cursor: pointer; display: block; margin-top: 4px; font-size: 13px; font-weight: 500; color: var(--primary-color); }
 .det:hover { text-decoration: underline; }
-.grid td.room .us .det { display: inline; margin: 0 0 0 8px; font-size: 12px; font-weight: 400; white-space: nowrap; }
+.grid td.room .rl { display: flex; gap: 14px; margin-top: 4px; }
+.grid td.room .rl button, .grid th .mh .det { all: unset; cursor: pointer; font-size: 13px; font-weight: 500; color: var(--primary-color); margin: 0; }
+.grid td.room .rl button:hover, .grid th .mh .det:hover { text-decoration: underline; }
+.grid th .mh .det { margin-top: 2px; }
 dialog.detd { margin: auto; padding: 0; border: 0; border-radius: var(--ha-card-border-radius, 12px); width: min(760px, calc(100vw - 32px)); max-height: calc(100vh - 48px);
   background: var(--card-background-color, #1c1c1c); color: var(--primary-text-color); box-shadow: 0 12px 40px rgba(0,0,0,.5); }
 dialog.detd::backdrop { background: rgba(0,0,0,.45); }
@@ -508,11 +510,9 @@ export class SbModesEditor extends HTMLElement {
     }
     return bits.join(" · ");
   }
-  /** "Devices ›" on a rule that sets devices: opens the table of them (`_detHtml`). */
+  /** "Details ›" on a rule: opens its popup (`_detHtml`) with the devices it sets, and Edit. */
   _detBtn(z, mid, ch) {
-    const p = ch?.params || {}, b = ch?.behaviour && this._beh(ch.behaviour);
-    const any = Object.entries(b?.params || {}).some(([k, s]) => (s.type === "targets" && Object.keys(p[k] || {}).length) || (s.type === "steps" && (p[k] || []).length));
-    return any ? `<button class="det" data-det="${esc(z.id)}|${esc(mid)}" title="The devices this rule sets, and how">Devices ›</button>` : "";
+    return ch?.behaviour ? `<button class="det" data-det="${esc(z.id)}|${esc(mid)}" title="The devices this rule sets, and how">Details ›</button>` : "";
   }
   /** One light's setting in full: "10% · 3021 K", "colour ■ 20%", "off", "value 255". */
   _sayTargetFull(t) {
@@ -537,13 +537,14 @@ export class SbModesEditor extends HTMLElement {
     for (const [k, s] of Object.entries(b.params || {})) {
       if (s.type === "targets" && Object.keys(p[k] || {}).length) cols.push([s.label || k, p[k]]);
       else if (s.type === "steps") for (const st of p[k] || []) cols.push([`${s.label || k} +${st.after_minutes} min`, st.targets || {}]);
+      else if (s.type === "entities" && (p[k] || []).length) cols.push([s.label || k, Object.fromEntries(p[k].map((e) => [e, null]))]);
     }
     const eids = [...new Set(cols.flatMap(([, t]) => Object.keys(t)))].sort((a, c) => byName(this._short(a, zid), this._short(c, zid)));
     const where = mid === ALL ? "default rule" : `in ${this._modeName(mid)}`;
     return `<div class="dt"><h3>${esc(z.name || z.id)} ${esc(where)}</h3>
       <div class="help" style="margin:0 0 10px">${esc(this._sayChoice(ch, zid))}</div>
-      <div class="dtw"><table class="dtt"><thead><tr><th>Device</th>${cols.map(([h]) => `<th>${esc(h)}</th>`).join("")}</tr></thead>
-      <tbody>${eids.map((e) => `<tr><td class="n" title="${esc(e)}">${esc(this._short(e, zid))}</td>${cols.map(([, t]) => `<td>${e in t ? this._sayTargetFull(t[e]) : `<span class="usual">—</span>`}</td>`).join("")}</tr>`).join("")}</tbody></table></div>
+      ${!eids.length ? `<div class="usual">${ch.behaviour === "hands_off" ? "SB Modes leaves this room's devices alone." : "This rule sets no devices."}</div>` : `<div class="dtw"><table class="dtt"><thead><tr><th>Device</th>${cols.map(([h]) => `<th>${esc(h)}</th>`).join("")}</tr></thead>
+      <tbody>${eids.map((e) => `<tr><td class="n" title="${esc(e)}">${esc(this._short(e, zid))}</td>${cols.map(([, t]) => `<td>${!(e in t) ? `<span class="usual">—</span>` : t[e] === null ? "yes" : this._sayTargetFull(t[e])}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`}
       <div class="dt-foot"><button class="b" data-det-edit>Edit</button><button class="b" data-det-close>Close</button></div></div>`;
   }
   _openDet() {
@@ -557,7 +558,8 @@ export class SbModesEditor extends HTMLElement {
     dlg.addEventListener("click", (e) => { if (e.target === dlg) dlg.close(); });
     dlg.querySelector("[data-det-close]").addEventListener("click", () => dlg.close());
     dlg.querySelector("[data-det-edit]").addEventListener("click", () => {
-      const [z, m] = this._det.split("|"); dlg.close();
+      const [z, m] = this._det.split("|");
+      this._det = null; dlg.close();
       if (m === ALL) { sessSet("ed:rule", true); this._go("room", z); } else this._goRoomMode(z, m);
     });
     dlg.showModal();
@@ -760,9 +762,10 @@ export class SbModesEditor extends HTMLElement {
 
   _houseHtml() {
     const modes = this._modes();
-    const head = modes.map((m) => `<th><button class="mh" data-mode-open="${esc(m.id)}" aria-label="Edit mode ${esc(m.name || m.id)}">
+    const head = modes.map((m) => `<th><div class="mh">
         <span class="mn"><ha-icon icon="${esc(this._modeIcon(m.id))}"></ha-icon>${esc(m.name || m.id)}${this._errorsAt(["modes", this._modeIndex(m.id)]).length ? `<span class="dot"></span>` : ""}</span>
-        <span class="mt">${esc(this._modeTimes(m.id))}</span></button></th>`).join("");
+        <span class="mt">${esc(this._modeTimes(m.id))}</span>
+        <button class="det" data-mode-open="${esc(m.id)}" aria-label="${esc(m.name || m.id)} details">Details ›</button></div></th>`).join("");
     const rows = this._sortedZones().map((z) => {
       const ov = z.overrides || {}, normal = ov[ALL], addons = z.addons || [], open = this._foldOpen(z.id), off = z.enabled === false;
       const cells = off ? `<td class="cell zoff" colspan="${modes.length}" data-room="${esc(z.id)}"><span class="usual">off — SB Modes leaves this room alone</span></td>` : modes.map((m) => {
@@ -773,11 +776,11 @@ export class SbModesEditor extends HTMLElement {
       const nerr = this._errorsAt(["zones", this._zoneIndex(z.id)]).length;
       const fold = addons.length ? `<button class="fold" data-fold="${esc(z.id)}" aria-expanded="${open}">${addons.length} add-on${addons.length === 1 ? "" : "s"} ${open ? "▾" : "▸"}</button>` : "";
       const room = `<tr class="${off ? "zoff" : ""}"><td class="room"><ha-switch data-zone-on="${esc(z.id)}" ${off ? "" : "checked"} title="SB Modes runs this room — on / off"></ha-switch><button data-room="${esc(z.id)}">${esc(z.name || z.id)} ›</button>${nerr ? `<span class="dot" title="Has errors"></span>` : ""}
-          <span class="us">${esc(off ? "Off: no rule, no add-ons" : normal ? this._sayChoice(normal, z.id) : "No default rule")}${off ? "" : this._detBtn(z, ALL, normal)}</span>${off ? "" : fold}</td>${cells}</tr>`;
+          <span class="us">${esc(off ? "Off: no rule, no add-ons" : normal ? this._sayChoice(normal, z.id) : "No default rule")}</span>${off ? "" : `<span class="rl">${this._detBtn(z, ALL, normal)}${fold}</span>`}</td>${cells}</tr>`;
       const subs = open && !off ? addons.map((a) => `<tr class="arow ${a.enabled === false ? "off" : ""}"><td class="an"><span class="ar">↳</span><button data-addon="${esc(z.id)}|${esc(a.id)}">${esc(a.name || a.id)}${a.enabled === false ? " (off)" : ""}</button></td>${this._addonCells(a, z.id)}</tr>`).join("") : "";
       return room + subs;
     }).join("");
-    return `<div class="tools hgrid" style="margin:0 0 8px"><span class="help" style="margin:0;flex:1">Rooms × modes · tap a room or a mode to open it</span>
+    return `<div class="tools hgrid" style="margin:0 0 8px"><span class="help" style="margin:0;flex:1">Rooms × modes · tap a room, a square or Details to open it</span>
         <button class="lk" data-fold-all="open">Show all add-ons</button><button class="lk" data-fold-all="close">Hide all</button></div>
       <div class="card hgrid"><div class="grid"><table class="fixed"><colgroup><col style="width:250px">${modes.map(() => "<col>").join("")}</colgroup>
         <thead><tr><th class="lbl">Room — its default rule<br><span style="text-transform:none;letter-spacing:0;font-weight:400">↳ its add-ons</span></th>${head}</tr></thead>
@@ -889,7 +892,7 @@ export class SbModesEditor extends HTMLElement {
 
   _roomModeRowHtml(z, m) {
     const ov = (z.overrides || {})[m.id], key = `${z.id}|${m.id}`, open = this._open.has(key);
-    const what = ov ? this._sayChoice(ov, z.id, true) : (z.overrides || {})[ALL] ? "Default" : "No rule";
+    const what = ov ? this._sayChoice(ov, z.id) : (z.overrides || {})[ALL] ? "Default" : "No rule";
     const nerr = this._errorsAt(["zones", this._zoneIndex(z.id), "overrides", m.id]).length;
     return `<div class="mrow" data-box="mode-${esc(m.id)}"><button class="mhead" data-row="${esc(key)}" aria-expanded="${open}">
         <span class="mn">${esc(m.name || m.id)}<small>${esc(this._modeTimes(m.id))}</small></span>

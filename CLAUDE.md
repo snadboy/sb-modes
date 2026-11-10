@@ -694,3 +694,14 @@ Gotcha: the dialog's class must not be `det` — `.det { all: unset }` (the link
 Same release: the Status page's room detail "In <mode>" line uses `_brief` (behaviour name + timings,
 no devices) instead of `_describe`; the lights table under it already shows them. The card's own
 detail still uses `_describe`.
+
+## Details › everywhere on the House grid (0.43.1, 2026-11-10)
+- "Devices ›" → **Details ›**, on every rule (`_detBtn` no longer requires targets). The popup also
+  shows `entities` params (vacancy_off's "Lights to turn off": a "yes" column) and says so when a
+  rule sets no devices (hands_off).
+- Edit in the popup sets `this._det = null` *before* `dlg.close()`: the close event fires after
+  `_go` re-renders, and `_render` reopens the popup while `_det` is set — that left it covering the editor.
+- Mode headings are no longer buttons; a "Details ›" link under the times opens the mode page.
+- Room column: Details and "N add-ons" on one `.rl` line, both 13px/500 (the add-ons fold had picked
+  up `.grid td.room button`'s 15px).
+- Room page By-mode row titles use `_sayChoice` without targets (no device lists).
