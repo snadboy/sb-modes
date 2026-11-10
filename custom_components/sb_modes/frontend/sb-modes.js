@@ -11,7 +11,7 @@
  *
  * Rows use the shared SB row style (window.SBKit, from the SB UI Kit integration).
  */
-const VERSION = "0.43.1";
+const VERSION = "0.43.2";
 const CARD = "sb-modes-card";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -267,6 +267,13 @@ button.zt ha-icon { margin-left: auto; --mdc-icon-size: 20px; }
 .lvl .sw:hover, .dlg .sw:hover { border-color: var(--primary-color); }
 dialog.lights { padding: 0; border: 0; border-radius: var(--ha-card-border-radius, 12px); width: min(420px, calc(100vw - 32px));
                 background: var(--card-background-color, #fff); color: var(--primary-text-color); box-shadow: 0 8px 32px rgba(0,0,0,.35); }
+dialog.adet { width: min(640px, calc(100vw - 32px)); }
+.adw { overflow: auto; max-height: calc(100vh - 200px); }
+.adw:focus, .adw:focus-visible { outline: none; }
+.adw .mt th:first-child, .adw .mt td:first-child { padding-left: 8px; }
+.adw th { position: sticky; top: 0; background: var(--card-background-color, #1c1c1c); }
+.adk { all: unset; cursor: pointer; color: var(--primary-color); font-size: 13px; font-weight: 500; white-space: nowrap; }
+.adk:hover { text-decoration: underline; }
 dialog.lights::backdrop { background: rgba(0,0,0,.45); }
 .dlg { padding: 16px 20px; font-size: 14px; }
 .dlg h3 { margin: 0 0 12px; font-size: 18px; font-weight: 500; }
@@ -327,7 +334,9 @@ ul.att.err { color: var(--error-color); }
 .rt-n { font-weight: 500; }
 .rt-r.off .rt-n, .rt-r.off .rt-d { opacity: .55; }
 .rt-d { color: var(--secondary-text-color); font-size: 13px; }
-.rt-x { padding: 0 16px 8px 50px; font-size: 12.5px; color: var(--warning-color, #ffa600); border-bottom: 1px solid var(--divider-color); }
+.rt-r.hand { border-bottom: 0; }
+.rd-hand { color: var(--warning-color, #ffa600); padding-top: 0; }
+.rt-x { padding: 0 16px 10px 50px; font-size: 12.5px; color: var(--warning-color, #ffa600); border-bottom: 1px solid var(--divider-color); }
 .sbk-chip.warn { background: color-mix(in srgb, var(--warning-color, #ffa600) 18%, transparent); color: var(--warning-color, #ffa600); }
 .sbk-chip.dim { background: rgba(127,127,127,.15); color: var(--secondary-text-color); }
 button.th { all: unset; cursor: pointer; font-size: 11.5px; font-weight: 500; letter-spacing: .05em; text-transform: uppercase; color: var(--secondary-text-color); }
@@ -377,7 +386,11 @@ table.mt { width: 100%; border-collapse: collapse; table-layout: fixed; }
 class SbModesCard extends HTMLElement {
   constructor() {
     super();
-    this.attachShadow({ mode: "open" }).innerHTML = `<style>${STYLE}</style><ha-card><div class="body"></div></ha-card><dialog class="lights"></dialog>`;
+    this.attachShadow({ mode: "open" }).innerHTML = `<style>${STYLE}</style><ha-card><div class="body"></div></ha-card><dialog class="lights"></dialog><dialog class="lights adet"></dialog>`;
+    this.shadowRoot.addEventListener("click", (e) => {
+      const b = e.target.closest?.("[data-adet]");
+      if (b) { const [zid, xid] = b.dataset.adet.split("|"); this._openAddonDet(zid, xid); }
+    });
     this._sig = "";
     this._open = new Set();      // zones whose details are shown
     this._busy = false;
@@ -675,6 +688,49 @@ class SbModesCard extends HTMLElement {
     return `${flash}${hold}${act.targets ? ` at ${this._targets(act.targets)}` : ""}`;
   }
 
+  /** Up to 3 devices by name; more as a count ("34 devices off") — the add-on's Details › lists them. */
+  _targetsBrief(targets) {
+    const ent = Object.entries(targets || {});
+    if (ent.length <= 3) return this._targets(targets);
+    const say = (t) => t.value != null ? `at ${t.value}` : t.state === "off" ? "off" : t.min_brightness_pct != null ? `≥${t.min_brightness_pct}%` : t.brightness_pct != null ? `${t.brightness_pct}%` : "on";
+    const kinds = new Set(ent.map(([, t]) => say(t)));
+    return `${ent.length} devices ${kinds.size === 1 ? [...kinds][0] : "set"}`;
+  }
+  /** An add-on's device settings as columns (a step, a state, a band): [[heading, targets], …]. */
+  _addonCols(x) {
+    const mn = (m) => this._modeName?.(m) || m;
+    if (x.type === "lights") return (x.steps || []).filter((st) => st.targets && Object.keys(st.targets).length)
+      .map((st, k, all) => [st.after_minutes ? `+${st.after_minutes} min` : all.length > 1 ? "First" : "Sets", st.targets]);
+    if (x.type === "while") return Object.entries(x.states || {}).filter(([, c]) => Object.keys(c.targets || {}).length).map(([st, c]) => [`while ${st}`, c.targets]);
+    if (x.type === "follow") return [...(x.bands || [])].sort((p, q) => (q.min_pct || 0) - (p.min_pct || 0)).map((b) => [b.min_pct ? `≥${b.min_pct}%` : "off / low", b.targets || {}]);
+    if (x.type === "button") return Object.entries(x.presses || {}).filter(([, a]) => a.targets).map(([k, a]) => [PRESS[k] || k, a.targets]);
+    return [];
+  }
+  /** The add-on popup: a device per row, a column per step / state / band. */
+  _addonDetHtml(z, x) {
+    const cols = this._addonCols(x);
+    const eids = [...new Set(cols.flatMap(([, t]) => Object.keys(t)))].sort((a, b) => byName(this._name(a), this._name(b)));
+    const say = (t) => !t ? `<span class="mut">—</span>` : esc(t.value != null ? String(t.value) : t.state === "off" ? "off"
+      : [t.brightness_pct != null ? `${t.brightness_pct}%` : t.min_brightness_pct != null ? `at least ${t.min_brightness_pct}%` : "on",
+         t.color_temp_kelvin ? `${t.color_temp_kelvin} K` : "", t.effect ? `effect ${t.effect}` : ""].filter(Boolean).join(" · "));
+    const f = this._addonInfo(x);
+    return `<div class="dlg"><h3>${esc(x.name || x.id)}</h3><div class="lh" style="margin:-6px 0 10px">${esc(z.name)} · ${esc(f.when)}</div>
+      <div class="adw"><table class="mt"><thead><tr><th>Device</th>${cols.map(([h]) => `<th>${esc(h)}</th>`).join("")}</tr></thead>
+      <tbody>${eids.map((e) => `<tr><td title="${esc(e)}">${esc(this._name(e))}</td>${cols.map(([, t]) => `<td>${say(t[e])}</td>`).join("")}</tr>`).join("")}</tbody></table></div>
+      <div class="dlg-foot"><button class="sw" data-adet-close>Close</button></div></div>`;
+  }
+  _openAddonDet(zid, xid) {
+    const z = this._zones().find((q) => q.id === zid), x = (z?.attr.addons || []).find((q) => q.id === xid);
+    const dlg = this.shadowRoot.querySelector("dialog.adet");
+    if (!x || !dlg) return;
+    this._inRoom = z.name;
+    try { dlg.innerHTML = this._addonDetHtml(z, x); } finally { this._inRoom = null; }
+    if (!dlg._wired) {
+      dlg._wired = true;
+      dlg.addEventListener("click", (e) => { if (e.target === dlg || e.target.closest("[data-adet-close]")) dlg.close(); });
+    }
+    if (!dlg.open) dlg.showModal();
+  }
   /** An add-on as When (its trigger and where it runs) and Does, for the page's add-on table. */
   _addonInfo(x) {
     const t = x.trigger || {}, w = x.when || {}, mn = (m) => this._modeName?.(m) || m;
@@ -687,16 +743,16 @@ class SbModesCard extends HTMLElement {
         : t.entity ? `${this._name(t.entity)} becomes ${t.to}` : "";
       does = (x.steps || []).map((st) => `${st.after_minutes ? `+${st.after_minutes} min ` : ""}${
         st.set_mode ? `house → ${mn(st.set_mode)}` : st.resume_schedule ? "back on schedule"
-        : st.script ? `run ${this._name(st.script)}` : st.release || "hold" in st ? this._buttonAct(st) : this._targets(st.targets)}`).join(" · ");
+        : st.script ? `run ${this._name(st.script)}` : st.release || "hold" in st ? this._buttonAct(st) : this._targetsBrief(st.targets)}`).join(" · ");
     } else if (x.type === "while") {
       when = `while ${(x.entities || [x.entity]).filter(Boolean).map((e) => this._name(e)).join(" / ")} is …`;
-      does = Object.entries(x.states || {}).map(([s, c]) => `${s} → ${this._targets(c.targets || {}) || "nothing"}${c.holds ? " (holds)" : ""}`).join(" · ");
+      does = Object.entries(x.states || {}).map(([s, c]) => `${s} → ${this._targetsBrief(c.targets || {}) || "nothing"}${c.holds ? " (holds)" : ""}`).join(" · ");
     } else if (x.type === "button") {
       when = `${this._name(x.entity)} pressed`;
       does = Object.entries(x.presses || {}).map(([k, act]) => `${PRESS[k] || k} → ${this._buttonAct(act)}`).join(", ");
     } else if (x.type === "follow") {
       when = `${this._name(x.leader)} changes`;
-      does = [...(x.bands || [])].sort((p, q) => (q.min_pct || 0) - (p.min_pct || 0)).map((b) => `${b.min_pct ? `≥${b.min_pct}%` : "off / low"} → ${this._targets(b.targets)}`).join(" · ");
+      does = [...(x.bands || [])].sort((p, q) => (q.min_pct || 0) - (p.min_pct || 0)).map((b) => `${b.min_pct ? `≥${b.min_pct}%` : "off / low"} → ${this._targetsBrief(b.targets)}`).join(" · ");
     } else if (x.type === "replay") {
       when = "throughout";
       does = `${(x.lights || []).length} light${(x.lights || []).length === 1 ? "" : "s"} repeat what they did ${x.days_back || 7} days ago`;
@@ -704,7 +760,8 @@ class SbModesCard extends HTMLElement {
       when = "a light turned on by hand";
       does = `${(x.lights || []).map((e) => this._name(e)).join(", ")} off${x.with_empty ? " with the empty setting" : ""}${x.on_minutes ? `${x.with_empty ? ", or" : ""} once on ${x.on_minutes} min with the room empty` : ""}`;
     }
-    return { when: [when, where].filter(Boolean).join(" · "), does };
+    const big = this._addonCols(x).some(([, t]) => Object.keys(t).length > 3);
+    return { when: [when, where].filter(Boolean).join(" · "), does, big };
   }
 
   /** One add-on in the room's details: name, what it does, and its live status. */
@@ -844,8 +901,11 @@ class SbModesCard extends HTMLElement {
     const body = rows.map(({ z, i }) => {
       const open = this._isOpen(z.id);
       const ov = previewing ? {} : (i.a.overrides || {});
+      this._inRoom = z.name;
       const hand = Object.keys(ov).map((e) => this._name(e)).sort(byName);
-      return `<div class="rt-r ${open ? "open" : ""} ${i.off ? "off" : ""}" data-z="${esc(z.id)}">
+      this._inRoom = null;
+      i.handTxt = hand.length ? `Changed by hand: ${hand.join(", ")}` : "";
+      return `<div class="rt-r ${open ? "open" : ""} ${i.off ? "off" : ""} ${hand.length && !open ? "hand" : ""}" data-z="${esc(z.id)}">
           <button class="rt-o" aria-expanded="${open}" title="${open ? "Hide" : "Show"} ${esc(z.name)}'s details">
             <span class="rt-c"><ha-icon icon="${open ? "mdi:chevron-down" : "mdi:chevron-right"}"></ha-icon></span>
             <span class="rt-n">${esc(z.name)}</span>
@@ -854,7 +914,7 @@ class SbModesCard extends HTMLElement {
             <span class="rt-hd">${i.hold ? `<span class="sbk-chip ${i.held ? "warn" : "dim"}">${esc(i.hold)}</span>` : `<span class="mut">—</span>`}</span>
           </button>
           ${previewing ? "<span></span>" : `<button class="sbk-kb zkb ${this._dlg === z.id ? "on" : ""}" aria-label="Hold and lights: ${esc(z.name)}" title="Hold and lights: ${esc(z.name)}" aria-haspopup="dialog">${kit().kbIcon}</button>`}
-        </div>${hand.length ? `<div class="rt-x">Changed by hand: ${esc(hand.join(", "))}</div>` : ""}${open ? this._roomDetailHtml(z, i, modeName, previewing) : ""}`;
+        </div>${hand.length && !open ? `<div class="rt-x">${esc(i.handTxt)}</div>` : ""}${open ? this._roomDetailHtml(z, i, modeName, previewing) : ""}`;
     }).join("");
     return `<div class="sh">Rooms${previewing ? ` in ${esc(modeName)} <span class="pvtag">preview</span>` : ""}<span class="cnt">${zones.length} · tap one for its details</span></div>
       ${previewing ? "" : this._heldHtml(zones)}
@@ -887,7 +947,7 @@ class SbModesCard extends HTMLElement {
       }).join("");
     const addons = (a.addons || []).map((x) => {
       const f = this._addonInfo(x), live = (a.addon_status || {})[x.id];
-      return `<tr class="${x.enabled === false ? "dimrow" : ""}"><td>${esc(x.name || x.id)}</td><td>${esc(f.when)}</td><td class="wrap">${esc(f.does)}</td>
+      return `<tr class="${x.enabled === false ? "dimrow" : ""}"><td>${esc(x.name || x.id)}</td><td>${esc(f.when)}</td><td class="wrap">${esc(f.does)}${f.big ? ` <button class="lk adk" data-adet="${esc(z.id)}|${esc(x.id)}">Details ›</button>` : ""}</td>
         <td class="mut">${x.enabled === false ? "off" : esc(live || "")}</td></tr>`;
     }).join("");
     const mine = this._act ? this._act.entries.filter((e) => e.entity_id === z.entity) : null;
@@ -897,6 +957,7 @@ class SbModesCard extends HTMLElement {
     const lightsHead = `<th>${this._th("lights", "name", "Light")}</th>`;
     return `<div class="rd">
         <div class="rd-in"><b>In ${esc(modeName)}</b> ${esc(i.brief)} <span class="mut">(${esc(i.src)})</span></div>
+        ${i.handTxt ? `<div class="rd-in rd-hand">${esc(i.handTxt)}</div>` : ""}
         <div class="rd-two">
           <div><div class="sub">Lights · ${(a.lights || []).length}</div>${lights ? `<table class="mt"><colgroup><col><col style="width:110px"><col style="width:70px"></colgroup>
             <thead><tr>${lightsHead}<th>State</th><th>Kind</th></tr></thead><tbody>${lights}</tbody></table>` : `<div class="mut">None.</div>`}</div>

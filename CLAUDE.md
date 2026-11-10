@@ -705,3 +705,10 @@ detail still uses `_describe`.
 - Room column: Details and "N add-ons" on one `.rl` line, both 13px/500 (the add-ons fold had picked
   up `.grid td.room button`'s 15px).
 - Room page By-mode row titles use `_sayChoice` without targets (no device lists).
+
+## Status page: hand line and add-on Details (0.43.2, 2026-11-10)
+- "Changed by hand: …" uses short light names (`_inRoom`). Closed row: attached under the row
+  (`.rt-r.hand` drops its border). Open row: moved inside the details under "In <mode>" (`.rd-hand`).
+- Add-on Does: a target list of more than 3 devices becomes a count (`_targetsBrief`: "34 devices off")
+  plus **Details ›** (`data-adet`, delegated click on the shadow root) opening `dialog.lights.adet`:
+  device rows × step / state / band columns (`_addonCols`, `_addonDetHtml`).
