@@ -299,6 +299,23 @@ table.tg input[type=number] { width: 64px; }
 .grid tr.arow td.an .ar { color: var(--secondary-text-color); margin-right: 6px; }
 .grid .fold { all: unset; cursor: pointer; font-size: 12px; color: var(--primary-color); margin-left: 8px; }
 .difr { display: inline-block; padding: 5px 9px; border-radius: 8px; background: rgba(3,169,244,.12); border: 1px solid rgba(3,169,244,.45); font-size: 13px; line-height: 1.35; }
+.det { all: unset; cursor: pointer; display: block; margin-top: 4px; font-size: 12px; color: var(--primary-color); }
+.det:hover { text-decoration: underline; }
+.grid td.room .us .det { display: inline; margin: 0 0 0 8px; font-size: 12px; font-weight: 400; white-space: nowrap; }
+dialog.detd { margin: auto; padding: 0; border: 0; border-radius: var(--ha-card-border-radius, 12px); width: min(760px, calc(100vw - 32px)); max-height: calc(100vh - 48px);
+  background: var(--card-background-color, #1c1c1c); color: var(--primary-text-color); box-shadow: 0 12px 40px rgba(0,0,0,.5); }
+dialog.detd::backdrop { background: rgba(0,0,0,.45); }
+.dt { padding: 16px 20px; font-size: 14px; }
+.dt h3 { margin: 0 0 4px; font-size: 18px; font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--primary-text-color); }
+.dtw { overflow: auto; max-height: calc(100vh - 220px); }
+.dtt { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+.dtt th { text-align: left; font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--secondary-text-color); padding: 6px 10px; border-bottom: 1px solid var(--divider-color); position: sticky; top: 0; background: var(--card-background-color, #1c1c1c); }
+.dtt td { padding: 7px 10px; border-bottom: 1px solid var(--divider-color); vertical-align: top; }
+.dtt td.n { min-width: 140px; }
+.dtt td:not(.n) { white-space: nowrap; }
+.dtw:focus-visible, .dtw:focus { outline: none; }
+.dtt .sw { display: inline-block; width: 11px; height: 11px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; border: 1px solid rgba(255,255,255,.25); }
+.dt-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
 .difr small { display: block; font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--primary-color); margin-bottom: 2px; }
 .mk { display: inline-block; max-width: 100%; box-sizing: border-box; padding: 3px 9px; border-radius: 6px; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
 .mk.bar { display: block; }
@@ -491,6 +508,60 @@ export class SbModesEditor extends HTMLElement {
     }
     return bits.join(" · ");
   }
+  /** "Devices ›" on a rule that sets devices: opens the table of them (`_detHtml`). */
+  _detBtn(z, mid, ch) {
+    const p = ch?.params || {}, b = ch?.behaviour && this._beh(ch.behaviour);
+    const any = Object.entries(b?.params || {}).some(([k, s]) => (s.type === "targets" && Object.keys(p[k] || {}).length) || (s.type === "steps" && (p[k] || []).length));
+    return any ? `<button class="det" data-det="${esc(z.id)}|${esc(mid)}" title="The devices this rule sets, and how">Devices ›</button>` : "";
+  }
+  /** One light's setting in full: "10% · 3021 K", "colour ■ 20%", "off", "value 255". */
+  _sayTargetFull(t) {
+    if (!t) return "—";
+    if ("value" in t) return esc(String(t.value));
+    if (t.state === "off") return "off";
+    const bits = [];
+    if (t.brightness_pct != null) bits.push(`${t.brightness_pct}%`);
+    if (t.min_brightness_pct != null) bits.push(`at least ${t.min_brightness_pct}%`);
+    if (t.color_temp_kelvin) bits.push(`${t.color_temp_kelvin} K`);
+    if (t.hs_color) bits.push(`<span class="sw" style="background:hsl(${Number(t.hs_color[0])},${Number(t.hs_color[1])}%,50%)"></span>colour`);
+    if (t.rgb_color) bits.push(`<span class="sw" style="background:rgb(${t.rgb_color.map(Number).join(",")})"></span>colour`);
+    if (t.effect) bits.push(`effect ${esc(t.effect)}`);
+    if (t.transition != null) bits.push(`fade ${t.transition} s`);
+    return bits.join(" · ") || "on";
+  }
+  /** The popup for `_det` ("zone|mode"): a device per row, a column per setting of the rule (Occupied, Empty, +10 min…). */
+  _detHtml() {
+    const [zid, mid] = (this._det || "").split("|"), z = this._zoneObj(zid), ch = (z?.overrides || {})[mid];
+    if (!ch?.behaviour) return "";
+    const b = this._beh(ch.behaviour), p = ch.params || {}, cols = [];
+    for (const [k, s] of Object.entries(b.params || {})) {
+      if (s.type === "targets" && Object.keys(p[k] || {}).length) cols.push([s.label || k, p[k]]);
+      else if (s.type === "steps") for (const st of p[k] || []) cols.push([`${s.label || k} +${st.after_minutes} min`, st.targets || {}]);
+    }
+    const eids = [...new Set(cols.flatMap(([, t]) => Object.keys(t)))].sort((a, c) => byName(this._short(a, zid), this._short(c, zid)));
+    const where = mid === ALL ? "default rule" : `in ${this._modeName(mid)}`;
+    return `<div class="dt"><h3>${esc(z.name || z.id)} ${esc(where)}</h3>
+      <div class="help" style="margin:0 0 10px">${esc(this._sayChoice(ch, zid))}</div>
+      <div class="dtw"><table class="dtt"><thead><tr><th>Device</th>${cols.map(([h]) => `<th>${esc(h)}</th>`).join("")}</tr></thead>
+      <tbody>${eids.map((e) => `<tr><td class="n" title="${esc(e)}">${esc(this._short(e, zid))}</td>${cols.map(([, t]) => `<td>${e in t ? this._sayTargetFull(t[e]) : `<span class="usual">—</span>`}</td>`).join("")}</tr>`).join("")}</tbody></table></div>
+      <div class="dt-foot"><button class="b" data-det-edit>Edit</button><button class="b" data-det-close>Close</button></div></div>`;
+  }
+  _openDet() {
+    const root = this.shadowRoot;
+    root.querySelector("dialog.detd")?.remove();
+    const html = this._det && this._detHtml();
+    if (!html) { this._det = null; return; }
+    const dlg = document.createElement("dialog");
+    dlg.className = "detd"; dlg.innerHTML = html; root.appendChild(dlg);
+    dlg.addEventListener("close", () => { this._det = null; dlg.remove(); });
+    dlg.addEventListener("click", (e) => { if (e.target === dlg) dlg.close(); });
+    dlg.querySelector("[data-det-close]").addEventListener("click", () => dlg.close());
+    dlg.querySelector("[data-det-edit]").addEventListener("click", () => {
+      const [z, m] = this._det.split("|"); dlg.close();
+      if (m === ALL) { sessSet("ed:rule", true); this._go("room", z); } else this._goRoomMode(z, m);
+    });
+    dlg.showModal();
+  }
   _sayTarget(t) {
     if (!t) return "";
     if ("value" in t) return String(t.value);
@@ -605,6 +676,7 @@ export class SbModesEditor extends HTMLElement {
     this._mountForms();
     this._wire();
     this._renderErrors();
+    if (this._det) this._openDet();
     if (this._view === "times") { if (this._preview) this._renderPreview(); else this._loadPreview(); }
   }
 
@@ -695,13 +767,13 @@ export class SbModesEditor extends HTMLElement {
       const ov = z.overrides || {}, normal = ov[ALL], addons = z.addons || [], open = this._foldOpen(z.id), off = z.enabled === false;
       const cells = off ? `<td class="cell zoff" colspan="${modes.length}" data-room="${esc(z.id)}"><span class="usual">off — SB Modes leaves this room alone</span></td>` : modes.map((m) => {
         const own = ov[m.id];
-        const what = own ? `<span class="difr">${esc(this._sayChoice(own, z.id, true))}</span>` : !normal ? `<span class="usual">no rule</span>` : "";
+        const what = own ? `<span class="difr">${esc(this._sayChoice(own, z.id))}${this._detBtn(z, m.id, own)}</span>` : !normal ? `<span class="usual">no rule</span>` : "";
         return `<td class="cell" data-cell="${esc(z.id)}|${esc(m.id)}" title="${own ? `${esc(z.name || z.id)}'s own rule in this mode` : "The default rule — tap to give this mode its own"}">${what}</td>`;
       }).join("");
       const nerr = this._errorsAt(["zones", this._zoneIndex(z.id)]).length;
       const fold = addons.length ? `<button class="fold" data-fold="${esc(z.id)}" aria-expanded="${open}">${addons.length} add-on${addons.length === 1 ? "" : "s"} ${open ? "▾" : "▸"}</button>` : "";
       const room = `<tr class="${off ? "zoff" : ""}"><td class="room"><ha-switch data-zone-on="${esc(z.id)}" ${off ? "" : "checked"} title="SB Modes runs this room — on / off"></ha-switch><button data-room="${esc(z.id)}">${esc(z.name || z.id)} ›</button>${nerr ? `<span class="dot" title="Has errors"></span>` : ""}
-          <span class="us">${esc(off ? "Off: no rule, no add-ons" : normal ? this._sayChoice(normal, z.id) : "No default rule")}</span>${off ? "" : fold}</td>${cells}</tr>`;
+          <span class="us">${esc(off ? "Off: no rule, no add-ons" : normal ? this._sayChoice(normal, z.id) : "No default rule")}${off ? "" : this._detBtn(z, ALL, normal)}</span>${off ? "" : fold}</td>${cells}</tr>`;
       const subs = open && !off ? addons.map((a) => `<tr class="arow ${a.enabled === false ? "off" : ""}"><td class="an"><span class="ar">↳</span><button data-addon="${esc(z.id)}|${esc(a.id)}">${esc(a.name || a.id)}${a.enabled === false ? " (off)" : ""}</button></td>${this._addonCells(a, z.id)}</tr>`).join("") : "";
       return room + subs;
     }).join("");
@@ -1432,6 +1504,7 @@ export class SbModesEditor extends HTMLElement {
       this._render();
     }));
     q("[data-addon]", (b) => b.addEventListener("click", (e) => { e.stopPropagation(); const [z, k] = b.dataset.addon.split("|"); this._goRoom(z, k); }));
+    q("[data-det]", (b) => b.addEventListener("click", (e) => { e.stopPropagation(); this._det = b.dataset.det; this._openDet(); }));
     q("[data-cell]", (td) => td.addEventListener("click", () => { const [z, m] = td.dataset.cell.split("|"); this._goRoomMode(z, m); }));
     q("[data-mode-open]", (b) => b.addEventListener("click", () => this._go("mode", b.dataset.modeOpen)));
     q("[data-row]", (b) => b.addEventListener("click", () => this._toggle(b.dataset.row)));

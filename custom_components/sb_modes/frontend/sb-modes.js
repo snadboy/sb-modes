@@ -11,7 +11,7 @@
  *
  * Rows use the shared SB row style (window.SBKit, from the SB UI Kit integration).
  */
-const VERSION = "0.42.0";
+const VERSION = "0.43.0";
 const CARD = "sb-modes-card";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -743,6 +743,21 @@ class SbModesCard extends HTMLElement {
       t.value != null ? t.value : t.state === "off" ? "off" : t.min_brightness_pct != null ? `≥${t.min_brightness_pct}%` : t.brightness_pct != null ? `${t.brightness_pct}%` : "on"}${t.effect ? ` (${t.effect})` : ""}`).join(", ");
   }
 
+  /** A behaviour by name and timings only, no devices ("Occupied / empty · empty after 5 min"):
+   *  for the "In <mode>" line, where the lights table below already shows the devices. */
+  _brief(beh, p = {}) {
+    const bits = [BEHAVIOUR_NAMES[beh] || beh];
+    if (beh === "nightlight_then_dark") bits.push(`dark after ${p.delay ?? 10} min empty`);
+    if (beh === "vacancy_off") {
+      const secs = p.off_after_seconds ?? 60;
+      bits.push(`off ${secs >= 120 && secs % 60 === 0 ? `${secs / 60} min` : `${secs} s`} after empty`);
+      if (p.max_on_minutes) bits.push(`or once on ${p.max_on_minutes} min while empty`);
+      if (p.on_when_occupied) bits.push("on when someone comes in");
+    }
+    if (beh === "occupied_vacant" && p.vacant_after_minutes) bits.push(`empty after ${p.vacant_after_minutes} min`);
+    if (beh === "presence_lux") bits.push(`dark below ${p.target_lux} lx`, `empty after ${p.vacant_after_minutes ?? 15} min`);
+    return bits.join(" · ");
+  }
   /** What a behaviour does with these parameters, in words. */
   _describe(beh, p = {}) {
     if (beh === "hands_off") return "Not controlled";
@@ -792,7 +807,8 @@ class SbModesCard extends HTMLElement {
     const hand = previewing ? 0 : Object.keys(a.overrides || {}).length;
     const hold = !h ? (hand ? "by hand" : "") : h.hold === "timed" ? `until ${hhmm(h.until)}` : h.hold === "next" ? "until next mode" : "until released";
     const src = off ? "switched off in the editor" : pick.source === "override" ? "this room's own setting for this mode" : pick.source === "zone" ? "this room's default rule" : "no rule";
-    return { a, pick, beh, off, what, doing, hold, held: !!h, hand, src, rule: off ? "Switched off" : BEHAVIOUR_NAMES[beh] || beh,
+    const brief = off ? "Off — SB Modes leaves this room alone" : this._brief(beh, pick.params) + begins.map((x) => ` · when ${modeName} begins: ${x.name}`).join("");
+    return { a, pick, beh, off, what, brief, doing, hold, held: !!h, hand, src, rule: off ? "Switched off" : BEHAVIOUR_NAMES[beh] || beh,
              look: previewing ? { icon: look(beh, "").icon, tint: "idle" } : look(beh, a.status) };
   }
 
@@ -880,7 +896,7 @@ class SbModesCard extends HTMLElement {
           `<tr><td class="mut">${esc(actTime(e.when))}</td><td class="wrap">${esc(fmtTimes(e.message))}</td></tr>`).join("")}</tbody></table>`;
     const lightsHead = `<th>${this._th("lights", "name", "Light")}</th>`;
     return `<div class="rd">
-        <div class="rd-in"><b>In ${esc(modeName)}</b> ${esc(i.what)} <span class="mut">(${esc(i.src)})</span></div>
+        <div class="rd-in"><b>In ${esc(modeName)}</b> ${esc(i.brief)} <span class="mut">(${esc(i.src)})</span></div>
         <div class="rd-two">
           <div><div class="sub">Lights · ${(a.lights || []).length}</div>${lights ? `<table class="mt"><colgroup><col><col style="width:110px"><col style="width:70px"></colgroup>
             <thead><tr>${lightsHead}<th>State</th><th>Kind</th></tr></thead><tbody>${lights}</tbody></table>` : `<div class="mut">None.</div>`}</div>

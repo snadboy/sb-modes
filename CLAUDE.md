@@ -682,3 +682,15 @@ the rule itself (no "Different rule" label) and a blank House square means the d
 mode-level `default` (fallback for rooms with no default rule) is no longer shown or editable:
 every room has a default rule (new rooms start with hands_off) so it was never reached. Data and
 model.resolve are unchanged. The room's default-rule picker no longer offers "Not set".
+
+## Devices popup on the House grid (0.43.0, 2026-11-09)
+House squares and the room column no longer spell out every device (an Office square ran to 20 lines).
+They show the rule in words (`_sayChoice` without targets) plus a **Devices ›** link (`_detBtn`, only
+when the rule sets something). It opens a native `<dialog class="detd">` (`_detHtml` / `_openDet`):
+one row per device, one column per targets param (Occupied, Empty…) or per step (+N min), full
+settings via `_sayTargetFull` (brightness, K, colour swatch, effect, fade, value). Edit goes to the
+room at that mode (`_goRoomMode`) or opens the default rule. `this._det` survives a re-render.
+Gotcha: the dialog's class must not be `det` — `.det { all: unset }` (the link) also hit the dialog.
+Same release: the Status page's room detail "In <mode>" line uses `_brief` (behaviour name + timings,
+no devices) instead of `_describe`; the lights table under it already shows them. The card's own
+detail still uses `_describe`.
