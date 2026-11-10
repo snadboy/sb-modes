@@ -36,7 +36,7 @@ from homeassistant.util import dt as dt_util
 
 from . import activity, driver
 from .behaviours import KINDS, Behaviour, Disabled, HandsOff, Held, Overlaid
-from .bookkeeping import Keeper, describe_hold, release_delay
+from .bookkeeping import Keeper, describe_hold, hand_max_minutes, release_delay
 from .follow import Follower
 from .autooff import AutoOff
 from .exhaust import Exhaust
@@ -579,7 +579,8 @@ class Runtime:
                 continue                                 # (an overlay-held zone IS watched; timed_off expects hands)
             picked = resolve(self.config, self.mode, zid) or {}
             watch[zid] = {"lights": b.entities.get("lights", []), "occupancy": b.entities.get("occupancy", []),
-                          "delay": release_delay(picked.get("behaviour"), picked.get("params") or {})}
+                          "delay": release_delay(picked.get("behaviour"), picked.get("params") or {}),
+                          "max": hand_max_minutes(b.zone)}
         self.keeper.watch(watch)
 
     def targets_of(self, ctx_id: str | None) -> frozenset[str]:

@@ -11,7 +11,10 @@ every behaviour until whichever comes first:
     has been empty that long (an arrival, not the empty room, ends it: the bedtime "off"
     must not be undone by the room's empty setting);
   - the mode changes;
-  - someone releases the zone.
+  - someone releases the zone;
+  - the zone's `hand_max_minutes` (optional) have passed since the change, even with the zone
+    still occupied — a presence sensor stuck "occupied" (the Kitchen FP300, 1 h 46 min on
+    2026-11-08) would otherwise keep a hand change forever. No cap when it is not set.
 
 HOLDS — a person holds a zone: its behaviour stops (nothing is sent to its lights) until
   - `minutes` have passed, or the mode changes ("next"), or someone releases it ("paused").
@@ -57,6 +60,7 @@ class Keeper:
         self._unsubs: list[CALLBACK_TYPE] = []
         self._expiry: dict[str, CALLBACK_TYPE] = {}      # zone → hold expiry timer
         self._vacant: dict[str, CALLBACK_TYPE] = {}      # zone → override release timer
+        self._capped: dict[str, CALLBACK_TYPE] = {}      # zone → hand_max_minutes expiry timer
         self._empty_from: dict[str, Any] = {}            # zone → when it last emptied (for arrivals)
 
     # ── storage ──────────────────────────────────────────────────────────────
@@ -107,7 +111,7 @@ class Keeper:
     def stop(self) -> None:
         self.hass.data.setdefault(DOMAIN, {})["keeper_handover"] = self._data()
         self._unwatch()
-        for timers in (self._expiry, self._vacant):
+        for timers in (self._expiry, self._vacant, self._capped):
             for unsub in timers.values():
                 unsub()
             timers.clear()
@@ -135,8 +139,8 @@ class Keeper:
     # ── watching zone lights for manual changes ──────────────────────────────
     @callback
     def watch(self, zones: dict[str, dict]) -> None:
-        """zones: zone → {lights, occupancy, delay} for zones whose behaviour acts (not held,
-        not hands_off). Replaces whatever was watched before."""
+        """zones: zone → {lights, occupancy, delay, max?} for zones whose behaviour acts (not held,
+        not hands_off); `max` = the zone's hand_max_minutes. Replaces whatever was watched before."""
         self._unwatch()
         self._watch = zones
         self._zone_of = {light: z for z, info in zones.items() for light in info["lights"]}
@@ -149,6 +153,8 @@ class Keeper:
                             if (since := self.rt.vacant_since(info["occupancy"])) is not None}
         for zone in list(self.overrides):
             self._arm_release(zone)
+        for zone in list(self.overrides):
+            self._arm_cap(zone)
 
     @callback
     def _unwatch(self) -> None:
@@ -189,6 +195,7 @@ class Keeper:
                     f"{' (at the device)' if by == 'device' else ''} — {until}", [light])
         self._save()
         self._arm_release(zone)
+        self._arm_cap(zone)
         self.rt.notify()
 
     # ── releasing overrides when the zone has been vacant for its delay ──────
@@ -272,6 +279,42 @@ class Keeper:
         self._vacant.pop(zone, None)
         self._arm_release(zone)                          # re-checks vacancy; releases when due
 
+    # ── the zone's cap on hand changes (hand_max_minutes), occupied or not ────
+    @callback
+    def _arm_cap(self, zone: str) -> None:
+        """End the zone's hand changes older than its hand_max_minutes — all of them, lights
+        turned off by hand included, occupied or not — then re-run its behaviour; else set a
+        timer for the oldest. Counted from each change's `since`, so marks restored after a
+        restart expire on time (at once, when already past)."""
+        if (unsub := self._capped.pop(zone, None)) is not None:
+            unsub()
+        cap = (self._watch.get(zone) or {}).get("max")
+        marks = self.overrides.get(zone)
+        if not cap or not marks:
+            return                                       # no cap: today's rules alone
+        now = dt_util.utcnow()
+        limit = timedelta(minutes=cap)
+        done = [e for e, o in marks.items() if now - dt_util.parse_datetime(o["since"]) >= limit]
+        if done:
+            for e in done:
+                marks.pop(e)
+            if not marks:
+                self.overrides.pop(zone)
+                if (unsub := self._vacant.pop(zone, None)) is not None:
+                    unsub()
+            self._save()
+            self.rt.log("hand_end", zone, f"hand change expired after {_minutes(cap)}: {self._names(done, zone)}", done)
+            self.rt.restart_zone(zone)                   # re-arms what is left (via watch)
+            return
+        oldest = min(dt_util.parse_datetime(o["since"]) for o in marks.values())
+        left = max((oldest + limit - now).total_seconds(), 0)
+        self._capped[zone] = async_call_later(self.hass, left, HassJob(partial(self._cap_due, zone), cancel_on_shutdown=True))
+
+    @callback
+    def _cap_due(self, zone: str, _now=None) -> None:
+        self._capped.pop(zone, None)
+        self._arm_cap(zone)
+
     @callback
     def release_overrides(self, zone: str, vacant_since=None) -> None:
         """End the zone's hand changes. With `vacant_since` (a behaviour reached its vacancy
@@ -293,8 +336,9 @@ class Keeper:
         if (gone := self.overrides.get(zone)) and vacant_since is not None:
             self.rt.log("hand_end", zone, f"empty long enough: hand changes end ({self._names(gone, zone)})", list(gone))
         if self.overrides.pop(zone, None) is not None:
-            if (unsub := self._vacant.pop(zone, None)) is not None:
-                unsub()
+            for timers in (self._vacant, self._capped):
+                if (unsub := timers.pop(zone, None)) is not None:
+                    unsub()
             self._save()
             self.rt.notify()
 
@@ -346,7 +390,7 @@ class Keeper:
             self.rt.log("release", zone, f"released ({by}): back to its setting for {self.rt.mode_name(self.rt.mode) or 'this mode'}")
         self.holds.pop(zone, None)
         self.overrides.pop(zone, None)
-        for timers in (self._expiry, self._vacant):
+        for timers in (self._expiry, self._vacant, self._capped):
             if (unsub := timers.pop(zone, None)) is not None:
                 unsub()
         self._save()
@@ -376,9 +420,10 @@ class Keeper:
         ended += [f"{self.rt._zone_name(z) or z} hold ends" for z, h in self.holds.items() if h["hold"] == "next"]
         changed = bool(self.overrides)
         self.overrides.clear()
-        for unsub in self._vacant.values():
-            unsub()
-        self._vacant.clear()
+        for timers in (self._vacant, self._capped):
+            for unsub in timers.values():
+                unsub()
+            timers.clear()
         for zone, h in list(self.holds.items()):
             if h["hold"] == "next":
                 self.holds.pop(zone)
@@ -411,6 +456,12 @@ def describe_hold(h: dict | None) -> str | None:
     if h["hold"] == "next":
         return "held by hand until the next mode change"
     return "held by hand until released"
+
+
+def hand_max_minutes(zone: dict) -> float | None:
+    """The zone's cap on hand changes in minutes (`hand_max_minutes`), or None: no cap."""
+    m = zone.get("hand_max_minutes")
+    return m if isinstance(m, (int, float)) and not isinstance(m, bool) and m > 0 else None
 
 
 def release_delay(behaviour: str | None, params: dict[str, Any]) -> float:

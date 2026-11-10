@@ -595,6 +595,24 @@ def test_exhaust_addon():
     assert any("choose the fan" in x for x in e), e
     assert "fan.bath_exhaust on when someone comes in or humidity rises > 2 %/min" in CH.addon_summary(fan)
 
+def test_hand_max_minutes():
+    def with_cap(v):
+        return lambda c: c["zones"][0].__setitem__("hand_max_minutes", v)
+    for ok in (60, 1, 1440, 7.5, None):
+        assert edit(with_cap(ok)) == ([], []), (ok, edit(with_cap(ok)))
+    for bad in (0, 1441, -5, "60", True, [60]):
+        errors, _ = edit(with_cap(bad))
+        assert errors == ["Zone Kitchen: hand_max_minutes must be 1–1440 minutes (or left out: hand changes have no time limit)."], (bad, errors)
+    # the error points at the field, for the editor
+    errors, _ = edit(with_cap(0))
+    assert [tuple(d["path"]) for d in errors.detailed()] == [("zones", 0, "hand_max_minutes")], errors.detailed()
+    a = copy.deepcopy(GOOD)
+    b = copy.deepcopy(a)
+    b["zones"][0]["hand_max_minutes"] = 60
+    assert CH.describe(a, b, NAMES.get) == ["Kitchen · hand changes: no limit → at most 60 min"]
+    assert CH.describe(b, a, NAMES.get) == ["Kitchen · hand changes: at most 60 min → no limit"]
+
+
 if __name__ == "__main__":
     n = 0
     for name, fn in list(globals().items()):
