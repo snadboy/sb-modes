@@ -87,9 +87,9 @@ const ADDON_NEW = [
   ["time", "At a time of day"], ["begins", "When a mode begins"], ["ends", "When a mode ends"],
   ["state", "When a device changes"], ["calendar", "Before / after a calendar event"], ["while", "TV lighting (while a device is …)"],
   ["button", "Hold / release button"], ["follow", "Follow a leader light"], ["auto_off", "Auto-off (lights turned on by hand)"],
-  ["replay", "Replay a past day (lived-in look)"],
+  ["replay", "Replay a past day (lived-in look)"], ["exhaust", "Exhaust fan (occupancy + humidity)"],
 ];
-const KIND_LABEL = { lights: "Lights", while: "While", button: "Button", follow: "Follow", auto_off: "Auto-off", replay: "Replay" };
+const KIND_LABEL = { lights: "Lights", while: "While", button: "Button", follow: "Follow", auto_off: "Auto-off", replay: "Replay", exhaust: "Exhaust fan" };
 const PRESS = { multi_press_1: "Press", multi_press_2: "Double press", multi_press_3: "Triple press", long_press: "Hold", long_release: "Hold (on release)" };
 const HOLD_OPTS = [["m15", "hold 15 min"], ["m30", "hold 30 min"], ["m60", "hold 60 min"], ["next", "hold until the next mode"], ["paused", "hold until released"]];
 const holdKey = (a) => !a ? "" : a === "release" || a.release ? "release" : a.hold === "next" ? "next" : a.hold === "paused" ? "paused" : a.hold != null ? `m${a.hold}` : "";
@@ -944,6 +944,10 @@ export class SbModesEditor extends HTMLElement {
       return { kind: "Replay", trigger: `as ${a.days_back || 7} days ago`, when,
         then: `${(a.lights || []).map((e) => this._short(e, zid)).join(", ") || "no lights yet"} repeat what they did` };
     }
+    if (a.type === "exhaust") {
+      return { kind: "Exhaust fan", trigger: `someone comes in${a.humidity_rate ? ` or humidity rises > ${a.on_rate ?? 2} %/min` : ""}`, when,
+        then: `${a.fan ? this._short(a.fan, zid) : "no fan yet"} on; off ${a.empty_minutes ?? 5} min after empty + ${a.drying_minutes ?? 10} min drying` };
+    }
     return { kind: "Auto-off", trigger: "a light turned on by hand", when,
       then: `${(a.lights || []).map((e) => this._short(e, zid)).join(", ") || "?"} off${a.with_empty ? " with the empty setting" : ""}${a.on_minutes ? `${a.with_empty ? ", or" : ""} once on ${a.on_minutes} min with the room empty` : ""}` };
   }
@@ -1003,6 +1007,9 @@ export class SbModesEditor extends HTMLElement {
     } else if (a.type === "replay") {
       trig = `<div class="help">These lights repeat what they did the same time ${a.days_back || 7} days ago, while the When below matches (normally the Away mode). A hold or a hand change still wins.</div>`;
       then = `<div class="form" data-form="ad-replay"></div>`;
+    } else if (a.type === "exhaust") {
+      trig = `<div class="help">On when someone comes in (the room's occupancy sensors) or humidity starts climbing, while the When below matches. Off once the room has been empty a while and humidity has settled, plus a drying time — in any mode. Switch the fan off and on again within 15 s for an extended run (it blinks to confirm). A hold on the room's lights doesn't stop it.</div>`;
+      then = `<div class="form" data-form="ad-exhaust"></div>`;
     } else {
       trig = `<div class="help">A light someone turns on by hand. SB Modes only ever turns these off.</div>`;
       then = `<div class="form" data-form="ad-autooff"></div>`;
@@ -1389,6 +1396,27 @@ export class SbModesEditor extends HTMLElement {
     ], { lights: ad.lights || [], days_back: ad.days_back || 7 },
     (v) => adEdit((x) => { x.lights = v.lights || []; x.days_back = Number(v.days_back) || 7; }),
     { lights: "Lights", days_back: "Replay from this many days ago" }, { days_back: "The recorder keeps 10 days; 7 repeats the same weekday." }));
+    const ex = root.querySelector('[data-form="ad-exhaust"]');
+    if (ex && ad) {
+      const num = (name, min, max, unit, step = 1) => ({ name, selector: { number: { min, max, step, mode: "box", unit_of_measurement: unit } } });
+      const keys = ["on_rate", "steady_rate", "empty_minutes", "drying_minutes", "max_on_minutes", "extended_minutes"];
+      const dflt = { on_rate: 2, steady_rate: 0.1, empty_minutes: 5, drying_minutes: 10, max_on_minutes: 20, extended_minutes: 90 };
+      ex.appendChild(this._form([
+        { name: "fan", selector: { entity: { filter: { domain: ["switch", "fan"] } } } },
+        { name: "humidity_rate", selector: { entity: { filter: { domain: "sensor" } } } },
+        num("on_rate", 0.1, 20, "%/min", 0.1), num("steady_rate", 0, 5, "%/min", 0.1),
+        num("empty_minutes", 0, 120, "min"), num("drying_minutes", 0, 120, "min"),
+        num("max_on_minutes", 0, 480, "min"), num("extended_minutes", 0, 480, "min"),
+      ], { fan: ad.fan || "", humidity_rate: ad.humidity_rate || "", ...Object.fromEntries(keys.map((k) => [k, ad[k] ?? dflt[k]])) },
+      (v) => adEdit((x) => {
+        x.fan = v.fan || "";
+        if (v.humidity_rate) x.humidity_rate = v.humidity_rate; else delete x.humidity_rate;
+        for (const k of keys) x[k] = v[k] === "" || v[k] == null ? dflt[k] : Number(v[k]);
+      }), { fan: "Fan", humidity_rate: "Humidity rate sensor (%/min)", on_rate: "On when humidity rises faster than", steady_rate: "Settled below",
+        empty_minutes: "Off once the room is empty this long", drying_minutes: "… then keeps drying this long", max_on_minutes: "Longest run", extended_minutes: "Extended run" },
+      { humidity_rate: "Optional. Without it, only occupancy turns the fan on.", max_on_minutes: "Never cut short while someone is in the room. 0 = no limit.",
+        extended_minutes: "Fan switched off and on within 15 s. 0 = no extended run." }));
+    }
     const ao = root.querySelector('[data-form="ad-autooff"]');
     if (ao && ad) ao.appendChild(this._form([
       { name: "lights", selector: { entity: { multiple: true, filter: { domain: ["light", "switch"] } } } },
@@ -1544,10 +1572,10 @@ export class SbModesEditor extends HTMLElement {
       let id;
       this._edit((d) => {
         const x = zone(d), list = (x.addons ||= []);
-        const base = { replay: "replay", time: "wake", begins: "begins", ends: "ends", state: "device", calendar: "calendar", while: "tv", button: "button", follow: "follow", auto_off: "auto-off" }[k];
+        const base = { replay: "replay", time: "wake", begins: "begins", ends: "ends", state: "device", calendar: "calendar", while: "tv", button: "button", follow: "follow", auto_off: "auto-off", exhaust: "exhaust" }[k];
         id = newId(list, base);
         const name = { replay: "Lived-in replay", time: "At a time", begins: "When a mode begins", ends: "When a mode ends", state: "When a device changes", calendar: "Calendar event", while: "TV lighting",
-          button: "Hold button", follow: "Follow", auto_off: "Auto-off" }[k];
+          button: "Hold button", follow: "Follow", auto_off: "Auto-off", exhaust: "Exhaust fan" }[k];
         const lights = (trigger) => ({ id, name, type: "lights", trigger, steps: [{ after_minutes: 0, targets: {} }] });
         list.push(k === "time" ? lights({ at: "06:30" }) : k === "begins" ? lights({ mode_begins: [] }) : k === "ends" ? lights({ mode_ends: [] })
           : k === "state" ? lights({ entity: "", to: "on" }) : k === "calendar" ? lights({ calendar: "", match: "", edge: "start", offset_minutes: 0 })
@@ -1555,6 +1583,7 @@ export class SbModesEditor extends HTMLElement {
           : k === "button" ? { id, name, type: "button", entity: "", presses: {} }
           : k === "replay" ? { id, name, type: "replay", lights: [...(x.lights || [])], days_back: 7,
               ...(this._mode("away") ? { when: { modes: ["away"] } } : {}) }
+          : k === "exhaust" ? { id, name, type: "exhaust", fan: "", on_rate: 2, steady_rate: 0.1, empty_minutes: 5, drying_minutes: 10, max_on_minutes: 20, extended_minutes: 90 }
           : k === "follow" ? { id, name, type: "follow", leader: "", bands: [{ min_pct: 50, targets: {} }, { min_pct: 0, targets: {} }] }
           : { id, name, type: "auto_off", lights: [], with_empty: true, on_minutes: 15 });
         this._openAddon = `${x.id}|${id}`;

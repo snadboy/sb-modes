@@ -396,6 +396,11 @@ def addon_summary(a: dict, name_of=lambda e: e, mode_name=lambda m: m, day_name=
         txt = _auto(a, name_of)
     elif kind == "replay":
         txt = f"{_names(a.get('lights'), name_of)} replay {a.get('days_back', 7):g} days ago"
+    elif kind == "exhaust":
+        txt = (f"{name_of(a.get('fan') or '?')} on when someone comes in"
+               + (f" or humidity rises > {a.get('on_rate', 2):g} %/min" if a.get("humidity_rate") else "")
+               + f", off {a.get('empty_minutes', 5):g} min after empty + {a.get('drying_minutes', 10):g} min drying"
+               + (f", at most {a.get('max_on_minutes', 20):g} min" if a.get("max_on_minutes", 20) else ""))
     else:
         txt = str(kind)
     when = _when_txt(a.get("when"), mode_name, day_name)

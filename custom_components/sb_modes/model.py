@@ -103,7 +103,7 @@ NEEDS: dict[str, tuple[str, ...]] = {
 }
 
 # Domains a driver can control. An entity outside these is an error, not skipped.
-DRIVER_DOMAINS = ("light", "switch", "number")
+DRIVER_DOMAINS = ("light", "switch", "number", "fan")
 
 TARGET_KEYS = {"state", "brightness_pct", "min_brightness_pct", "color_temp_kelvin", "hs_color", "effect", "value", "transition"}
 
@@ -325,12 +325,14 @@ def next_change(config: dict, now, in_set=None, sun=None):
 # type "follow":   "leader", "bands"
 # type "auto_off": "lights", "with_empty", "on_minutes"
 # type "replay":   "lights", "days_back" (7) — the lights do what they did that many days ago
+# type "exhaust":  "fan", "humidity_rate"?, "on_rate", "steady_rate", "empty_minutes", "drying_minutes",
+#                  "max_on_minutes", "extended_minutes" — a bathroom fan (exhaust.py)
 # "when" (all optional, all must match): "modes" [ids], "days" / "not_days" [day type ids or SB
 # Scheduler day set ids], "between" ["HH:MM", "HH:MM"] (may cross midnight).
 # Older tables kept one of each as zone keys (overlay, buttons, follow, auto_off, wake_up) plus
 # on_enter; zone_addons() converts those on read, so every version still loads.
 
-ADDON_TYPES = ("lights", "while", "button", "follow", "auto_off", "replay")
+ADDON_TYPES = ("lights", "while", "button", "follow", "auto_off", "replay", "exhaust")
 LEGACY_ADDON_KEYS = ("overlay", "buttons", "follow", "auto_off", "wake_up", "on_enter")
 
 

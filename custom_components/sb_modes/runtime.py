@@ -39,6 +39,7 @@ from .behaviours import KINDS, Behaviour, Disabled, HandsOff, Held, Overlaid
 from .bookkeeping import Keeper, describe_hold, release_delay
 from .follow import Follower
 from .autooff import AutoOff
+from .exhaust import Exhaust
 from .addons import LightsAddon
 from .replay import ReplayAddon
 from .buttons import Buttons
@@ -103,6 +104,7 @@ class Runtime:
         self._overlays: dict[str, Overlay] = {}
         self._buttons: dict[str, Buttons] = {}
         self._autooff: dict[str, AutoOff] = {}
+        self._exhaust: dict[str, list[Exhaust]] = {}
         self._lights_addons: dict[str, list[LightsAddon]] = {}   # zone → its "lights" add-ons
         self.media_left: dict[str, datetime] = {}          # media player → when it stopped being watched
         self.daylight: dict[str, tuple] = {}              # zone → (last reading with its lights off, when)
@@ -513,7 +515,8 @@ class Runtime:
     @callback
     def _restart_behaviours(self) -> None:
         self._stop_behaviours()
-        if self.ready and not (self._followers or self._overlays or self._buttons or self._autooff or self._lights_addons):
+        if self.ready and not (self._followers or self._overlays or self._buttons or self._autooff or self._lights_addons
+                               or self._exhaust):
             self._restart_followers()
         for ov in self._overlays.values():               # a When that names modes: before the zones start
             ov.regate(restart=False)
@@ -593,8 +596,10 @@ class Runtime:
             f.stop()
         self._followers.clear()
         for o in [*self._overlays.values(), *self._buttons.values(), *self._autooff.values(),
-                  *(a for lst in self._lights_addons.values() for a in lst)]:
+                  *(a for lst in self._lights_addons.values() for a in lst),
+                  *(a for lst in self._exhaust.values() for a in lst)]:
             o.stop()
+        self._exhaust.clear()
         self._overlays.clear()
         self._buttons.clear()
         self._autooff.clear()
@@ -625,6 +630,10 @@ class Runtime:
             runners = [LightsAddon(self, zone, a) for a in of("lights")] + [ReplayAddon(self, zone, a) for a in of("replay")]
             if runners:
                 self._lights_addons[zid] = runners
+            if fans := [Exhaust(self, zone, a) for a in of("exhaust")]:
+                self._exhaust[zid] = fans
+                for x in fans:
+                    x.start()
 
     @callback
     def _occupancy_changed(self, _event) -> None:
@@ -702,7 +711,7 @@ class Runtime:
 
     def addon_status(self, zone_id: str) -> dict[str, str]:
         """Add-on id → a few words for the card: next run, running, active…"""
-        out = {a.id: a.status() for a in self._lights_addons.get(zone_id, [])}
+        out = {a.id: a.status() for a in [*self._lights_addons.get(zone_id, []), *self._exhaust.get(zone_id, [])]}
         if (ov := self._overlays.get(zone_id)) is not None:
             out[ov.id] = ("active: " + (ov.state or "")) if ov.holding else ("" if ov.active else "not now")
         return out

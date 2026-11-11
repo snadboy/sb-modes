@@ -36,6 +36,8 @@ STATES = {
     "light.mova_bulb": "disabled",
     "switch.kitchen_aux_cabinet": "on",
     "climate.bedroom_ac": "cool",
+    "fan.bath_exhaust": "off",
+    "sensor.bath_humidity_rate": "0.0",
 }
 AREAS = {"kitchen", "kitchen_aux", "dining_room", "dining_room_aux"}
 state_of = STATES.get
@@ -580,6 +582,18 @@ def test_room_switched_off():
     b["zones"][0]["enabled"] = "no"
     errors, _ = check(b)
     assert any("enabled must be true or false" in e for e in errors), errors
+
+
+def test_exhaust_addon():
+    fan = {"id": "fan", "name": "Exhaust", "type": "exhaust", "fan": "fan.bath_exhaust",
+           "humidity_rate": "sensor.bath_humidity_rate", "empty_minutes": 5}
+    e, _ = edit(lambda c: c["zones"][0].update(addons=[fan]))
+    assert e == [], e
+    e, _ = edit(lambda c: c["zones"][0].update(addons=[{**fan, "fan": "light.kitchen_aux_sink", "empty_minutes": -1}]))
+    assert any("not a switch / fan entity" in x for x in e) and any("empty minutes must be" in x for x in e), e
+    e, _ = edit(lambda c: c["zones"][0].update(addons=[{**fan, "fan": ""}]))
+    assert any("choose the fan" in x for x in e), e
+    assert "fan.bath_exhaust on when someone comes in or humidity rises > 2 %/min" in CH.addon_summary(fan)
 
 if __name__ == "__main__":
     n = 0

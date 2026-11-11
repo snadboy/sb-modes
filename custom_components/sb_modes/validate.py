@@ -590,6 +590,20 @@ def _check_addons(config, zone, i, where, ids, names, state_of, errors, warnings
                 errors.append(f"{at}: on_minutes must be 0–1440.")
             if not a.get("with_empty") and not a.get("on_minutes"):
                 errors.append(f"{at}: choose when it turns off (with the empty setting, after some minutes, or both).")
+        elif kind == "exhaust":
+            with _sub("fan"):
+                if not a.get("fan"):
+                    errors.append(f"{at}: choose the fan.")
+                else:
+                    _check_entity(a["fan"], ["switch", "fan"], at, state_of, errors, warnings)
+            if a.get("humidity_rate"):
+                with _sub("humidity_rate"):
+                    _check_entity(a["humidity_rate"], ["sensor"], at, state_of, errors, warnings, driven=False)
+            for key, lo, hi in (("on_rate", 0.1, 20), ("steady_rate", 0, 5), ("empty_minutes", 0, 120),
+                                ("drying_minutes", 0, 120), ("max_on_minutes", 0, 480), ("extended_minutes", 0, 480)):
+                if a.get(key) is not None and not _num(a[key], lo, hi):
+                    with _sub(key):
+                        errors.append(f"{at}: {key.replace('_', ' ')} must be {lo:g}–{hi:g}.")
 
 
 def _check_when(when, at, ids, types, errors, day_set_exists) -> None:

@@ -11,7 +11,7 @@
  *
  * Rows use the shared SB row style (window.SBKit, from the SB UI Kit integration).
  */
-const VERSION = "0.44.1";
+const VERSION = "0.45.0";
 const CARD = "sb-modes-card";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -756,6 +756,9 @@ class SbModesCard extends HTMLElement {
     } else if (x.type === "follow") {
       when = `${this._name(x.leader)} changes`;
       does = [...(x.bands || [])].sort((p, q) => (q.min_pct || 0) - (p.min_pct || 0)).map((b) => `${b.min_pct ? `≥${b.min_pct}%` : "off / low"} → ${this._targetsBrief(b.targets)}`).join(" · ");
+    } else if (x.type === "exhaust") {
+      when = `someone comes in${x.humidity_rate ? " or humidity rises" : ""}`;
+      does = `${this._name(x.fan)} on; off ${x.empty_minutes ?? 5} min after empty + ${x.drying_minutes ?? 10} min drying`;
     } else if (x.type === "replay") {
       when = "throughout";
       does = `${(x.lights || []).length} light${(x.lights || []).length === 1 ? "" : "s"} repeat what they did ${x.days_back || 7} days ago`;
@@ -787,6 +790,8 @@ class SbModesCard extends HTMLElement {
     } else if (x.type === "follow") {
       what = `follows ${this._name(x.leader)}: ` + [...(x.bands || [])].sort((p, q) => (q.min_pct || 0) - (p.min_pct || 0))
         .map((b) => `${b.min_pct ? `≥${b.min_pct}%` : "off / low"} → ${this._targets(b.targets)}`).join(" · ");
+    } else if (x.type === "exhaust") {
+      what = `${this._name(x.fan)} on when someone comes in${x.humidity_rate ? ` or humidity rises > ${x.on_rate ?? 2} %/min` : ""}; off ${x.empty_minutes ?? 5} min after empty + ${x.drying_minutes ?? 10} min drying${x.max_on_minutes ?? 20 ? `, at most ${x.max_on_minutes ?? 20} min unless occupied` : ""}`;
     } else if (x.type === "replay") {
       what = `${(x.lights || []).map((e) => this._name(e)).join(", ")} repeat what they did ${x.days_back || 7} days ago`;
     } else {
@@ -795,7 +800,7 @@ class SbModesCard extends HTMLElement {
     const when = [w.modes?.length ? `in ${w.modes.map(mn).join(", ")}` : "", w.days?.length ? `only on ${w.days.join(", ")}` : "",
       w.not_days?.length ? `never on ${w.not_days.join(", ")}` : "", w.between?.length === 2 ? `${w.between[0]}–${w.between[1]}` : ""].filter(Boolean).join(", ");
     return `<div${x.enabled === false ? ' style="opacity:.55"' : ""}><b>${esc(x.name || x.id)}</b>${when ? ` (${esc(when)})` : ""} ${esc(what)}${
-      x.enabled === false ? " · off" : status ? ` · <i>${esc(status)}</i>` : ""}</div>`;
+      x.enabled === false ? " · off" : status ? ` · <i>${esc(fmtTimes(status))}</i>` : ""}</div>`;
   }
 
   _targets(targets) {

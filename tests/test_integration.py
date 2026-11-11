@@ -2152,3 +2152,125 @@ async def test_disabled_entity_is_out_of_service(hass, kitchen, lights) -> None:
     rt.check()
     await hass.async_block_till_done()
     assert hass.states.get(PROBLEM).attributes["out_of_service"] == []
+
+
+# ── exhaust fan add-on (0.45.0) ─────────────────────────────────────────────
+
+FAN = "switch.bath_fan"
+RATE = "sensor.bath_rate"
+
+
+def _exhaust(**kw) -> dict:
+    t = _with("vacancy_off", {"lights": [CEILING], "off_after_seconds": 60})
+    t["zones"][0]["addons"] = [{"id": "fan", "name": "Exhaust", "type": "exhaust", "fan": FAN, "humidity_rate": RATE,
+                                "on_rate": 2, "steady_rate": 0.1, "empty_minutes": 5, "drying_minutes": 10,
+                                "max_on_minutes": 20, "extended_minutes": 90, **kw}]
+    return t
+
+
+@pytest.fixture
+def fan(hass: HomeAssistant):
+    for domain, uid in (("switch", "bath_fan"), ("sensor", "bath_rate")):
+        er.async_get(hass).async_get_or_create(domain, "test", uid, suggested_object_id=uid)
+    hass.states.async_set(FAN, "off")
+    hass.states.async_set(RATE, "0")
+    calls = {"on": async_mock_service(hass, "switch", "turn_on"), "off": async_mock_service(hass, "switch", "turn_off")}
+
+    async def echo(state: str) -> None:
+        """The switch follows our last command, under its context."""
+        call = calls[state][-1]
+        hass.states.async_set(FAN, state, context=call.context)
+        await hass.async_block_till_done()
+    calls["echo"] = echo
+    return calls
+
+
+async def test_exhaust_on_when_occupied_off_after_empty_and_drying(hass, kitchen, lights, fan, freezer) -> None:
+    await _setup(hass)
+    await _save(hass, _exhaust())
+    acts = _acts(hass)
+    hass.states.async_set(OCC, "on")
+    await hass.async_block_till_done()
+    assert [c.data for c in fan["on"]] == [{"entity_id": FAN}]
+    assert lights["on"] == []                            # the room's lights are the rule's business
+    await fan["echo"]("on")
+    await _tick(hass, freezer, minutes=30)
+    assert fan["off"] == [], [a.data["message"] for a in acts]  # never cut short while someone is there
+    hass.states.async_set(OCC, "off")
+    await _tick(hass, freezer, minutes=5, seconds=1)
+    assert fan["off"] == []                              # empty 5 min: now drying
+    assert _st(hass, "fan").startswith("drying until")
+    await _tick(hass, freezer, minutes=10)
+    assert [c.data for c in fan["off"]] == [{"entity_id": FAN}]
+
+
+async def test_exhaust_humidity_turns_on_and_keeps_it_on(hass, kitchen, lights, fan, freezer) -> None:
+    await _setup(hass)
+    await _save(hass, _exhaust(max_on_minutes=0))
+    hass.states.async_set(RATE, "2.5")
+    await hass.async_block_till_done()
+    assert len(fan["on"]) == 1
+    await fan["echo"]("on")
+    await _tick(hass, freezer, minutes=30)
+    assert fan["off"] == []                              # still rising
+    hass.states.async_set(RATE, "0.05")
+    await _tick(hass, freezer, minutes=9)
+    assert fan["off"] == []
+    await _tick(hass, freezer, minutes=2)
+    assert len(fan["off"]) == 1
+
+
+async def test_exhaust_longest_run_when_empty(hass, kitchen, lights, fan, freezer) -> None:
+    await _setup(hass)
+    await _save(hass, _exhaust())
+    hass.states.async_set(RATE, "2.5")
+    await hass.async_block_till_done()
+    await fan["echo"]("on")
+    hass.states.async_set(RATE, "1")                     # not rising fast, not settled either
+    await _tick(hass, freezer, minutes=19)
+    assert fan["off"] == []
+    await _tick(hass, freezer, minutes=2)
+    assert len(fan["off"]) == 1
+
+
+async def test_exhaust_off_by_hand_stays_off_and_when_gates_on(hass, kitchen, lights, fan, freezer) -> None:
+    await _setup(hass)
+    await _save(hass, _exhaust(when={"modes": ["evening"]}))
+    hass.states.async_set(OCC, "on")
+    await hass.async_block_till_done()
+    assert fan["on"] == []                               # day: not in its When
+    hass.states.async_set(OCC, "off")
+    await _mode(hass, "evening")
+    hass.states.async_set(OCC, "on")
+    await hass.async_block_till_done()
+    assert len(fan["on"]) == 1
+    await fan["echo"]("on")
+    hass.states.async_set(FAN, "off", context=Context(user_id="wall"))
+    await _tick(hass, freezer, minutes=1)
+    assert len(fan["on"]) == 1                           # off by hand while occupied: left off
+
+
+async def test_exhaust_extended_run(hass, kitchen, lights, fan, freezer) -> None:
+    await _setup(hass)
+    await _save(hass, _exhaust())
+    acts = _acts(hass)
+    hass.states.async_set(OCC, "on")
+    await hass.async_block_till_done()
+    await fan["echo"]("on")
+    hass.states.async_set(FAN, "off", context=Context(user_id="wall"))
+    await _tick(hass, freezer, seconds=3)
+    hass.states.async_set(FAN, "on", context=Context(user_id="wall"))
+    await hass.async_block_till_done()
+    assert "runs 90 min" in acts[-1].data["message"]
+    await _tick(hass, freezer, seconds=6)                # the blink: off …
+    assert len(fan["off"]) == 1
+    await fan["echo"]("off")
+    await _tick(hass, freezer, seconds=3)                # … and on again
+    assert len(fan["on"]) == 2
+    await fan["echo"]("on")
+    assert _st(hass, "fan").startswith("extended run until")
+    hass.states.async_set(OCC, "off")
+    await _tick(hass, freezer, minutes=60)
+    assert len(fan["off"]) == 1                          # empty, settled — but extended
+    await _tick(hass, freezer, minutes=31)
+    assert len(fan["off"]) == 2

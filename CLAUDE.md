@@ -729,3 +729,29 @@ Marketplace install, manifest check on the HA host, HA restart (skipped with exi
 restarted in the last 15 min), waits for the new installed_version. It is pre-allowed in
 the scratch session's settings, so the auto-mode classifier no longer blocks the push.
 Bump manifest.json and sb-modes.js VERSION and commit first.
+
+## Exhaust fan add-on (0.45.0, 2026-11-11)
+
+User wants SB Modes as the one place to look ("reduce the clutter of various automations"), so
+bathroom fans move from the Smart Exhaust Fan blueprint (snadboy/smart-exhaust-fan.yaml) into a
+new add-on type `exhaust` (exhaust.py), not a rule: the room's rule keeps the lights (own delay,
+not turned on), the fan runs alongside with its own timings in every mode. Fields: fan
+(switch / fan — `fan` added to DRIVER_DOMAINS), humidity_rate sensor (optional), on_rate 2,
+steady_rate 0.1, empty_minutes 5, drying_minutes 10, max_on_minutes 20, extended_minutes 90.
+- On: edge-triggered (occupancy off→on, rate crossing on_rate) and only while When holds; a fan
+  switched off by hand stays off.
+- Off (any mode): empty `empty_minutes` AND rate < steady_rate → `drying_minutes` more → off.
+  Longest run: checked when it comes up; if the room is occupied then, waived for that run
+  (as the blueprint's safety_timeout trigger did) — otherwise a long shower would cut off
+  the moment the room empties.
+- Extended: off→on by hand within 15 s → runs `extended_minutes`, blinks (5 s, off 2 s) to
+  confirm. In memory only: a restart ends it.
+- Occupancy = zone_entities of the room (areas / own `occupancy`), not the behaviour's.
+- Commands go through rt.send (like a button: a hold on the room doesn't stop the fan).
+- Started in _restart_followers (not restarted on mode changes); status in addon_status
+  ("fan on", "drying until HH:MM", "extended run until HH:MM", "fan off").
+Plan: Upstairs Bath first (area upstairs_bath: switch.upstairs_bath_exhaust_fan, FP300
+occupancy + sensor.upstairs_bath_fp300_humidity_rate), then disable (not delete)
+automation.upstairs_bath_smart_exhaust_fan. Basement Bath waits for its Tuya switch.
+Still on independent automations: Bedside Lamp Dan/Jojy (BILRESA blueprint), Bedroom AC
+Scheduler — candidates to fold in later.
