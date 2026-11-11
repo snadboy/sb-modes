@@ -59,6 +59,11 @@ BEHAVIOURS: dict[str, dict[str, dict[str, Any]]] = {
                            "help": "Turn a light off once it has been on this long with nobody seen (0 = no limit)."},
         "on_when_occupied": {"type": "bool", "default": False, "label": "On when someone comes in"},
     },
+    "timed_off": {
+        "lights": {"type": "entities", "domains": ["light", "switch"], "required": True, "label": "Lights to turn off"},
+        "off_after_minutes": {"type": "number", "min": 1, "max": 1440, "default": 5, "unit": "min", "label": "Off after",
+                              "help": "Minutes after a light comes on (however it came on) before it goes off."},
+    },
     "occupied_vacant": {
         "occupied": {"type": "targets", "required": True, "label": "Occupied"},
         "vacant": {"type": "targets", "required": True, "label": "Empty"},
@@ -83,6 +88,7 @@ BEHAVIOUR_INFO: dict[str, dict[str, str]] = {
     "static": {"label": "Static", "help": "One fixed setting."},
     "nightlight_then_dark": {"label": "Nightlight, then dark", "help": "A nightlight when someone comes in; dark once empty."},
     "vacancy_off": {"label": "Off when empty", "help": "Lights off after the zone has been empty a while."},
+    "timed_off": {"label": "Off after a while", "help": "Lights off a set time after they come on; no sensors needed."},
     "occupied_vacant": {"label": "Occupied / empty", "help": "One setting with someone there, another once empty."},
     "presence_lux": {"label": "Presence + light level", "help": "Lights on when someone is there and it is dark; an empty setting for dark and light."},
 }

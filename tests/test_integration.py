@@ -596,6 +596,30 @@ async def test_vacancy_off_on_when_occupied(hass, kitchen, lights) -> None:
     assert [c.data["entity_id"] for c in lights["on"]] == [CEILING]
 
 
+async def test_timed_off_after_on_by_hand(hass, kitchen, lights, freezer) -> None:
+    await _setup(hass)
+    await _save(hass, _with("timed_off", {"lights": [CEILING], "off_after_minutes": 5}))
+    assert _zone(hass)["status"] == "lights off"
+    hass.states.async_set(OCC, "on")                    # sensors play no part
+    hass.states.async_set(CEILING, "on", {"brightness": 255}, context=Context(user_id="app"))
+    await hass.async_block_till_done()
+    assert _zone(hass)["status"].startswith("off at")
+    assert CEILING not in (_zone(hass).get("overrides") or {})   # on by hand is the normal case
+    await _tick(hass, freezer, minutes=4, seconds=50)
+    assert lights["off"] == []
+    await _tick(hass, freezer, seconds=15)
+    assert [c.data["entity_id"] for c in lights["off"]] == [CEILING]
+    assert lights["on"] == []                           # never turns anything on
+
+
+async def test_timed_off_light_already_on_at_start(hass, kitchen, lights, freezer) -> None:
+    await _setup(hass)
+    hass.states.async_set(CEILING, "on", {"brightness": 255})
+    await _tick(hass, freezer, minutes=10)
+    await _save(hass, _with("timed_off", {"lights": [CEILING], "off_after_minutes": 5}))
+    assert [c.data["entity_id"] for c in lights["off"]] == [CEILING]
+
+
 async def test_occupied_vacant_and_numbers(hass, kitchen, lights, freezer) -> None:
     number = async_mock_service(hass, "number", "set_value")
     er.async_get(hass).async_get_or_create("number", "test", "clock", suggested_object_id="clock")

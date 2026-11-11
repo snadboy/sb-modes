@@ -572,8 +572,8 @@ class Runtime:
             self._occ_unsub = async_track_state_change_event(self.hass, occ, self._occupancy_changed)
         watch = {}
         for zid, b in self._behaviours.items():
-            if b.name in ("hands_off", "held"):
-                continue                                 # (an overlay-held zone IS watched)
+            if b.name in ("hands_off", "held", "timed_off"):
+                continue                                 # (an overlay-held zone IS watched; timed_off expects hands)
             picked = resolve(self.config, self.mode, zid) or {}
             watch[zid] = {"lights": b.entities.get("lights", []), "occupancy": b.entities.get("occupancy", []),
                           "delay": release_delay(picked.get("behaviour"), picked.get("params") or {})}

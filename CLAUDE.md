@@ -712,3 +712,12 @@ detail still uses `_describe`.
 - Add-on Does: a target list of more than 3 devices becomes a count (`_targetsBrief`: "34 devices off")
   plus **Details ›** (`data-adet`, delegated click on the shadow root) opening `dialog.lights.adet`:
   device rows × step / state / band columns (`_addonCols`, `_addonDetHtml`).
+
+## Off after a while — `timed_off` (0.44.0, 2026-11-10)
+A rule for rooms with no presence sensor (Basement Stairs: one light, on by hand only).
+`params: {lights: [...], off_after_minutes: 5}`; each light goes off N min after its
+`last_changed` to on, however it came on (restart-safe: an already-old light goes off at
+once). Never turns anything on; no NEEDS. The zone is NOT watched for hand changes
+(runtime `_rewatch` skips it) because on-by-hand is the normal case — no "Changed by hand"
+noise and nothing blocks the off. Status: "lights off" / "off at HH:MM" / "off: on 5 min".
+Tests: `test_timed_off_*` (integration), `test_timed_off_needs_no_sensors` (validate).

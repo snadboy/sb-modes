@@ -182,6 +182,14 @@ def test_needs_from_areas():
                  "Zone Dining Room: presence_lux (Day) needs an illuminance sensor in the zone's areas; there is none."], e
 
 
+
+def test_timed_off_needs_no_sensors():
+    cfg = copy.deepcopy(GOOD)                            # dining_room's area has no sensors
+    cfg["zones"][1]["overrides"] = {"*": {"behaviour": "timed_off", "params": {"lights": ["light.kitchen_aux_sink"]}}}
+    e, _ = V.check_config(cfg, state_of, area_exists, zone_entities)
+    assert e == [], e
+    assert M.resolve(cfg, "day", "dining")["params"] == {"lights": ["light.kitchen_aux_sink"], "off_after_minutes": 5}
+
 def test_defaults_filled_in():
     assert M.with_defaults("nightlight_then_dark", {}) == {"delay": 10}
     assert M.with_defaults("nightlight_then_dark", {"delay": 3}) == {"delay": 3}

@@ -13,6 +13,8 @@ behaviour decides what happens from there.
                          An unavailable sensor counts as not vacant.
 - vacancy_off            lights off when the zone has been vacant a while (and optionally on
                          when someone arrives) — the old "Lights - Occupancy" automations.
+- timed_off              lights off a set time after each comes on, however it came on; no
+                         sensors (a stairway with one light switched by hand).
 - occupied_vacant        one set of targets while occupied, another once vacant — the old
                          occupancy scene toggle (the Office).
 - presence_lux           occupied and darker than target_lux → occupied targets; vacant a while →
@@ -547,8 +549,68 @@ class PresenceLux(_Occupancy):
         self._evaluate()
 
 
+class TimedOff(Behaviour):
+    """Each light off `off_after_minutes` after it came on. No sensors, never turns anything on;
+    a light turned on by hand is the normal case, so the zone is not watched for hand changes."""
+    name = "timed_off"
+
+    def __init__(self, *args) -> None:
+        super().__init__(*args)
+        self._timer: CALLBACK_TYPE | None = None
+
+    @property
+    def _lights(self) -> list[str]:
+        return list(self.params.get("lights") or [])
+
+    @callback
+    def start(self) -> None:
+        self._unsubs.append(async_track_state_change_event(self.hass, self._lights, self._changed))
+        self._evaluate()
+
+    @callback
+    def stop(self) -> None:
+        self._cancel()
+        super().stop()
+
+    @callback
+    def _cancel(self) -> None:
+        if self._timer is not None:
+            self._timer()
+            self._timer = None
+
+    @callback
+    def _changed(self, _event) -> None:
+        self._evaluate()
+
+    @callback
+    def _timer_done(self, _now) -> None:
+        self._timer = None
+        self._evaluate()
+
+    @callback
+    def _evaluate(self) -> None:
+        self._cancel()
+        after = timedelta(minutes=self.params.get("off_after_minutes", 5))
+        now = dt_util.utcnow()
+        dues = {light: st.last_changed + after for light in self._lights
+                if (st := self.hass.states.get(light)) is not None and st.state == STATE_ON}
+        if not dues:
+            self._set_status("lights off")
+            return
+        if now_off := [light for light, d in dues.items() if d <= now]:
+            self._apply({light: {"state": STATE_OFF} for light in now_off}, f"off: on {after.total_seconds() / 60:g} min")
+            dues = {k: v for k, v in dues.items() if k not in now_off}
+            if not dues:
+                return
+        nxt = min(dues.values())
+        self._timer = async_call_later(self.hass, max(1, (nxt - now).total_seconds()),
+                                       HassJob(self._timer_done, cancel_on_shutdown=True))
+        self._set_status("off at " + dt_util.as_local(nxt).strftime("%H:%M"))
+
+
 KINDS: dict[str, type[Behaviour]] = {
     "vacancy_off": VacancyOff,
+    "timed_off": TimedOff,
     "occupied_vacant": OccupiedVacant,
     "hands_off": HandsOff,
     "static": Static,

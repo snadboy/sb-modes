@@ -11,7 +11,7 @@
  *
  * Rows use the shared SB row style (window.SBKit, from the SB UI Kit integration).
  */
-const VERSION = "0.43.2";
+const VERSION = "0.44.0";
 const CARD = "sb-modes-card";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -164,6 +164,7 @@ const BEHAVIOUR_NAMES = {
   static: "Static",
   nightlight_then_dark: "Nightlight, then dark",
   vacancy_off: "Off when empty",
+  timed_off: "Off after a while",
   occupied_vacant: "Occupied / empty",
   presence_lux: "Presence + light level",
 };
@@ -182,6 +183,8 @@ const look = (behaviour, status) => {
   if (s === "on" || s.startsWith("on:")) return { icon: "mdi:lightbulb-on-outline", tint: "run" };
   if (s.startsWith("vacant; 'empty, light' since")) return { icon: "mdi:lightbulb-off-outline", tint: "idle" };
   if (s.startsWith("vacant; 'empty' since")) return { icon: "mdi:lightbulb-night-outline", tint: "idle" };
+  if (s.startsWith("off at")) return { icon: "mdi:timer-sand", tint: "armed" };
+  if (s === "lights off" || s.startsWith("off:")) return { icon: "mdi:lightbulb-off-outline", tint: "idle" };
   if (s === "vacant; lights off") return { icon: "mdi:lightbulb-off-outline", tint: "idle" };
   if (s.startsWith("vacant")) return { icon: "mdi:timer-sand", tint: "armed" };
   if (s.startsWith("waiting for the sensors")) return { icon: "mdi:motion-sensor-off", tint: "warn" };
@@ -811,6 +814,7 @@ class SbModesCard extends HTMLElement {
       if (p.max_on_minutes) bits.push(`or once on ${p.max_on_minutes} min while empty`);
       if (p.on_when_occupied) bits.push("on when someone comes in");
     }
+    if (beh === "timed_off") bits.push(`off ${p.off_after_minutes ?? 5} min after on`);
     if (beh === "occupied_vacant" && p.vacant_after_minutes) bits.push(`empty after ${p.vacant_after_minutes} min`);
     if (beh === "presence_lux") bits.push(`dark below ${p.target_lux} lx`, `empty after ${p.vacant_after_minutes ?? 15} min`);
     return bits.join(" · ");
@@ -829,6 +833,7 @@ class SbModesCard extends HTMLElement {
       return `${(p.lights || []).map((e) => this._name(e)).join(", ")} off ${after} after empty${
         p.max_on_minutes ? ` · or once on ${p.max_on_minutes} min while empty` : ""}${p.on_when_occupied ? " · on when someone comes in" : ""}`;
     }
+    if (beh === "timed_off") return `${(p.lights || []).map((e) => this._name(e)).join(", ")} off ${p.off_after_minutes ?? 5} min after on`;
     if (beh === "occupied_vacant") {
       const after = p.vacant_after_minutes ? ` (after ${p.vacant_after_minutes} min)` : "";
       return `Occupied: ${this._targets(p.occupied)} · Empty${after}: ${this._targets(p.vacant)}`;
