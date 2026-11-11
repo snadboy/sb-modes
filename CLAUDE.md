@@ -753,7 +753,7 @@ steady_rate 0.1, empty_minutes 5, drying_minutes 10, max_on_minutes 20.
 LIVE 2026-11-11 08:40: Upstairs Bath room (area upstairs_bath; rule vacancy_off vanity 300 s, never on;
 add-on "exhaust" on switch.upstairs_bath_exhaust_fan, FP300
 occupancy + sensor.upstairs_bath_fp300_humidity_rate). automation.upstairs_bath_smart_exhaust_fan DISABLED
-(not deleted). First off by the add-on 08:40 as predicted. Basement Bath waits for its Tuya switch.
+(not deleted). First off by the add-on 08:40 as predicted. Basement Bath LIVE 2026-11-11 14:2x: add-on "exhaust" on switch.exhaust_fan (Tuya SWB-03 relay 2, re-added via the tuya integration with generic ids switch.fan_light / exhaust_fan / fan_heater), FP300 humidity rate, max_on 30; automation.smart_exhaust_fan_basement_bath DISABLED (not deleted). Dining Room "Away mode on" target light.fan_light (deleted switch_as_x) → switch.fan_light.
 Still on independent automations: Bedside Lamp Dan/Jojy (BILRESA blueprint), Bedroom AC
 Scheduler — candidates to fold in later.
 
