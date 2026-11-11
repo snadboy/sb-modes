@@ -721,3 +721,11 @@ once). Never turns anything on; no NEEDS. The zone is NOT watched for hand chang
 (runtime `_rewatch` skips it) because on-by-hand is the normal case — no "Changed by hand"
 noise and nothing blocks the off. Status: "lights off" / "off at HH:MM" / "off: on 5 min".
 Tests: `test_timed_off_*` (integration), `test_timed_off_needs_no_sensors` (validate).
+
+## Deploying
+`~/projects/tools/sb-modes-deploy.sh "<release notes>" [--force-restart]` does the whole
+release: refuses a dirty tree / failing tests / mismatched VERSION, pushes, `gh release`,
+Marketplace install, manifest check on the HA host, HA restart (skipped with exit 2 if HA
+restarted in the last 15 min), waits for the new installed_version. It is pre-allowed in
+the scratch session's settings, so the auto-mode classifier no longer blocks the push.
+Bump manifest.json and sb-modes.js VERSION and commit first.
