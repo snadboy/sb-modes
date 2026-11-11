@@ -11,7 +11,7 @@
  *
  * Rows use the shared SB row style (window.SBKit, from the SB UI Kit integration).
  */
-const VERSION = "0.44.0";
+const VERSION = "0.44.1";
 const CARD = "sb-modes-card";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -183,8 +183,8 @@ const look = (behaviour, status) => {
   if (s === "on" || s.startsWith("on:")) return { icon: "mdi:lightbulb-on-outline", tint: "run" };
   if (s.startsWith("vacant; 'empty, light' since")) return { icon: "mdi:lightbulb-off-outline", tint: "idle" };
   if (s.startsWith("vacant; 'empty' since")) return { icon: "mdi:lightbulb-night-outline", tint: "idle" };
-  if (s.startsWith("off at")) return { icon: "mdi:timer-sand", tint: "armed" };
-  if (s === "lights off" || s.startsWith("off:")) return { icon: "mdi:lightbulb-off-outline", tint: "idle" };
+  if (s.startsWith("On until")) return { icon: "mdi:timer-sand", tint: "armed" };
+  if (s === "Lights off" || s.startsWith("off:")) return { icon: "mdi:lightbulb-off-outline", tint: "idle" };
   if (s === "vacant; lights off") return { icon: "mdi:lightbulb-off-outline", tint: "idle" };
   if (s.startsWith("vacant")) return { icon: "mdi:timer-sand", tint: "armed" };
   if (s.startsWith("waiting for the sensors")) return { icon: "mdi:motion-sensor-off", tint: "warn" };

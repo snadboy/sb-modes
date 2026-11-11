@@ -579,8 +579,20 @@ class TimedOff(Behaviour):
             self._timer = None
 
     @callback
-    def _changed(self, _event) -> None:
+    def _changed(self, event: Event[EventStateChangedData]) -> None:
         self._evaluate()
+        old, new = event.data["old_state"], event.data["new_state"]
+        if old is None or new is None or old.state == new.state or new.state not in (STATE_ON, STATE_OFF) \
+                or new.context.id in self.rt.own_contexts:
+            return                                       # our own off is logged as a command already
+        from .activity import short_name
+        light = event.data["entity_id"]
+        name = short_name(self.hass, light, self.zone.get("name"))
+        if new.state == STATE_ON:
+            due = new.last_changed + timedelta(minutes=self.params.get("off_after_minutes", 5))
+            self.rt.log("hand", self.zone["id"], f"{name} on — off at {dt_util.as_local(due).strftime('%H:%M')}", [light])
+        else:
+            self.rt.log("hand", self.zone["id"], f"{name} off", [light])
 
     @callback
     def _timer_done(self, _now) -> None:
@@ -595,7 +607,7 @@ class TimedOff(Behaviour):
         dues = {light: st.last_changed + after for light in self._lights
                 if (st := self.hass.states.get(light)) is not None and st.state == STATE_ON}
         if not dues:
-            self._set_status("lights off")
+            self._set_status("Lights off")
             return
         if now_off := [light for light, d in dues.items() if d <= now]:
             self._apply({light: {"state": STATE_OFF} for light in now_off}, f"off: on {after.total_seconds() / 60:g} min")
@@ -605,7 +617,7 @@ class TimedOff(Behaviour):
         nxt = min(dues.values())
         self._timer = async_call_later(self.hass, max(1, (nxt - now).total_seconds()),
                                        HassJob(self._timer_done, cancel_on_shutdown=True))
-        self._set_status("off at " + dt_util.as_local(nxt).strftime("%H:%M"))
+        self._set_status("On until " + dt_util.as_local(nxt).strftime("%H:%M"))
 
 
 KINDS: dict[str, type[Behaviour]] = {

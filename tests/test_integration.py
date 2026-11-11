@@ -599,17 +599,20 @@ async def test_vacancy_off_on_when_occupied(hass, kitchen, lights) -> None:
 async def test_timed_off_after_on_by_hand(hass, kitchen, lights, freezer) -> None:
     await _setup(hass)
     await _save(hass, _with("timed_off", {"lights": [CEILING], "off_after_minutes": 5}))
-    assert _zone(hass)["status"] == "lights off"
+    assert _zone(hass)["status"] == "Lights off"
+    acts = _acts(hass)
     hass.states.async_set(OCC, "on")                    # sensors play no part
     hass.states.async_set(CEILING, "on", {"brightness": 255}, context=Context(user_id="app"))
     await hass.async_block_till_done()
-    assert _zone(hass)["status"].startswith("off at")
+    assert _zone(hass)["status"].startswith("On until ")
+    assert [(a.data["kind"], a.data["message"].split(" — ")[0]) for a in acts] == [("hand", "ceiling on")]
     assert CEILING not in (_zone(hass).get("overrides") or {})   # on by hand is the normal case
     await _tick(hass, freezer, minutes=4, seconds=50)
     assert lights["off"] == []
     await _tick(hass, freezer, seconds=15)
     assert [c.data["entity_id"] for c in lights["off"]] == [CEILING]
     assert lights["on"] == []                           # never turns anything on
+    assert [a.data["kind"] for a in acts][-1] == "command"   # our off: a command, not a second "off" line
 
 
 async def test_timed_off_light_already_on_at_start(hass, kitchen, lights, freezer) -> None:
