@@ -750,8 +750,9 @@ steady_rate 0.1, empty_minutes 5, drying_minutes 10, max_on_minutes 20, extended
 - Commands go through rt.send (like a button: a hold on the room doesn't stop the fan).
 - Started in _restart_followers (not restarted on mode changes); status in addon_status
   ("fan on", "drying until HH:MM", "extended run until HH:MM", "fan off").
-Plan: Upstairs Bath first (area upstairs_bath: switch.upstairs_bath_exhaust_fan, FP300
-occupancy + sensor.upstairs_bath_fp300_humidity_rate), then disable (not delete)
-automation.upstairs_bath_smart_exhaust_fan. Basement Bath waits for its Tuya switch.
+LIVE 2026-11-11 08:40: Upstairs Bath room (area upstairs_bath; rule vacancy_off vanity 300 s, never on;
+add-on "exhaust" on switch.upstairs_bath_exhaust_fan, FP300
+occupancy + sensor.upstairs_bath_fp300_humidity_rate). automation.upstairs_bath_smart_exhaust_fan DISABLED
+(not deleted). First off by the add-on 08:40 as predicted. Basement Bath waits for its Tuya switch.
 Still on independent automations: Bedside Lamp Dan/Jojy (BILRESA blueprint), Bedroom AC
 Scheduler — candidates to fold in later.
