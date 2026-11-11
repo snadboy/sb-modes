@@ -1008,7 +1008,7 @@ export class SbModesEditor extends HTMLElement {
       trig = `<div class="help">These lights repeat what they did the same time ${a.days_back || 7} days ago, while the When below matches (normally the Away mode). A hold or a hand change still wins.</div>`;
       then = `<div class="form" data-form="ad-replay"></div>`;
     } else if (a.type === "exhaust") {
-      trig = `<div class="help">On when someone comes in (the room's occupancy sensors) or humidity starts climbing, while the When below matches. Off once the room has been empty a while and humidity has settled, plus a drying time — in any mode. Switch the fan off and on again within 15 s for an extended run (it blinks to confirm). A hold on the room's lights doesn't stop it.</div>`;
+      trig = `<div class="help">On when someone comes in (the room's occupancy sensors) or humidity starts climbing, while the When below matches. Off once the room has been empty a while and humidity has settled, plus a drying time — in any mode. A hold on the room's lights doesn't stop it.</div>`;
       then = `<div class="form" data-form="ad-exhaust"></div>`;
     } else {
       trig = `<div class="help">A light someone turns on by hand. SB Modes only ever turns these off.</div>`;
@@ -1399,23 +1399,23 @@ export class SbModesEditor extends HTMLElement {
     const ex = root.querySelector('[data-form="ad-exhaust"]');
     if (ex && ad) {
       const num = (name, min, max, unit, step = 1) => ({ name, selector: { number: { min, max, step, mode: "box", unit_of_measurement: unit } } });
-      const keys = ["on_rate", "steady_rate", "empty_minutes", "drying_minutes", "max_on_minutes", "extended_minutes"];
-      const dflt = { on_rate: 2, steady_rate: 0.1, empty_minutes: 5, drying_minutes: 10, max_on_minutes: 20, extended_minutes: 90 };
+      const keys = ["on_rate", "steady_rate", "empty_minutes", "drying_minutes", "max_on_minutes"];
+      const dflt = { on_rate: 2, steady_rate: 0.1, empty_minutes: 5, drying_minutes: 10, max_on_minutes: 20 };
       ex.appendChild(this._form([
         { name: "fan", selector: { entity: { filter: { domain: ["switch", "fan"] } } } },
         { name: "humidity_rate", selector: { entity: { filter: { domain: "sensor" } } } },
         num("on_rate", 0.1, 20, "%/min", 0.1), num("steady_rate", 0, 5, "%/min", 0.1),
         num("empty_minutes", 0, 120, "min"), num("drying_minutes", 0, 120, "min"),
-        num("max_on_minutes", 0, 480, "min"), num("extended_minutes", 0, 480, "min"),
+        num("max_on_minutes", 0, 480, "min"),
       ], { fan: ad.fan || "", humidity_rate: ad.humidity_rate || "", ...Object.fromEntries(keys.map((k) => [k, ad[k] ?? dflt[k]])) },
       (v) => adEdit((x) => {
         x.fan = v.fan || "";
         if (v.humidity_rate) x.humidity_rate = v.humidity_rate; else delete x.humidity_rate;
         for (const k of keys) x[k] = v[k] === "" || v[k] == null ? dflt[k] : Number(v[k]);
+        delete x.extended_minutes;                         // dropped in 0.45.1
       }), { fan: "Fan", humidity_rate: "Humidity rate sensor (%/min)", on_rate: "On when humidity rises faster than", steady_rate: "Settled below",
-        empty_minutes: "Off once the room is empty this long", drying_minutes: "… then keeps drying this long", max_on_minutes: "Longest run", extended_minutes: "Extended run" },
-      { humidity_rate: "Optional. Without it, only occupancy turns the fan on.", max_on_minutes: "Never cut short while someone is in the room. 0 = no limit.",
-        extended_minutes: "Fan switched off and on within 15 s. 0 = no extended run." }));
+        empty_minutes: "Off once the room is empty this long", drying_minutes: "… then keeps drying this long", max_on_minutes: "Longest run" },
+      { humidity_rate: "Optional. Without it, only occupancy turns the fan on.", max_on_minutes: "Never cut short while someone is in the room. 0 = no limit." }));
     }
     const ao = root.querySelector('[data-form="ad-autooff"]');
     if (ao && ad) ao.appendChild(this._form([
@@ -1583,7 +1583,7 @@ export class SbModesEditor extends HTMLElement {
           : k === "button" ? { id, name, type: "button", entity: "", presses: {} }
           : k === "replay" ? { id, name, type: "replay", lights: [...(x.lights || [])], days_back: 7,
               ...(this._mode("away") ? { when: { modes: ["away"] } } : {}) }
-          : k === "exhaust" ? { id, name, type: "exhaust", fan: "", on_rate: 2, steady_rate: 0.1, empty_minutes: 5, drying_minutes: 10, max_on_minutes: 20, extended_minutes: 90 }
+          : k === "exhaust" ? { id, name, type: "exhaust", fan: "", on_rate: 2, steady_rate: 0.1, empty_minutes: 5, drying_minutes: 10, max_on_minutes: 20 }
           : k === "follow" ? { id, name, type: "follow", leader: "", bands: [{ min_pct: 50, targets: {} }, { min_pct: 0, targets: {} }] }
           : { id, name, type: "auto_off", lights: [], with_empty: true, on_minutes: 15 });
         this._openAddon = `${x.id}|${id}`;

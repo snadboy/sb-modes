@@ -600,7 +600,7 @@ def _check_addons(config, zone, i, where, ids, names, state_of, errors, warnings
                 with _sub("humidity_rate"):
                     _check_entity(a["humidity_rate"], ["sensor"], at, state_of, errors, warnings, driven=False)
             for key, lo, hi in (("on_rate", 0.1, 20), ("steady_rate", 0, 5), ("empty_minutes", 0, 120),
-                                ("drying_minutes", 0, 120), ("max_on_minutes", 0, 480), ("extended_minutes", 0, 480)):
+                                ("drying_minutes", 0, 120), ("max_on_minutes", 0, 480)):
                 if a.get(key) is not None and not _num(a[key], lo, hi):
                     with _sub(key):
                         errors.append(f"{at}: {key.replace('_', ' ')} must be {lo:g}–{hi:g}.")

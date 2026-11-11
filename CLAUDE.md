@@ -737,19 +737,19 @@ bathroom fans move from the Smart Exhaust Fan blueprint (snadboy/smart-exhaust-f
 new add-on type `exhaust` (exhaust.py), not a rule: the room's rule keeps the lights (own delay,
 not turned on), the fan runs alongside with its own timings in every mode. Fields: fan
 (switch / fan — `fan` added to DRIVER_DOMAINS), humidity_rate sensor (optional), on_rate 2,
-steady_rate 0.1, empty_minutes 5, drying_minutes 10, max_on_minutes 20, extended_minutes 90.
+steady_rate 0.1, empty_minutes 5, drying_minutes 10, max_on_minutes 20.
 - On: edge-triggered (occupancy off→on, rate crossing on_rate) and only while When holds; a fan
   switched off by hand stays off.
 - Off (any mode): empty `empty_minutes` AND rate < steady_rate → `drying_minutes` more → off.
   Longest run: checked when it comes up; if the room is occupied then, waived for that run
   (as the blueprint's safety_timeout trigger did) — otherwise a long shower would cut off
   the moment the room empties.
-- Extended: off→on by hand within 15 s → runs `extended_minutes`, blinks (5 s, off 2 s) to
-  confirm. In memory only: a restart ends it.
+- No extended run (off→on toggle): built in 0.45.0, removed in 0.45.1 at the user's request.
+  The editor drops a leftover `extended_minutes` on save; the runtime ignores it.
 - Occupancy = zone_entities of the room (areas / own `occupancy`), not the behaviour's.
 - Commands go through rt.send (like a button: a hold on the room doesn't stop the fan).
 - Started in _restart_followers (not restarted on mode changes); status in addon_status
-  ("fan on", "drying until HH:MM", "extended run until HH:MM", "fan off").
+  ("fan on", "drying until HH:MM", "fan off").
 LIVE 2026-11-11 08:40: Upstairs Bath room (area upstairs_bath; rule vacancy_off vanity 300 s, never on;
 add-on "exhaust" on switch.upstairs_bath_exhaust_fan, FP300
 occupancy + sensor.upstairs_bath_fp300_humidity_rate). automation.upstairs_bath_smart_exhaust_fan DISABLED

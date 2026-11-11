@@ -2164,7 +2164,7 @@ def _exhaust(**kw) -> dict:
     t = _with("vacancy_off", {"lights": [CEILING], "off_after_seconds": 60})
     t["zones"][0]["addons"] = [{"id": "fan", "name": "Exhaust", "type": "exhaust", "fan": FAN, "humidity_rate": RATE,
                                 "on_rate": 2, "steady_rate": 0.1, "empty_minutes": 5, "drying_minutes": 10,
-                                "max_on_minutes": 20, "extended_minutes": 90, **kw}]
+                                "max_on_minutes": 20, **kw}]
     return t
 
 
@@ -2249,28 +2249,3 @@ async def test_exhaust_off_by_hand_stays_off_and_when_gates_on(hass, kitchen, li
     await _tick(hass, freezer, minutes=1)
     assert len(fan["on"]) == 1                           # off by hand while occupied: left off
 
-
-async def test_exhaust_extended_run(hass, kitchen, lights, fan, freezer) -> None:
-    await _setup(hass)
-    await _save(hass, _exhaust())
-    acts = _acts(hass)
-    hass.states.async_set(OCC, "on")
-    await hass.async_block_till_done()
-    await fan["echo"]("on")
-    hass.states.async_set(FAN, "off", context=Context(user_id="wall"))
-    await _tick(hass, freezer, seconds=3)
-    hass.states.async_set(FAN, "on", context=Context(user_id="wall"))
-    await hass.async_block_till_done()
-    assert "runs 90 min" in acts[-1].data["message"]
-    await _tick(hass, freezer, seconds=6)                # the blink: off …
-    assert len(fan["off"]) == 1
-    await fan["echo"]("off")
-    await _tick(hass, freezer, seconds=3)                # … and on again
-    assert len(fan["on"]) == 2
-    await fan["echo"]("on")
-    assert _st(hass, "fan").startswith("extended run until")
-    hass.states.async_set(OCC, "off")
-    await _tick(hass, freezer, minutes=60)
-    assert len(fan["off"]) == 1                          # empty, settled — but extended
-    await _tick(hass, freezer, minutes=31)
-    assert len(fan["off"]) == 2
