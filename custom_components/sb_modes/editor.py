@@ -19,6 +19,7 @@ refused unless forced, and Review shows it.
 
 from __future__ import annotations
 
+import copy
 from typing import Any
 
 import voluptuous as vol
@@ -34,9 +35,12 @@ from .activity import short_name
 from .const import DOMAIN
 from datetime import timedelta
 
-from .model import ALL_MODES, BEHAVIOUR_INFO, BEHAVIOURS, DAYS, NEEDS, day_type_of, occurrences, rule_day_sets, scheduled_mode
+from .model import (
+    ALL_MODES, BEHAVIOUR_INFO, BEHAVIOURS, DAYS, NEEDS, day_type_of, migrate_rooms, occurrences, rule_day_sets, scheduled_mode,
+)
 from .runtime import Runtime, state_lookup
 from .validate import Issues, _check_param
+from .zones import area_entities
 
 VERSIONS_KEPT = 20
 
@@ -110,7 +114,7 @@ async def async_save_table(hass: HomeAssistant, rt: Runtime, config: dict, user:
 @callback
 def async_register(hass: HomeAssistant) -> None:
     for handler in (ws_schema, ws_check, ws_diff, ws_draft_get, ws_draft_set, ws_draft_discard,
-                    ws_save, ws_versions, ws_revert, ws_try, ws_preview):
+                    ws_save, ws_versions, ws_revert, ws_try, ws_preview, ws_area_entities):
         websocket_api.async_register_command(hass, handler)
 
 
@@ -268,8 +272,10 @@ async def ws_revert(hass, connection, msg) -> None:
     if found is None:
         connection.send_error(msg["id"], "not_found", f"There is no version {msg['version']}.")
         return
+    config = copy.deepcopy(found["config"])
+    migrate_rooms(config, lambda areas: area_entities(hass, areas))     # a version from before 0.46.1
     try:
-        result = await async_save_table(hass, rt, found["config"], _user(connection), f"back to version {msg['version']}")
+        result = await async_save_table(hass, rt, config, _user(connection), f"back to version {msg['version']}")
     except TableError as err:
         connection.send_error(msg["id"], "not_saved", str(err))
         return
@@ -329,3 +335,11 @@ async def ws_preview(hass, connection, msg) -> None:
         types[d.isoformat()] = day_type_of(config, d, in_set)
         d += timedelta(days=1)
     connection.send_result(msg["id"], {"now": current, "changes": out, "missing_day_sets": missing, "day_types": types})
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command({vol.Required("type"): "sb_modes/area_entities", vol.Required("areas"): [str]})
+@callback
+def ws_area_entities(hass, connection, msg) -> None:
+    """What a room's areas offer, for the room editor's sensor and light tables."""
+    connection.send_result(msg["id"], area_entities(hass, msg["areas"]))

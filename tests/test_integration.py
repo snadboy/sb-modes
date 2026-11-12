@@ -172,6 +172,9 @@ async def test_lost_entity_raises_problem_then_repairs(hass: HomeAssistant, kitc
     await hass.async_block_till_done()
     assert ir.async_get(hass).async_get_issue(DOMAIN, ISSUE_ID) is not None
 
+    reg = er.async_get(hass)                             # back, in its area again
+    e = reg.async_get_or_create("light", "test", "sink", suggested_object_id="sink")
+    reg.async_update_entity(e.entity_id, area_id=ar.async_get(hass).async_get_area_by_name("Kitchen").id)
     hass.states.async_set(SINK, "off")
     freezer.tick(timedelta(seconds=61))
     async_fire_time_changed(hass)
@@ -568,7 +571,9 @@ GROUP = "light.kitchen_lights"
 async def test_a_group_with_a_member_changed_by_hand_is_left_alone(hass, kitchen, lights, freezer) -> None:
     hass.states.async_set(GROUP, "off", {"entity_id": [SINK, CEILING]})
     await _setup(hass)
-    await _save(hass, _with("vacancy_off", {"lights": [GROUP], "off_after_seconds": 30}))
+    t = _with("vacancy_off", {"lights": [GROUP], "off_after_seconds": 30})
+    t["zones"][0]["lights"] = {"add": [GROUP]}           # not in the area: added; not watched, its members are
+    await _save(hass, t)
     await _tick(hass, freezer, minutes=30)
     hass.states.async_set(SINK, "on", {"brightness": 255}, context=Context())       # at the wall, no one seen
     hass.states.async_set(GROUP, "on", {"entity_id": [SINK, CEILING]})
@@ -869,10 +874,23 @@ async def test_sunset_relative_rule(hass, kitchen) -> None:
 async def test_zone_lights_list_replaces_the_areas_lights(hass, kitchen) -> None:
     await _setup(hass)
     t = _table()
-    t["zones"][0]["lights"] = [CEILING]
+    t["zones"][0]["lights"] = [SINK]                     # the older form: replaces the areas' lights
     await _save(hass, t)
     await _mode(hass, "overnight")
-    assert _zone(hass)["lights"] == [CEILING]
+    assert _zone(hass)["lights"] == [SINK]
+
+
+async def test_room_lights_exclude_and_add(hass, kitchen) -> None:
+    hass.states.async_set("switch.plug", "off")
+    await _setup(hass)
+    t = _table()
+    t["zones"][0]["lights"] = {"exclude": [CEILING], "add": ["switch.plug"]}
+    await _save(hass, t)
+    await _mode(hass, "overnight")
+    assert _zone(hass)["lights"] == [SINK, "switch.plug"]
+    t["zones"][0]["lights"] = {"exclude": [SINK]}        # the overnight rule sets the sink
+    with pytest.raises(ServiceValidationError, match="light.sink is set by a rule but is not one of the room's lights"):
+        await _save(hass, t)
 
 
 # ── reporting: schedule state, deviations, zone control ─────────────────────
@@ -2332,3 +2350,38 @@ async def test_hand_cap_does_not_end_a_hold(hass, kitchen, lights, freezer) -> N
     await _mode(hass, "evening")
     await _tick(hass, freezer, minutes=30)
     assert _zone(hass)["hold"]["hold"] == "paused"
+
+
+# ── rooms redesign, phase 2: the room owns its lights (0.46.1) ──────────────
+
+async def test_older_room_lists_migrate_on_load(hass, kitchen, hass_storage) -> None:
+    hass.states.async_set("switch.plug", "off")
+    t = _table()
+    t["zones"][0]["lights"] = [SINK]                     # older form; the ceiling left out
+    t["zones"][0]["overrides"]["overnight"]["params"]["nightlight"]["switch.plug"] = {"state": "on"}
+    hass_storage["sb_modes.config"] = {"version": 1, "key": "sb_modes.config", "data": t}
+    hass_storage["sb_modes.draft"] = {"version": 1, "key": "sb_modes.draft", "data": {"config": t}}
+    await _setup(hass)
+    rt = hass.config_entries.async_entries(DOMAIN)[0].runtime_data
+    assert rt.config["zones"][0]["lights"] == {"exclude": [CEILING], "add": ["switch.plug"]}
+    assert hass.states.get(PROBLEM).state == "off"
+    await hass.async_block_till_done()
+    assert hass_storage["sb_modes.backup_0_46"]["data"]["zones"][0]["lights"] == [SINK]
+    assert hass_storage["sb_modes.draft"]["data"]["config"]["zones"][0]["lights"] == {"exclude": [CEILING], "add": ["switch.plug"]}
+    await _mode(hass, "overnight")
+    assert _zone(hass)["lights"] == [SINK, "switch.plug"]
+
+
+async def test_area_entities_for_the_editor(hass, kitchen, hass_ws_client) -> None:
+    reg = er.async_get(hass)
+    area = ar.async_get(hass).async_get_area_by_name("Kitchen").id
+    for uid, kw in (("plug", {}), ("led", {"entity_category": er.EntityCategory.CONFIG}),
+                    ("lamp_plug", {"hidden_by": er.RegistryEntryHider.INTEGRATION})):
+        e = reg.async_get_or_create("switch", "test", uid, suggested_object_id=uid, **kw)
+        reg.async_update_entity(e.entity_id, area_id=area)
+    g = reg.async_get_or_create("light", "group", "kl", suggested_object_id="kitchen_lights")
+    reg.async_update_entity(g.entity_id, area_id=area)
+    await _setup(hass)
+    r = await _ws(hass, hass_ws_client, type="sb_modes/area_entities", areas=["kitchen"])
+    assert r["result"] == {"lights": [CEILING, SINK], "groups": ["light.kitchen_lights"], "switches": ["switch.plug"],
+                           "occupancy": [OCC], "illuminance": [LUX]}

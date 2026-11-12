@@ -26,6 +26,10 @@ long, even while the zone stays occupied (a presence sensor stuck "occupied" wou
 the change forever); then the zone's behaviour runs again. Left out (or null) = no limit: hand
 changes end only on vacancy, an arrival, the mode changing or a release (bookkeeping.py).
 
+A zone's own `lights` / `occupancy` adjust what its areas hold: {"exclude": [...], "add": [...]}
+(zones.apply_spec). Every light or switch its own rules set must be one of its lights (validation);
+`migrate_rooms` converts the older plain lists and adds rule lights from elsewhere.
+
 A mode exists only because it has a default. A zone without an override for a mode
 inherits that mode's default, so every (mode, zone) pair resolves to exactly one
 behaviour and its parameters.
@@ -413,3 +417,73 @@ def when_matches(config: dict, when: dict | None, mode: str | None, now, in_set)
             if not inside:
                 return False
     return True
+
+
+ROOM_DOMAINS = ("light", "switch")      # what a room's light list holds (numbers, fans: device settings)
+
+
+def apply_spec(found: list[str], spec) -> list[str]:
+    """The areas' entities adjusted by a room's own spec: None = as found; a list = that list
+    (the older form); {"exclude", "add"} = found minus exclude, plus add."""
+    if isinstance(spec, list):
+        return list(spec) if spec else list(found)
+    if isinstance(spec, dict):
+        drop = set(spec.get("exclude") or [])
+        out = [e for e in found if e not in drop]
+        return out + [e for e in spec.get("add") or [] if e not in out]
+    return list(found)
+
+
+def rule_entities(zone: dict) -> set[str]:
+    """The lights and switches the zone's own rules set, in any mode."""
+    out: set[str] = set()
+    for choice in (zone.get("overrides") or {}).values():
+        if not isinstance(choice, dict):
+            continue
+        schema = BEHAVIOURS.get(choice.get("behaviour") or "", {})
+        params = choice.get("params") if isinstance(choice.get("params"), dict) else {}
+        for key, spec in schema.items():
+            v = params.get(key)
+            if spec["type"] == "entities" and isinstance(v, list):
+                out |= {e for e in v if isinstance(e, str)}
+            elif spec["type"] == "targets" and isinstance(v, dict):
+                out |= set(v)
+    return {e for e in out if e.split(".", 1)[0] in ROOM_DOMAINS}
+
+
+def _spec(found: list[str], spec) -> dict:
+    """A room's own list as {"exclude", "add"} against what its areas hold."""
+    if isinstance(spec, list) and spec:
+        return {"exclude": sorted(set(found) - set(spec)), "add": sorted(set(spec) - set(found))}
+    if isinstance(spec, dict):
+        return {"exclude": list(spec.get("exclude") or []), "add": list(spec.get("add") or [])}
+    return {"exclude": [], "add": []}
+
+
+def migrate_rooms(config: dict, area_entities) -> bool:
+    """Bring each zone's `lights` / `occupancy` to {"exclude", "add"} (in place), adding any light
+    its rules set that is not already one of its lights. `area_entities(areas)` → {"lights",
+    "occupancy", …}. True if anything changed."""
+    changed = False
+    for zone in config.get("zones") or []:
+        if not isinstance(zone, dict) or not isinstance(zone.get("areas"), list):
+            continue
+        found = area_entities(zone["areas"])
+        for key in ("lights", "occupancy"):
+            before = zone.get(key)
+            spec = _spec(found.get(key) or [], before)
+            if key == "lights":
+                pool = (set(found.get("lights") or []) - set(spec["exclude"])) | set(spec["add"])
+                for eid in sorted(rule_entities(zone) - pool):
+                    if eid in spec["exclude"]:
+                        spec["exclude"].remove(eid)
+                    else:
+                        spec["add"].append(eid)
+            after = {k: v for k, v in spec.items() if v} or None
+            if after != before:
+                changed = True
+                if after is None:
+                    zone.pop(key, None)
+                else:
+                    zone[key] = after
+    return changed

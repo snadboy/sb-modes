@@ -12,6 +12,8 @@ A table change reloads the entry, which stops and starts them too.
 
 from __future__ import annotations
 
+import copy
+
 import json
 import logging
 import re
@@ -49,9 +51,12 @@ from .const import (
     ALERT_GRACE_SECONDS, CHECK_SECONDS, DOMAIN, EVENT_MODE_CHANGED, ISSUE_ID, STARTUP_SETTLE_SECONDS, STORE_KEY,
     STORE_VERSION,
 )
-from .model import default_config, find, mode_ids, next_change, resolve, rule_day_sets, scheduled_mode, when_matches, zone_addons
+from .model import (
+    default_config, find, migrate_rooms, mode_ids, next_change, resolve, rule_day_sets, scheduled_mode, when_matches,
+    zone_addons,
+)
 from .validate import check_config
-from .zones import zone_entities
+from .zones import area_entities, watched_lights, zone_entities
 
 _LOGGER = logging.getLogger(__name__)
 HOLDS = ("next", "timed", "paused")
@@ -123,7 +128,24 @@ class Runtime:
             await self.store.async_save(self.config)     # seed: four hands_off modes, no zones
         else:
             self.config = stored
+            await self._migrate_rooms()
         await self.keeper.async_load()
+
+    async def _migrate_rooms(self) -> None:
+        """Rooms' own light / sensor lists to {"exclude", "add"} (0.46.1), the table and any editor
+        draft, keeping the table as it was in `sb_modes.backup_0_46` first."""
+        found = lambda areas: area_entities(self.hass, areas)  # noqa: E731
+        before = copy.deepcopy(self.config)
+        if migrate_rooms(self.config, found):
+            backup = Store(self.hass, 1, f"{DOMAIN}.backup_0_46")
+            if await backup.async_load() is None:
+                await backup.async_save(before)
+            await self.store.async_save(self.config)
+            _LOGGER.info("SB Modes: rooms' light and sensor lists converted (backup in .storage/%s.backup_0_46)", DOMAIN)
+        draft_store = Store(self.hass, 1, f"{DOMAIN}.draft")
+        draft = await draft_store.async_load()
+        if isinstance(draft, dict) and isinstance(draft.get("config"), dict) and migrate_rooms(draft["config"], found):
+            await draft_store.async_save(draft)
 
     @callback
     def start(self) -> None:
@@ -578,7 +600,7 @@ class Runtime:
             if b.name in ("hands_off", "held", "timed_off"):
                 continue                                 # (an overlay-held zone IS watched; timed_off expects hands)
             picked = resolve(self.config, self.mode, zid) or {}
-            watch[zid] = {"lights": b.entities.get("lights", []), "occupancy": b.entities.get("occupancy", []),
+            watch[zid] = {"lights": watched_lights(self.hass, b.entities.get("lights", [])), "occupancy": b.entities.get("occupancy", []),
                           "delay": release_delay(picked.get("behaviour"), picked.get("params") or {}),
                           "max": hand_max_minutes(b.zone)}
         self.keeper.watch(watch)

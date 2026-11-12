@@ -26,8 +26,8 @@ from contextlib import contextmanager
 from typing import Any
 
 from .model import (
-    ADDON_TYPES, ALL_MODES, BEHAVIOURS, DAYS, DRIVER_DOMAINS, NEEDS, TARGET_KEYS, mode_ids, parse_at, parse_when, resolve,
-    zone_addons,
+    ADDON_TYPES, ALL_MODES, BEHAVIOURS, DAYS, DRIVER_DOMAINS, NEEDS, ROOM_DOMAINS, TARGET_KEYS, apply_spec, mode_ids, parse_at,
+    parse_when, resolve, rule_entities, zone_addons,
 )
 
 UNAVAILABLE = ("unavailable", "unknown")
@@ -172,39 +172,43 @@ def _check_config(config, state_of, area_exists, zone_entities, day_set_exists) 
                 continue
             _check_choice(choice, f"{where}, {names.get(mode_id, mode_id)}", state_of, errors, warnings, ids)
         _check_addons(config, zone, i, where, ids, names, state_of, errors, warnings, day_set_exists)
-        own = zone.get("lights")
-        _here("zones", i, "lights")
-        if own is not None:
-            if not isinstance(own, list) or not own:
-                errors.append(f"{where}: lights must be a list of light entity ids (or left out to use the areas' lights).")
-                own = None
-            else:
-                for eid in own:
-                    _check_entity(eid, ["light", "switch"], f"{where}, lights", state_of, errors, warnings)
-        own_sensors = {}
-        for key, domain in (("occupancy", "binary_sensor"), ("illuminance", "sensor")):
+        specs = {}
+        for key, domains in (("lights", list(ROOM_DOMAINS)), ("occupancy", ["binary_sensor"]), ("illuminance", ["sensor"])):
             _here("zones", i, key)
-            lst = zone.get(key)
-            if lst is None:
+            spec = zone.get(key)
+            if spec is None:
                 continue
-            if not isinstance(lst, list) or not lst:
-                errors.append(f"{where}: {key} must be a list of {domain} entity ids (or left out to use the areas' sensors).")
+            driven = key == "lights"
+            if isinstance(spec, list) and spec:                  # replaces the areas' list (older form for lights / occupancy)
+                for eid in spec:
+                    _check_entity(eid, domains, f"{where}, {key}", state_of, errors, warnings, driven=driven)
+                specs[key] = spec
                 continue
-            for eid in lst:
-                _check_entity(eid, [domain], f"{where}, {key}", state_of, errors, warnings, driven=False)
-            own_sensors[key] = list(lst)
+            if key == "illuminance" or not isinstance(spec, dict) or set(spec) - {"exclude", "add"} or any(
+                    not isinstance(spec.get(k, []), list) for k in ("exclude", "add")):
+                shape = "a list of sensor entity ids" if key == "illuminance" else '{"exclude": [...], "add": [...]}'
+                errors.append(f"{where}: {key} must be {shape} (or left out to use the areas' {key}).")
+                continue
+            for eid in spec.get("add") or []:
+                _check_entity(eid, domains, f"{where}, {key}", state_of, errors, warnings, driven=driven)
+            for eid in spec.get("exclude") or []:
+                if not isinstance(eid, str) or "." not in eid:
+                    errors.append(f"{where}, {key}: {eid!r} is not an entity id.")
+            specs[key] = spec
         if areas_ok and zone_entities is not None and isinstance(zone.get("id"), str):
             found = dict(zone_entities(areas))
-            if own:
-                found["lights"] = list(own)
-            found.update(own_sensors)
+            for key, spec in specs.items():
+                found[key] = apply_spec(found.get(key) or [], spec)
             _here("zones", i)
             _check_needs(config, zone, ids, names, found, where, errors)
             _here("zones", i, "lights")
+            mine = set(found.get("lights", []))
+            for eid in sorted(e for e in rule_entities(zone) - mine if state_of(e) not in (None, "disabled")):   # gone: reported already; disabled: out of service
+                errors.append(f"{where}: {eid} is set by a rule but is not one of the room's lights — add it under Lights.")
             for light in found.get("lights", []):
                 other = claimed.get(light)
                 if other is not None and other != where:
-                    errors.append(f"{where}: {light} is also in {other} — give one of them its own `lights` list.")
+                    errors.append(f"{where}: {light} is also in {other} — a light belongs to one room; exclude it from one of them.")
                 claimed.setdefault(light, where)
     _here("zones")
     _check_unique([z.get("id") for z in zones if isinstance(z, dict)], "Room", errors)

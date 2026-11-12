@@ -35,6 +35,7 @@ STATES = {
     "light.dining_room_aux_sideboard": "unavailable",
     "light.mova_bulb": "disabled",
     "switch.kitchen_aux_cabinet": "on",
+    "light.chandelier": "on",
     "climate.bedroom_ac": "cool",
     "fan.bath_exhaust": "off",
     "sensor.bath_humidity_rate": "0.0",
@@ -159,6 +160,7 @@ def test_entity_checks():
 
 FOUND = {
     "kitchen": {"lights": ["light.kitchen_aux_sink"], "occupancy": ["binary_sensor.kitchen_occ"], "illuminance": []},
+    "kitchen_aux": {"lights": ["light.kitchen_aux_cabinet"], "occupancy": [], "illuminance": []},
     "dining_room": {"lights": ["light.chandelier"], "occupancy": [], "illuminance": []},
 }
 
@@ -187,10 +189,10 @@ def test_needs_from_areas():
 
 def test_timed_off_needs_no_sensors():
     cfg = copy.deepcopy(GOOD)                            # dining_room's area has no sensors
-    cfg["zones"][1]["overrides"] = {"*": {"behaviour": "timed_off", "params": {"lights": ["light.kitchen_aux_sink"]}}}
+    cfg["zones"][1]["overrides"] = {"*": {"behaviour": "timed_off", "params": {"lights": ["light.chandelier"]}}}
     e, _ = V.check_config(cfg, state_of, area_exists, zone_entities)
     assert e == [], e
-    assert M.resolve(cfg, "day", "dining")["params"] == {"lights": ["light.kitchen_aux_sink"], "off_after_minutes": 5}
+    assert M.resolve(cfg, "day", "dining")["params"] == {"lights": ["light.chandelier"], "off_after_minutes": 5}
 
 def test_defaults_filled_in():
     assert M.with_defaults("nightlight_then_dark", {}) == {"delay": 10}
@@ -369,10 +371,64 @@ def test_zone_lights_must_not_overlap():
     cfg = copy.deepcopy(GOOD)
     cfg["zones"][1]["areas"] = ["kitchen"]                 # same area as Kitchen → same lights
     e, _ = V.check_config(cfg, state_of, area_exists, zone_entities)
-    assert "Room Dining Room: light.kitchen_aux_sink is also in Room Kitchen — give one of them its own `lights` list." in e, e
-    cfg["zones"][1]["lights"] = ["light.kitchen_aux_cabinet"]
+    assert "Room Dining Room: light.kitchen_aux_sink is also in Room Kitchen — a light belongs to one room; exclude it from one of them." in e, e
+    cfg["zones"][1]["lights"] = {"exclude": ["light.kitchen_aux_sink"]}
     e, _ = V.check_config(cfg, state_of, area_exists, zone_entities)
     assert not [x for x in e if "also in" in x], e
+
+
+def test_rule_lights_must_be_room_lights():
+    cfg = copy.deepcopy(GOOD)                            # the chandelier is in the dining room's area, not the kitchen's
+    cfg["zones"][0]["overrides"]["overnight"]["params"]["nightlight"]["light.chandelier"] = {"state": "on"}
+    e, _ = V.check_config(cfg, state_of, area_exists, zone_entities)
+    assert "Room Kitchen: light.chandelier is set by a rule but is not one of the room's lights — add it under Lights." in e, e
+    cfg["zones"][0]["lights"] = {"add": ["light.chandelier"]}
+    cfg["zones"][1]["lights"] = {"exclude": ["light.chandelier"]}
+    e, _ = V.check_config(cfg, state_of, area_exists, zone_entities)
+    assert not [x for x in e if "chandelier" in x], e
+    cfg["zones"][0]["lights"] = {"exclude": ["light.kitchen_aux_cabinet"], "add": ["light.chandelier"]}
+    e, _ = V.check_config(cfg, state_of, area_exists, zone_entities)
+    assert "Room Kitchen: light.kitchen_aux_cabinet is set by a rule but is not one of the room's lights — add it under Lights." in e, e
+
+
+def test_room_list_shape():
+    for bad in ({"drop": []}, {"add": "light.x"}, "light.x"):
+        e, _ = edit(lambda c: c["zones"][0].__setitem__("lights", bad))
+        assert e == ['Room Kitchen: lights must be {"exclude": [...], "add": [...]} (or left out to use the areas\' lights).'], (bad, e)
+    e, _ = edit(lambda c: c["zones"][0].__setitem__("lights", {"add": ["climate.bedroom_ac"]}))
+    assert e == ["Room Kitchen, lights: climate.bedroom_ac is not a light / switch entity."], e
+    e, _ = edit(lambda c: c["zones"][0].__setitem__("occupancy", {"exclude": ["binary_sensor.kitchen_occ"], "add": ["binary_sensor.x"]}))
+    assert e == ["Room Kitchen, occupancy: binary_sensor.x does not exist."], e
+
+
+def test_apply_spec():
+    found = ["light.a", "light.b"]
+    assert M.apply_spec(found, None) == found
+    assert M.apply_spec(found, ["light.c"]) == ["light.c"]                      # the older list replaces
+    assert M.apply_spec(found, {"exclude": ["light.a"], "add": ["switch.c"]}) == ["light.b", "switch.c"]
+    assert M.apply_spec(found, {"add": ["light.a"]}) == found                  # no duplicates
+
+
+def test_migrate_rooms():
+    cfg = copy.deepcopy(GOOD)
+    k, d = cfg["zones"]
+    k["lights"] = ["light.kitchen_aux_sink"]                     # older list: the cabinet left out…
+    k["overrides"]["overnight"]["params"]["nightlight"]["switch.kitchen_aux_cabinet"] = {"state": "on"}
+    d["occupancy"] = ["binary_sensor.elsewhere"]
+    assert M.migrate_rooms(cfg, zone_entities) is True
+    assert k["lights"] == {"add": ["switch.kitchen_aux_cabinet"]}             # …but its rule sets it, so back in
+    assert d["occupancy"] == {"add": ["binary_sensor.elsewhere"]}
+    assert "lights" not in d
+    assert M.migrate_rooms(cfg, zone_entities) is False                       # once only
+    cfg["zones"][1]["lights"] = ["light.chandelier"]                           # the same as its areas: nothing to keep
+    assert M.migrate_rooms(cfg, zone_entities) is True and "lights" not in cfg["zones"][1]
+
+
+def test_rule_entities():
+    k = copy.deepcopy(GOOD["zones"][0])
+    k["overrides"]["*"] = {"behaviour": "vacancy_off", "params": {"lights": ["switch.fan", "light.x"]}}
+    k["overrides"]["day"] = {"behaviour": "occupied_vacant", "params": {"occupied": {"number.clock": {"value": 3}}, "vacant": {}}}
+    assert M.rule_entities(k) == {"light.kitchen_aux_sink", "light.kitchen_aux_cabinet", "switch.fan", "light.x"}
 
 
 def test_not_an_object():
