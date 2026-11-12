@@ -28,6 +28,21 @@
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const clone = (o) => JSON.parse(JSON.stringify(o));
 const ALL = "*";
+/** A CSS colour for a colour temperature (approximate, for swatches). */
+const kelvinCss = (k) => {
+  const t = k / 100;
+  const r = t <= 66 ? 255 : 329.7 * Math.pow(t - 60, -0.1332);
+  const g = t <= 66 ? 99.47 * Math.log(t) - 161.12 : 288.12 * Math.pow(t - 60, -0.0755);
+  const b = t >= 66 ? 255 : t <= 19 ? 0 : 138.52 * Math.log(t - 10) - 305.04;
+  const c = (v) => Math.max(0, Math.min(255, Math.round(v)));
+  return `rgb(${c(r)}, ${c(g)}, ${c(b)})`;
+};
+/** "red", "pale blue" — a word for an hs colour. */
+const hueName = ([h, s]) => {
+  const names = [[15, "red"], [45, "orange"], [70, "yellow"], [160, "green"], [200, "cyan"], [255, "blue"], [290, "purple"], [335, "pink"], [361, "red"]];
+  const n = names.find(([lim]) => h < lim)[1];
+  return s < 25 ? "white" : s < 60 ? `pale ${n}` : n;
+};
 const DEFAULT_ICONS = {
   morning: "mdi:weather-sunset-up", day: "mdi:white-balance-sunny", evening: "mdi:weather-sunset-down",
   overnight: "mdi:weather-night", night: "mdi:weather-night", away: "mdi:home-export-outline",
@@ -209,6 +224,36 @@ select, input.in { font: inherit; font-size: 14px; color: var(--primary-text-col
 .box .bh { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
 .box .bh b { flex: 1; font-weight: 500; }
 .tlabel { font-weight: 500; font-size: 14px; margin: 12px 0 2px; }
+.dtabs { display: flex; flex-wrap: wrap; gap: 2px; border-bottom: 1px solid var(--divider-color); margin: 0 0 12px; }
+.dtab { padding: 10px 14px; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--secondary-text-color); font: inherit; font-size: 14px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+.dtab.on { color: var(--primary-color); border-bottom-color: var(--primary-color); font-weight: 500; }
+.tdot { width: 6px; height: 6px; border-radius: 50%; background: var(--primary-color); }
+.pchips { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 4px; }
+.pchip { padding: 7px 14px; border-radius: 17px; border: 1px solid var(--divider-color); background: none; color: inherit; font: inherit; font-size: 13.5px; cursor: pointer; }
+.pchip.on { background: var(--primary-color); border-color: var(--primary-color); color: var(--text-primary-color, #fff); font-weight: 500; }
+.ctw { overflow-x: auto; margin: 8px 0; }
+table.ct { border-collapse: collapse; font-size: 14px; min-width: 100%; }
+table.ct th { text-align: left; font-weight: 500; font-size: 12px; color: var(--secondary-text-color); padding: 4px 10px 6px 0; white-space: nowrap; }
+table.ct td { padding: 5px 10px 5px 0; border-bottom: 1px solid color-mix(in srgb, var(--divider-color) 60%, transparent); white-space: nowrap; }
+table.ct td.n { min-width: 140px; max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+table.ct td.kind { font-size: 12px; color: var(--secondary-text-color); padding-top: 12px; font-weight: 500; }
+.lc { display: inline-flex; align-items: center; gap: 4px; min-height: 30px; padding: 0 10px; border-radius: 6px; border: 1px solid var(--divider-color); background: var(--card-background-color); color: var(--primary-text-color); font: inherit; font-size: 13px; font-weight: 500; cursor: pointer; }
+.lc .k { color: var(--secondary-text-color); font-weight: 400; }
+.lc.off { color: var(--secondary-text-color); }
+.lc.leave { color: var(--secondary-text-color); border-style: dashed; font-weight: 400; }
+.lc.imp { font-style: italic; opacity: .8; }
+.lc.fixed { cursor: default; }
+.lc.sel { outline: 2px solid var(--primary-color); outline-offset: 1px; }
+.ced { border: 1px solid var(--divider-color); border-radius: 10px; padding: 12px 14px; margin: 8px 0; max-width: 460px; display: flex; flex-direction: column; gap: 10px; background: color-mix(in srgb, var(--primary-color) 4%, var(--card-background-color)); }
+.ced-h { display: flex; align-items: baseline; gap: 8px; }
+.ced-seg { display: flex; gap: 6px; flex-wrap: wrap; }
+.ced-seg button { padding: 6px 12px; border-radius: 15px; border: 1px solid var(--divider-color); background: none; color: inherit; font: inherit; font-size: 13px; cursor: pointer; }
+.ced-seg button.on { background: var(--primary-color); border-color: var(--primary-color); color: var(--text-primary-color, #fff); }
+.ced .fl { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--secondary-text-color); }
+.ced .fl .v { color: var(--primary-text-color); font-weight: 500; }
+.ced input[type=range] { width: 100%; }
+.ced input[type=range].hue { background: linear-gradient(90deg, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00); border-radius: 6px; }
+.ced select { font: inherit; padding: 6px; }
 table.rt { width: 100%; max-width: 860px; border-collapse: collapse; font-size: 14px; table-layout: fixed; margin: 4px 0 8px; }
 table.rt th { text-align: left; font-weight: 500; font-size: 12px; color: var(--secondary-text-color); padding: 4px 6px 4px 0; }
 table.rt td { padding: 6px 6px 6px 0; vertical-align: middle; border-bottom: 1px solid color-mix(in srgb, var(--divider-color) 60%, transparent); }
@@ -569,7 +614,7 @@ export class SbModesEditor extends HTMLElement {
     dlg.querySelector("[data-det-edit]").addEventListener("click", () => {
       const [z, m] = this._det.split("|");
       this._det = null; dlg.close();
-      if (m === ALL) { sessSet("ed:rule", true); this._go("room", z); } else this._goRoomMode(z, m);
+this._goRoomMode(z, m);
     });
     dlg.showModal();
   }
@@ -862,7 +907,6 @@ export class SbModesEditor extends HTMLElement {
     const zi = this._zoneIndex(z.id);
     const zs = Object.values(this._hass.states).find((s) => s.attributes.sb_modes_zone === z.id);
     const normal = (z.overrides || {})[ALL];
-    const modeRows = this._modes().map((m) => this._roomModeRowHtml(z, m)).join("");
     const off = z.enabled === false;
     const own = this._modes().filter((m) => (z.overrides || {})[m.id]);
     return `<div class="crumb"><span class="live">${esc(zs ? zs.attributes.status || "" : "new — saved rooms show their live state here")}</span>
@@ -871,10 +915,8 @@ export class SbModesEditor extends HTMLElement {
       ${off ? `<div class="card zoffnote"><div class="sec">Switched off: SB Modes leaves ${esc(z.name || z.id)} alone in every mode — no rule, no add-ons, hand changes not tracked. Its settings below are kept for when you switch it back on.</div></div>` : ""}
       ${this._secHtml("sensors", "Presence sensors", this._saySensors(z), this._roomSensorsHtml(z))}
       ${this._secHtml("lights", "Lights", this._sayLights(z), this._roomLightsHtml(z))}
-      ${this._secHtml("rule", "Default rule", normal ? this._sayChoice(normal, z.id) : "none set — choose a behaviour",
-        this._ruleCtxHtml(z, own) + this._choiceEditorHtml({ kind: "zone", zone: z.id, mode: ALL }, normal))}
-      ${this._secHtml("bymode", "By mode", own.length ? `own rule in ${own.map((m) => `${m.name || m.id} (${this._beh(z.overrides[m.id].behaviour).label})`).join(", ")}` : "the default rule in every mode",
-        `<div class="help">Each mode uses the default rule unless it has its own. Open a mode to give it its own.</div>${modeRows}`)}
+      ${this._secHtml("do", "What the lights do", [normal ? this._beh(normal.behaviour).label : "nothing set",
+        ...own.map((m) => `${m.name || m.id}: ${this._beh(z.overrides[m.id].behaviour).label}`)].join(" · "), this._doHtml(z, own))}
       ${this._secHtml("addons", "Add-ons", (z.addons || []).length ? `${z.addons.length} · ${z.addons.map((a) => `${a.name || a.id}${a.enabled === false ? " (off)" : ""}`).join(" · ")}` : "none",
         this._addonsHtml(z))}
       ${this._secHtml("devices", "Devices", this._sayDevices(z, zs),
@@ -882,11 +924,196 @@ export class SbModesEditor extends HTMLElement {
         <div class="tools"><button class="b sm danger" data-act="del-zone">Delete room</button></div>`)}`;
   }
 
+  // ── what the lights do: mode tabs, preset chips, one table of lights × states ──
+  _doTab(z) { const t = (this._doTabs || {})[z.id]; return t && (t === ALL || this._mode(t)) ? t : ALL; }
+  _doHtml(z, own) {
+    const tab = this._doTab(z), ov = z.overrides || {}, nm = (id) => (id === ALL ? "All modes" : this._modeName(id));
+    const tabs = `<div class="dtabs" role="tablist" data-box="do">${[ALL, ...this._modes().map((m) => m.id)].map((id) =>
+      `<button role="tab" aria-selected="${id === tab}" class="dtab ${id === tab ? "on" : ""}" data-dotab="${esc(id)}">${esc(nm(id))}${
+        id !== ALL && ov[id] ? `<span class="tdot" title="Its own setting"></span>` : ""}</button>`).join("")}</div>`;
+    const owner = { kind: "zone", zone: z.id, mode: tab };
+    if (tab === ALL) return tabs + this._ruleCtxHtml(z, own) + this._ruleHtml(z, owner, ov[ALL]);
+    const allLabel = ov[ALL] ? this._beh(ov[ALL].behaviour).label : `the ${this._modeName(tab)} default`;
+    if (!ov[tab]) return `${tabs}<div class="ctx"><b>${esc(nm(tab))}</b> uses All modes (${esc(allLabel)}).
+      <button class="b sm" data-do-own="${esc(tab)}">Give ${esc(nm(tab))} its own setting</button></div>`;
+    return `${tabs}<div class="ctx"><b>${esc(nm(tab))}</b> has its own setting; the other modes are not affected.
+      <button class="b sm" data-do-same="${esc(tab)}">Use All modes instead</button></div>${this._ruleHtml(z, owner, ov[tab])}`;
+  }
+  _ruleHtml(z, owner, ch) {
+    const o = esc(JSON.stringify(owner)), cur = ch?.behaviour;
+    const chips = `<div class="pchips" role="group" aria-label="What the lights do">${Object.keys(this._schema.behaviours)
+      .filter((k) => k !== "static" || k === cur)
+      .map((k) => `<button class="pchip ${k === cur ? "on" : ""}" aria-pressed="${k === cur}" data-preset="${esc(k)}" data-owner='${o}'>${esc(this._beh(k).label)}</button>`).join("")}</div>`;
+    if (!ch) return chips + `<div class="help">Choose what the lights do.</div>`;
+    const params = this._beh(cur).params || {};
+    const scalar = Object.values(params).some((s) => !["targets", "steps", "entities"].includes(s.type));
+    return `${chips}<div class="help">${esc(this._beh(cur).help || "")}</div>
+      <div class="errs-slot" data-path='${esc(JSON.stringify(this._ownerPath(owner)))}'></div>
+      ${scalar ? `<div class="form" data-form="params" data-owner='${o}'></div>` : ""}
+      ${this._colsHtml(z, owner, ch)}`;
+  }
+  /** The columns a rule's settings make: [key, label, kind] — kind "targets" (a cell per light),
+   *  "list" (Off or Leave per light), "fixed" (shown, not editable). */
+  _cols(ch) {
+    const b = ch.behaviour;
+    if (b === "vacancy_off") return [["lights", "Empty", "list"]];
+    if (b === "timed_off") return [["lights", "After a while", "list"]];
+    if (b === "occupied_vacant") return [["occupied", "Occupied", "targets"], ["vacant", "Empty", "targets"]];
+    if (b === "presence_lux") return [["occupied", "Occupied, dark", "targets"], ["vacant", "Empty", "targets"], ["vacant_bright", "Empty, bright", "targets"]];
+    if (b === "nightlight_then_dark") return [["nightlight", "Occupied", "targets"], ["__dark", "Empty", "fixed"]];
+    if (b === "static") return [["targets", "Mode begins", "targets"]];
+    return [];
+  }
+  /** What a column sets, with the implicit defaults spelled out: presence_lux's empty Empty = the
+   *  occupied lights off; an empty Empty, bright = the same as Empty. */
+  _colTargets(ch, key) {
+    const p = ch.params || {}, own = p[key] || {};
+    if (ch.behaviour === "presence_lux" && key === "vacant" && !Object.keys(own).length)
+      return { t: Object.fromEntries(Object.keys(p.occupied || {}).map((e) => [e, { state: "off" }])), implicit: true };
+    if (ch.behaviour === "presence_lux" && key === "vacant_bright" && !Object.keys(own).length)
+      return { t: this._colTargets(ch, "vacant").t, implicit: true };
+    return { t: own, implicit: false };
+  }
+  _colsHtml(z, owner, ch) {
+    const cols = this._cols(ch);
+    if (!cols.length) return "";
+    const p = ch.params || {}, members = this._members(z, "lights") || [];
+    const used = new Set(cols.flatMap(([k, , kind]) => kind === "targets" ? Object.keys(this._colTargets(ch, k).t) : kind === "list" ? p[k] || [] : []));
+    const isLight = (e) => /^(light|switch)\./.test(e), byNm = (a, b) => byName(this._short(a, z.id), this._short(b, z.id));
+    const lights = [...new Set([...members, ...[...used].filter(isLight)])].sort(byNm);
+    const devices = [...used].filter((e) => !isLight(e)).sort(byNm), o = JSON.stringify(owner), sel = this._cellEd;
+    const cell = (eid, [k, , kind]) => {
+      if (kind === "fixed") return `<td><span class="lc off fixed" title="Every light in the room goes off once it has been empty for the delay">Off</span></td>`;
+      if (kind === "list") {
+        const on = (p[k] || []).includes(eid);
+        return `<td><button class="lc ${on ? "off" : "leave"}" data-cell-tog='${esc(JSON.stringify({ o: owner, k, e: eid }))}' title="Tap: Off ↔ Leave">${on ? "Off" : "Leave"}</button></td>`;
+      }
+      const { t, implicit } = this._colTargets(ch, k), x = t[eid];
+      const here = sel && sel.o === o && sel.k === k && sel.e === eid;
+      return `<td><button class="lc ${x ? (x.state === "off" ? "off" : "") : "leave"} ${implicit ? "imp" : ""} ${here ? "sel" : ""}"
+        data-cell-ed='${esc(JSON.stringify({ o, k, e: eid }))}' title="${implicit ? "Not set: the default shown. Tap to set." : "Tap to change"}">${this._cellText(eid, x)}</button></td>`;
+    };
+    const row = (eid) => `<tr><td class="n" title="${esc(eid)}">${esc(this._short(eid, z.id))}${eid.startsWith("switch.") ? ` <span class="mtag">switch</span>` : ""}</td>${cols.map((c) => cell(eid, c)).join("")}</tr>`;
+    const tcols = cols.filter(([, , kind]) => kind === "targets");
+    const head = `<tr><th>Light</th>${cols.map(([k, label, kind]) => `<th>${esc(label)}${kind === "targets" && !this._colTargets(ch, k).implicit ? "" : ""}</th>`).join("")}</tr>`;
+    const devRows = devices.length ? `<tr><td class="kind" colspan="${cols.length + 1}">Device settings</td></tr>${devices.map(row).join("")}` : "";
+    const ed = sel && sel.o === o ? this._cellEdHtml(z, ch, sel) : "";
+    return `<div class="ctw"><table class="ct"><thead>${head}</thead><tbody>${lights.map(row).join("")}${devRows}</tbody></table></div>
+      ${ed}
+      <div class="tools">${tcols.length ? `<div class="add" data-devadd='${esc(o)}'></div>` : ""}
+        ${tcols.map(([k, label]) => `<button class="b sm" data-col-try='${esc(JSON.stringify({ o: owner, k }))}' title="Set the room to this column now and hold it 15 min">Try “${esc(label)}”</button>`).join("")}</div>
+      <div class="help">${tcols.length ? "Tap a cell to set it: Leave (SB Modes doesn't touch it), Off, or On with a level, white or colour, and an effect. Device settings are numbers like a clock's brightness." : "Tap a cell to switch between Off and Leave."}
+        Lights come from the room's Lights section.</div>`;
+  }
+  /** "95% · 3021 K", "1% · blue · Breath", "≥ 10%", "Off", "Leave", "64". */
+  _cellText(eid, t) {
+    if (!t) return "Leave";
+    if (t.state === "off") return "Off";
+    if (t.value != null) return esc(String(t.value));
+    const sw = this._swatch(t), bits = [];
+    if (t.min_brightness_pct != null) bits.push(`≥ ${t.min_brightness_pct}%`);
+    else if (t.brightness_pct != null) bits.push(`${t.brightness_pct}%`);
+    else bits.push("On");
+    if (t.color_temp_kelvin) bits.push(`${t.color_temp_kelvin} K`);
+    if (t.hs_color) bits.push(hueName(t.hs_color));
+    if (t.effect) bits.push(t.effect);
+    return `${sw ? `<span class="swatch" style="background:${sw}"></span>` : ""}${esc(bits[0])}${bits.length > 1 ? `<span class="k"> · ${esc(bits.slice(1).join(" · "))}</span>` : ""}`;
+  }
+  _swatch(t) {
+    if (t.hs_color) return `hsl(${t.hs_color[0]}, ${Math.round(t.hs_color[1])}%, ${Math.round(100 - t.hs_color[1] / 2)}%)`;
+    if (t.color_temp_kelvin) return kelvinCss(t.color_temp_kelvin);
+    return "";
+  }
+  /** The cell editor, under the table: what one light does in one column. */
+  _cellEdHtml(z, ch, sel) {
+    const eid = sel.e, k = sel.k, col = this._cols(ch).find((c) => c[0] === k);
+    const t = this._colTargets(ch, k).t[eid], st = this._hass.states[eid], a = st?.attributes || {};
+    const dom = eid.split(".")[0], light = dom === "light", num = ["number", "input_number"].includes(dom);
+    const mode = !t ? "leave" : t.state === "off" ? "off" : t.min_brightness_pct != null ? "min" : "on";
+    const seg = (name, opts, curv) => `<div class="seg ced-seg" role="group">${opts.map(([v, l]) =>
+      `<button class="${v === curv ? "on" : ""}" aria-pressed="${v === curv}" data-ced-${name}="${v}">${l}</button>`).join("")}</div>`;
+    const cm = a.supported_color_modes || [];
+    const canK = cm.includes("color_temp"), canC = cm.some((m) => ["hs", "rgb", "rgbw", "rgbww", "xy"].includes(m));
+    const colour = t?.hs_color ? "colour" : t?.color_temp_kelvin ? "white" : "keep";
+    let body = "";
+    if (num) body = `<label class="fl">Value <input class="in" type="number" data-ced-val value="${esc(t?.value ?? "")}" min="${esc(a.min ?? "")}" max="${esc(a.max ?? "")}" step="${esc(a.step ?? "any")}" placeholder="leave"></label>`;
+    else {
+      body = seg("mode", [["leave", "Leave"], ["off", "Off"], ["on", "On"], ...(light ? [["min", "At least"]] : [])], mode);
+      if (light && (mode === "on" || mode === "min")) {
+        const pct = mode === "min" ? t.min_brightness_pct : t.brightness_pct;
+        body += `<label class="fl">Brightness <span class="v">${pct ?? "as it is"}${pct != null ? "%" : ""}</span>
+          <input type="range" min="1" max="100" data-ced-pct value="${esc(pct ?? 100)}"></label>`;
+      }
+      if (light && mode === "on" && (canK || canC || colour !== "keep")) {
+        body += `<div class="fl">Colour ${seg("col", [["keep", "Keep"], ...(canK || colour === "white" ? [["white", "White"]] : []), ...(canC || colour === "colour" ? [["colour", "Colour"]] : [])], colour)}</div>`;
+        if (colour === "white") {
+          const lo = a.min_color_temp_kelvin || 2000, hi = a.max_color_temp_kelvin || 6500;
+          body += `<label class="fl">White <span class="v">${t.color_temp_kelvin} K</span>
+            <input type="range" min="${lo}" max="${hi}" step="50" data-ced-k value="${esc(t.color_temp_kelvin)}" style="background:linear-gradient(90deg, ${kelvinCss(lo)}, ${kelvinCss(hi)})"></label>`;
+        }
+        if (colour === "colour") {
+          const [h, s2] = t.hs_color;
+          body += `<label class="fl">Hue <span class="v">${Math.round(h)}°</span><input type="range" min="0" max="360" data-ced-h value="${esc(h)}" class="hue"></label>
+            <label class="fl">Saturation <span class="v">${Math.round(s2)}%</span><input type="range" min="0" max="100" data-ced-s value="${esc(s2)}" style="background:linear-gradient(90deg, #fff, hsl(${h}, 100%, 50%))"></label>`;
+        }
+        if ((a.effect_list || []).length || t.effect)
+          body += `<label class="fl">Effect <select data-ced-fx><option value="">None</option>${[...new Set([...(a.effect_list || []), ...(t.effect ? [t.effect] : [])])]
+            .map((x) => `<option ${x === t.effect ? "selected" : ""}>${esc(x)}</option>`).join("")}</select></label>`;
+      }
+    }
+    return `<div class="ced" role="dialog" aria-label="${esc(this._short(eid, z.id))}, ${esc(col?.[1] || k)}">
+      <div class="ced-h"><b>${esc(this._short(eid, z.id))}</b><span class="help">${esc(col?.[1] || k)} · ${esc(((m) => (m === ALL ? "All modes" : this._modeName(m)))(JSON.parse(sel.o).mode))}</span>
+        <span style="flex:1"></span><button class="ic" data-ced-close aria-label="Close">×</button></div>
+      ${body}
+      <div class="tools">${st && !num ? `<button class="b sm" data-ced-copy>Copy from the light now</button>` : ""}<span class="help">Now: ${this._nowLight(eid)}</span></div></div>`;
+  }
+  /** One column's targets, made explicit first (presence_lux's implicit Empty / Empty, bright). */
+  _colRef(d, owner, key) {
+    const ch = this._choice(d, owner);
+    ch.params ||= {};
+    const cur = this._colTargets(ch, key);
+    if (cur.implicit) ch.params[key] = clone(cur.t);
+    return (ch.params[key] ||= {});
+  }
+  /** A light as it is now, as a target. */
+  _readLight(eid) {
+    const st = this._hass.states[eid];
+    if (!st || ["unavailable", "unknown"].includes(st.state)) return null;
+    if (/^(number|input_number)\./.test(eid)) return { value: Number(st.state) };
+    if (st.state !== "on") return { state: "off" };
+    const a = st.attributes, x = {};
+    if (a.brightness != null) x.brightness_pct = Math.max(1, Math.round(a.brightness * 100 / 255));
+    if (a.color_mode === "color_temp" && a.color_temp_kelvin) x.color_temp_kelvin = Math.round(a.color_temp_kelvin / 50) * 50;
+    else if (a.hs_color && !["onoff", "brightness", "color_temp", "white"].includes(a.color_mode)) x.hs_color = a.hs_color.map((v) => Math.round(v * 10) / 10);
+    if (a.effect && !["None", "none", "off", "Off"].includes(a.effect)) x.effect = a.effect;
+    return Object.keys(x).length ? x : { state: "on" };
+  }
+  /** Switching preset keeps what carries over: who is on when occupied, what happens once empty. */
+  _convertChoice(from, to) {
+    const p = from?.params || {}, b = from?.behaviour, out = this._defaults(to);
+    const on = b === "nightlight_then_dark" ? p.nightlight : b === "static" ? p.targets : p.occupied;
+    const empty = ["occupied_vacant", "presence_lux"].includes(b) ? (this._colTargets(from, "vacant").t)
+      : ["vacancy_off", "timed_off"].includes(b) ? Object.fromEntries((p.lights || []).map((e) => [e, { state: "off" }])) : null;
+    const offs = (t) => Object.keys(t || {}).filter((e) => /^(light|switch)\./.test(e) && t[e].state === "off");
+    if (["occupied_vacant", "presence_lux"].includes(to)) {
+      if (on) out.occupied = clone(on);
+      if (empty) out.vacant = clone(empty);
+      if (to === "presence_lux" && b === "presence_lux" && p.vacant_bright) out.vacant_bright = clone(p.vacant_bright);
+      for (const k of ["vacant_after_minutes", "target_lux"]) if (p[k] != null && k in (this._beh(to).params || {})) out[k] = p[k];
+    } else if (to === "nightlight_then_dark") { if (on) out.nightlight = clone(on); }
+    else if (to === "static") { if (on) out.targets = clone(on); }
+    else if (["vacancy_off", "timed_off"].includes(to)) {
+      const l = b === "vacancy_off" || b === "timed_off" ? p.lights : offs(empty);
+      if (l?.length) out.lights = [...l];
+    }
+    return { behaviour: to, params: out };
+  }
+
   /** Which modes the default rule is for, above its editor: it is easy to land here meaning one mode. */
   _ruleCtxHtml(z, own) {
     const nm = (m) => m.name || m.id, uses = this._modes().filter((m) => !own.includes(m));
-    return `<div class="ctx"><b>${esc(z.name || z.id)} default rule</b> · used in ${uses.length ? esc(uses.map(nm).join(", ")) : "no mode"}${
-      own.length ? ` — not ${esc(own.map(nm).join(", "))}, which ${own.length === 1 ? "has its" : "have their"} own (By mode below)` : ""}</div>`;
+    return `<div class="ctx"><b>All modes</b> · used in ${uses.length ? esc(uses.map(nm).join(", ")) : "no mode"}${
+      own.length ? ` — not ${esc(own.map(nm).join(", "))}, which ${own.length === 1 ? "has its" : "have their"} own (tab above)` : ""}</div>`;
   }
 
   /** A collapsible section: closed to start, then as the user left it this browser session; a
@@ -1035,17 +1262,6 @@ export class SbModesEditor extends HTMLElement {
       ${tbl([...areaLights, ...added, ...groups], "Manage") || `<div class="empty">No lights in these areas.</div>`}
       <div class="tools"><div class="add" data-mem-add="lights"></div></div>
       ${switches.length ? `<div class="tlabel">Switches in these areas</div><div class="help">Not managed unless switched on here (a plug, a fan). Device settings like LEDs aren't listed.</div>${tbl(switches, "Manage")}` : ""}`;
-  }
-
-  _roomModeRowHtml(z, m) {
-    const ov = (z.overrides || {})[m.id], key = `${z.id}|${m.id}`, open = this._open.has(key);
-    const what = ov ? this._sayChoice(ov, z.id) : (z.overrides || {})[ALL] ? "Default" : "No rule";
-    const nerr = this._errorsAt(["zones", this._zoneIndex(z.id), "overrides", m.id]).length;
-    return `<div class="mrow" data-box="mode-${esc(m.id)}"><button class="mhead" data-row="${esc(key)}" aria-expanded="${open}">
-        <span class="mn">${esc(m.name || m.id)}<small>${esc(this._modeTimes(m.id))}</small></span>
-        <span class="what ${ov ? "own" : ""}">${esc(what)}${nerr ? ` <span class="err">· ${nerr} error${nerr === 1 ? "" : "s"}</span>` : ""}</span>
-        <ha-icon icon="${open ? "mdi:chevron-down" : "mdi:chevron-right"}"></ha-icon></button>
-      ${open ? `<div class="mbody"><div class="col"><div class="ctx"><b>${esc(z.name || z.id)} in ${esc(m.name || m.id)} only</b>${ov ? " · its own rule; the other modes are not affected" : " · uses the default rule now: choose a behaviour to give it its own"}</div>${this._choiceEditorHtml({ kind: "zone", zone: z.id, mode: m.id }, ov)}</div></div>` : ""}</div>`;
   }
 
   // ── add-ons ────────────────────────────────────────────────────────────
@@ -1596,7 +1812,7 @@ export class SbModesEditor extends HTMLElement {
       const owner = JSON.parse(slot.dataset.owner), ch = this._choice(this._draft, owner), params = this._beh(ch.behaviour).params;
       const schema = [], labels = {}, helps = {};
       for (const [k, s] of Object.entries(params)) {
-        if (["targets", "steps"].includes(s.type)) continue;
+        if (["targets", "steps"].includes(s.type) || (s.type === "entities" && owner.kind === "zone")) continue;
         labels[k] = s.label || k; helps[k] = s.help;
         if (s.type === "number") schema.push({ name: k, required: !!s.required, selector: { number: { min: s.min, max: s.max, mode: "box", unit_of_measurement: s.unit } } });
         else if (s.type === "bool") schema.push({ name: k, selector: { boolean: {} } });
@@ -1625,6 +1841,13 @@ export class SbModesEditor extends HTMLElement {
       if (!mine) { this._picker(slot, { entity: { filter: { domain: ["light", "switch", "number"] } } }, "Add a light", put); return; }
       this._picker(slot, { entity: { include_entities: mine.length ? mine : ["light.none"] } }, "Add one of the room's lights", put);
       this._picker(slot, { entity: { filter: { domain: "number" } } }, "Add a device setting", put);
+    });
+    root.querySelectorAll("[data-devadd]").forEach((slot) => {
+      const owner = JSON.parse(slot.dataset.devadd);
+      this._picker(slot, { entity: { filter: { domain: ["number", "fan"] } } }, "Add a device setting", (eid) => this._edit((d) => {
+        const ch = this._choice(d, owner), key = this._cols(ch).find(([, , kind]) => kind === "targets")[0];
+        this._colRef(d, owner, key)[eid] = this._readLight(eid) || (eid.startsWith("number.") ? { value: 0 } : { state: "off" });
+      }, true));
     });
     root.querySelectorAll("[data-mem-add]").forEach((slot) => {
       const key = slot.dataset.memAdd, z = this._zoneObj(this._room), used = (z && this._members(z, key)) || [];
@@ -1853,6 +2076,77 @@ export class SbModesEditor extends HTMLElement {
     }, true)));
     q("[data-stop]", (row) => this._wireStop(row));
     q(".rule", (row) => this._wireRule(row));
+    this._wireDo(root, room);
+  }
+
+  /** What the lights do: tabs, presets, cells and the cell editor. */
+  _wireDo(root, room) {
+    const q = (sel, fn) => root.querySelectorAll(sel).forEach(fn), zone = (d) => d.zones.find((x) => x.id === room);
+    q("[data-dotab]", (b) => b.addEventListener("click", () => { (this._doTabs ||= {})[room] = b.dataset.dotab; this._cellEd = null; this._render(); }));
+    q("[data-do-own]", (b) => b.addEventListener("click", () => this._edit((d) => {
+      const z = zone(d), m = b.dataset.doOwn, base = (z.overrides || {})[ALL] || this._mode(m)?.default || { behaviour: "hands_off", params: {} };
+      (z.overrides ||= {})[m] = clone(base);
+    }, true)));
+    q("[data-do-same]", (b) => b.addEventListener("click", () => this._edit((d) => {
+      const z = zone(d); delete z.overrides[b.dataset.doSame]; this._cellEd = null;
+    }, true)));
+    q("[data-preset]", (b) => b.addEventListener("click", () => this._edit((d) => {
+      const owner = JSON.parse(b.dataset.owner), cur = this._choice(d, owner);
+      if (cur?.behaviour === b.dataset.preset) return;
+      this._setChoice(d, owner, this._convertChoice(cur, b.dataset.preset));
+      this._cellEd = null;
+    }, true)));
+    q("[data-cell-tog]", (b) => b.addEventListener("click", () => this._edit((d) => {
+      const { o, k, e } = JSON.parse(b.dataset.cellTog), ch = this._choice(d, o), l = new Set((ch.params ||= {})[k] || []);
+      if (l.has(e)) l.delete(e); else l.add(e);
+      ch.params[k] = [...l];
+    }, true)));
+    q("[data-cell-ed]", (b) => b.addEventListener("click", () => {
+      const sel = JSON.parse(b.dataset.cellEd), cur = this._cellEd;
+      this._cellEd = cur && cur.o === sel.o && cur.k === sel.k && cur.e === sel.e ? null : sel;
+      this._render();
+    }));
+    q("[data-col-try]", (b) => b.addEventListener("click", async () => {
+      const { o, k } = JSON.parse(b.dataset.colTry), ch = this._choice(this._draft, o);
+      try {
+        await this._ws({ type: "sb_modes/try", zone: o.zone, targets: this._colTargets(ch, k).t });
+        this._msg = ""; this._toast = `${this._zoneObj(o.zone)?.name || o.zone} set and held 15 min — release it on the Status page to go back`;
+      } catch (e) { this._msg = `Try it failed: ${e?.message || e}`; }
+      this._renderBar();
+    }));
+    const box = root.querySelector(".ced"), sel = this._cellEd;
+    if (!box || !sel) return;
+    const owner = JSON.parse(sel.o), eid = sel.e, isLight = eid.startsWith("light.");
+    const ced = (fn) => this._edit((d) => { const t = this._colRef(d, owner, sel.k); fn(t); }, true);
+    const live = (el, fmt) => el.addEventListener("input", () => { const v = el.closest(".fl")?.querySelector(".v"); if (v) v.textContent = fmt(el.value); });
+    box.querySelector("[data-ced-close]")?.addEventListener("click", () => { this._cellEd = null; this._render(); });
+    box.querySelectorAll("[data-ced-mode]").forEach((b) => b.addEventListener("click", () => ced((t) => {
+      const prev = t[eid] || {}, v = b.dataset.cedMode, lvl = prev.brightness_pct ?? prev.min_brightness_pct;
+      const colour = Object.fromEntries(["color_temp_kelvin", "hs_color", "effect"].filter((k) => prev[k] != null).map((k) => [k, prev[k]]));
+      if (v === "leave") delete t[eid];
+      else if (v === "off") t[eid] = { state: "off" };
+      else if (v === "min") t[eid] = { min_brightness_pct: lvl ?? 10 };
+      else t[eid] = isLight ? { brightness_pct: lvl ?? 100, ...colour } : { state: "on" };
+    })));
+    box.querySelectorAll("[data-ced-col]").forEach((b) => b.addEventListener("click", () => ced((t) => {
+      const x = t[eid], a = this._hass.states[eid]?.attributes || {};
+      delete x.color_temp_kelvin; delete x.hs_color;
+      if (b.dataset.cedCol === "white") x.color_temp_kelvin = Math.round((a.color_temp_kelvin || 2700) / 50) * 50;
+      if (b.dataset.cedCol === "colour") x.hs_color = a.hs_color && a.color_mode !== "color_temp" ? a.hs_color.map((v) => Math.round(v)) : [30, 80];
+    })));
+    const pct = box.querySelector("[data-ced-pct]");
+    if (pct) {
+      live(pct, (v) => `${v}%`);
+      pct.addEventListener("change", () => ced((t) => { const x = t[eid]; x[x.min_brightness_pct != null ? "min_brightness_pct" : "brightness_pct"] = Number(pct.value); }));
+    }
+    const kel = box.querySelector("[data-ced-k]");
+    if (kel) { live(kel, (v) => `${v} K`); kel.addEventListener("change", () => ced((t) => { t[eid].color_temp_kelvin = Number(kel.value); })); }
+    const hue = box.querySelector("[data-ced-h]"), sat = box.querySelector("[data-ced-s]");
+    if (hue) { live(hue, (v) => `${v}°`); hue.addEventListener("change", () => ced((t) => { t[eid].hs_color = [Number(hue.value), t[eid].hs_color?.[1] ?? 100]; })); }
+    if (sat) { live(sat, (v) => `${v}%`); sat.addEventListener("change", () => ced((t) => { t[eid].hs_color = [t[eid].hs_color?.[0] ?? 0, Number(sat.value)]; })); }
+    box.querySelector("[data-ced-fx]")?.addEventListener("change", (e) => ced((t) => { if (e.target.value) t[eid].effect = e.target.value; else delete t[eid].effect; }));
+    box.querySelector("[data-ced-val]")?.addEventListener("change", (e) => ced((t) => { if (e.target.value === "") delete t[eid]; else t[eid] = { value: Number(e.target.value) }; }));
+    box.querySelector("[data-ced-copy]")?.addEventListener("click", () => ced((t) => { const x = this._readLight(eid); if (x) t[eid] = x; }));
   }
 
   _goRoom(id, box = null) {
@@ -1861,8 +2155,8 @@ export class SbModesEditor extends HTMLElement {
   }
   /** A room, opened at one mode's setting (not its default rule, which sits above it). */
   _goRoomMode(z, m) {
-    this._open.add(`${z}|${m}`); sessSet("ed:bymode", true); sessSet("ed:rule", false);
-    this._scrollTo = `mode-${m}`;
+    (this._doTabs ||= {})[z] = m; sessSet("ed:do", true);
+    this._scrollTo = "do";
     this._go("room", z);
   }
   _toggle(k) { if (this._open.has(k)) this._open.delete(k); else this._open.add(k); this._render(); }
@@ -1944,16 +2238,7 @@ export class SbModesEditor extends HTMLElement {
     if (!lights.length) { this._msg = "No lights to read — add one first."; this._renderBar(); return; }
     this._edit((d) => {
       const t = this._targetsRef(d, loc);
-      for (const eid of lights) {
-        const st = this._hass.states[eid];
-        if (!st || ["unavailable", "unknown"].includes(st.state)) continue;
-        if (eid.startsWith("number.")) { t[eid] = { value: Number(st.state) }; continue; }
-        if (st.state !== "on") { t[eid] = { state: "off" }; continue; }
-        const x = {};
-        if (st.attributes.brightness != null) x.brightness_pct = Math.round(st.attributes.brightness * 100 / 255);
-        if (st.attributes.color_mode === "color_temp" && st.attributes.color_temp_kelvin) x.color_temp_kelvin = Math.round(st.attributes.color_temp_kelvin / 50) * 50;
-        t[eid] = Object.keys(x).length ? x : { state: "on" };
-      }
+      for (const eid of lights) { const x = this._readLight(eid); if (x) t[eid] = x; }
     }, true);
   }
 

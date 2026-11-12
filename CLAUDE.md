@@ -800,6 +800,20 @@ hue/sat, effect, delay; device-setting rows for numbers/selects/switches), 4 add
   switch.garden_aux; laundry excludes 4 sensors; bedroom / living room own lists dropped (= areas).
   UI test without deploying: scratchpad `uitest/shot.py` swaps the editor JS in via Playwright route
   and stubs area_entities + every write.
+- **Phase 3 (0.47.0): columns and presets — editor only.** Storage is unchanged (`overrides` → behaviour +
+  params): the per-state targets already ARE the doc's columns, so no new stored shape and no migration.
+  Room page: one "What the lights do" section (replaces Default rule + By mode) with tabs All modes /
+  each mode (dot = own setting; "Give X its own setting" copies All modes, "Use All modes instead"
+  deletes it), preset chips (static hidden unless in use; `_convertChoice` carries occupied / empty /
+  light lists across presets), and one table: managed lights × the preset's columns (`_cols`:
+  occupied_vacant Occupied/Empty; presence_lux Occupied dark/Empty/Empty bright — an empty Empty shows
+  as the implicit "occupied lights off", an empty Empty bright as "same as Empty", italic, made explicit
+  on first edit by `_colRef`; vacancy_off/timed_off a list column Off↔Leave; nightlight Occupied + fixed
+  Empty Off), "Device settings" rows for numbers/fans, a cell editor (Leave/Off/On/At least, brightness,
+  Keep/White K/Colour hue+sat per `supported_color_modes`, effect from `effect_list`, Copy from the light
+  now via `_readLight`, which also feeds "Use the lights as they are now" and now keeps hs_color/effect),
+  Try per column. Mode pages (mode defaults) keep the old editor. Not done: per-cell delays (engine has
+  one delay per rule) and the Mode starts column (phase 4, with add-ons).
 - Decided 2026-11-12: room timing stays **per mode** (cells may override); simple light-only
   mode-begins add-ons **migrate into the Mode starts column**; **`static` is dropped** (migrates to a
   Mode-starts-only preset); 0.46.1 ships **with phase 2** (one restart). Still open: add-ons using
