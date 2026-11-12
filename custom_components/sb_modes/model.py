@@ -30,6 +30,10 @@ A zone's own `lights` / `occupancy` adjust what its areas hold: {"exclude": [...
 (zones.apply_spec). Every light or switch its own rules set must be one of its lights (validation);
 `migrate_rooms` converts the older plain lists and adds rule lights from elsewhere.
 
+A zone may set `mode_starts`: {mode id: targets} — set ONCE when that mode begins (a real mode
+change, never a restart or a reload), whatever rule the mode runs: the editor's Mode starts column.
+Simple light-only "mode begins" add-ons became this in 0.48.0 (`migrate_rooms`, table format 2).
+
 A mode exists only because it has a default. A zone without an override for a mode
 inherits that mode's default, so every (mode, zone) pair resolves to exactly one
 behaviour and its parameters.
@@ -435,8 +439,11 @@ def apply_spec(found: list[str], spec) -> list[str]:
 
 
 def rule_entities(zone: dict) -> set[str]:
-    """The lights and switches the zone's own rules set, in any mode."""
+    """The lights and switches the zone's own rules (and its Mode starts) set, in any mode."""
     out: set[str] = set()
+    for targets in (zone.get("mode_starts") or {}).values():
+        if isinstance(targets, dict):
+            out |= set(targets)
     for choice in (zone.get("overrides") or {}).values():
         if not isinstance(choice, dict):
             continue
@@ -460,11 +467,54 @@ def _spec(found: list[str], spec) -> dict:
     return {"exclude": [], "add": []}
 
 
+TABLE_FORMAT = 2      # 2: simple mode-begins add-ons moved to `mode_starts` (0.48.0)
+
+
+def _simple_mode_begins(a: dict) -> dict | None:
+    """A lights add-on that only sets lights at once when modes begin: {mode: targets}, else None."""
+    t, steps = a.get("trigger") or {}, a.get("steps") or []
+    if a.get("type") != "lights" or a.get("enabled") is False or set(t) != {"mode_begins"} or a.get("when"):
+        return None
+    if len(steps) != 1 or not isinstance(steps[0], dict) or set(steps[0]) - {"after_minutes", "targets"}:
+        return None
+    if steps[0].get("after_minutes") or not isinstance(steps[0].get("targets"), dict) or not steps[0]["targets"]:
+        return None
+    return {m: steps[0]["targets"] for m in t["mode_begins"] if isinstance(m, str)}
+
+
+def _move_mode_begins(zone: dict) -> bool:
+    """Simple mode-begins add-ons → the zone's `mode_starts` (one that would clash with another
+    for the same mode and light stays an add-on)."""
+    moved = False
+    starts = zone.setdefault("mode_starts", {})
+    for a in list(zone.get("addons") or []):
+        if not isinstance(a, dict) or (per := _simple_mode_begins(a)) is None:
+            continue
+        if any(e in starts.get(m, {}) and starts[m][e] != t for m, tg in per.items() for e, t in tg.items()):
+            continue
+        for m, tg in per.items():
+            starts.setdefault(m, {}).update(tg)
+        zone["addons"].remove(a)
+        moved = True
+    if not zone.get("addons"):
+        zone.pop("addons", None)
+    if not starts:
+        zone.pop("mode_starts")
+    return moved
+
+
 def migrate_rooms(config: dict, area_entities) -> bool:
     """Bring each zone's `lights` / `occupancy` to {"exclude", "add"} (in place), adding any light
-    its rules set that is not already one of its lights. `area_entities(areas)` → {"lights",
-    "occupancy", …}. True if anything changed."""
+    its rules set that is not already one of its lights; once (table format < 2), move simple
+    mode-begins add-ons to `mode_starts`. `area_entities(areas)` → {"lights", "occupancy", …}.
+    True if anything changed."""
     changed = False
+    if (config.get("format") or 1) < TABLE_FORMAT:
+        for zone in config.get("zones") or []:
+            if isinstance(zone, dict) and isinstance(zone.get("addons"), list):
+                _move_mode_begins(zone)
+        config["format"] = TABLE_FORMAT
+        changed = True
     for zone in config.get("zones") or []:
         if not isinstance(zone, dict) or not isinstance(zone.get("areas"), list):
             continue

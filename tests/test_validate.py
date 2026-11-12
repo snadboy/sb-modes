@@ -424,6 +424,40 @@ def test_migrate_rooms():
     assert M.migrate_rooms(cfg, zone_entities) is True and "lights" not in cfg["zones"][1]
 
 
+def test_mode_begins_addons_move_to_mode_starts():
+    cfg = copy.deepcopy(GOOD)
+    k = cfg["zones"][0]
+    step = lambda t, **kw: [{"after_minutes": 0, "targets": t, **kw}]  # noqa: E731
+    k["addons"] = [
+        {"id": "a", "type": "lights", "trigger": {"mode_begins": ["day"]}, "steps": step({"light.kitchen_aux_sink": {"brightness_pct": 70}})},
+        {"id": "b", "type": "lights", "trigger": {"mode_begins": ["day", "overnight"]}, "steps": step({"light.kitchen_aux_cabinet": {"state": "on"}})},
+        {"id": "clash", "type": "lights", "trigger": {"mode_begins": ["day"]}, "steps": step({"light.kitchen_aux_sink": {"state": "off"}})},
+        {"id": "later", "type": "lights", "trigger": {"mode_begins": ["day"]}, "steps": [{"after_minutes": 5, "targets": {"light.x": {}}}]},
+        {"id": "when", "type": "lights", "trigger": {"mode_begins": ["day"]}, "when": {"days": ["sat"]}, "steps": step({"light.x": {}})},
+        {"id": "off", "type": "lights", "enabled": False, "trigger": {"mode_begins": ["day"]}, "steps": step({"light.x": {}})},
+        {"id": "at", "type": "lights", "trigger": {"at": "07:00"}, "steps": step({"light.x": {}})},
+    ]
+    assert M.migrate_rooms(cfg, zone_entities) is True and cfg["format"] == 2
+    assert k["mode_starts"] == {"day": {"light.kitchen_aux_sink": {"brightness_pct": 70}, "light.kitchen_aux_cabinet": {"state": "on"}},
+                                "overnight": {"light.kitchen_aux_cabinet": {"state": "on"}}}
+    assert [a["id"] for a in k["addons"]] == ["clash", "later", "when", "off", "at"]
+    k["addons"].append({"id": "new", "type": "lights", "trigger": {"mode_begins": ["day"]}, "steps": step({"light.x": {}})})
+    assert M.migrate_rooms(cfg, zone_entities) is False and k["addons"][-1]["id"] == "new"     # once only
+
+
+def test_mode_starts_checked():
+    e, _ = edit(lambda c: c["zones"][0].__setitem__("mode_starts", {"day": {"light.kitchen_aux_sink": {"brightness_pct": 40}}}))
+    assert e == [], e
+    e, _ = edit(lambda c: c["zones"][0].__setitem__("mode_starts", {"party": {}}))
+    assert e == ["Room Kitchen: sets lights when mode “party” begins, which is not defined."], e
+    e, _ = edit(lambda c: c["zones"][0].__setitem__("mode_starts", {"day": {"light.kitchen_aux_sink": {"brightness_pct": 140}}}))
+    assert len(e) == 1 and e[0].startswith("Room Kitchen, when Day begins"), e
+    cfg = copy.deepcopy(GOOD)
+    cfg["zones"][0]["mode_starts"] = {"day": {"light.chandelier": {"state": "on"}}}
+    e, _ = V.check_config(cfg, state_of, area_exists, zone_entities)
+    assert "Room Kitchen: light.chandelier is set by a rule but is not one of the room's lights — add it under Lights." in e, e
+
+
 def test_rule_entities():
     k = copy.deepcopy(GOOD["zones"][0])
     k["overrides"]["*"] = {"behaviour": "vacancy_off", "params": {"lights": ["switch.fan", "light.x"]}}

@@ -11,7 +11,7 @@
  *
  * Rows use the shared SB row style (window.SBKit, from the SB UI Kit integration).
  */
-const VERSION = "0.47.0";
+const VERSION = "0.48.0";
 const CARD = "sb-modes-card";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -862,7 +862,8 @@ class SbModesCard extends HTMLElement {
     const pick = (a.by_mode || {})[viewed] || { behaviour: z.state, params: a.params, source: a.source };
     const beh = pick.behaviour, off = pick.source === "disabled";
     const begins = (a.addons || []).filter((x) => x.type === "lights" && x.enabled !== false && (x.trigger?.mode_begins || []).includes(viewed));
-    const what = off ? "Off — SB Modes leaves this room alone" : this._describe(beh, pick.params) + begins.map((x) => ` · when ${modeName} begins: ${x.name}`).join("");
+    const what = off ? "Off — SB Modes leaves this room alone" : this._describe(beh, pick.params) + begins.map((x) => ` · when ${modeName} begins: ${x.name}`).join("")
+      + ((a.mode_starts || {})[viewed] ? ` · when ${modeName} begins: ${this._targets(a.mode_starts[viewed])}` : "");
     const held = !previewing && String(a.status || "").startsWith("held");
     const occ = a.occupancy_state === "occupied" ? `Occupied since ${hhmm(a.occupancy_since)}`
       : a.occupancy_state === "vacant" ? `Vacant since ${hhmm(a.occupancy_since)}`
@@ -1013,7 +1014,8 @@ class SbModesCard extends HTMLElement {
     const beh = pick.behaviour;
     const begins = (a.addons || []).filter((x) => x.type === "lights" && x.enabled !== false && (x.trigger?.mode_begins || []).includes(viewed));
     const off = pick.source === "disabled";
-    const what = off ? "Off — SB Modes leaves this room alone" : this._describe(beh, pick.params) + begins.map((x) => ` · when ${modeName} begins: ${x.name}`).join("");
+    const what = off ? "Off — SB Modes leaves this room alone" : this._describe(beh, pick.params) + begins.map((x) => ` · when ${modeName} begins: ${x.name}`).join("")
+      + ((a.mode_starts || {})[viewed] ? ` · when ${modeName} begins: ${this._targets(a.mode_starts[viewed])}` : "");
     const held = !previewing && String(a.status || "").startsWith("held");
     // live: "Vacant since 12:12 PM · lights off" — occupancy first, then what the behaviour is doing
     const occ = a.occupancy_state === "occupied" ? `Occupied since ${hhmm(a.occupancy_since)}`

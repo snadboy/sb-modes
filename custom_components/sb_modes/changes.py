@@ -140,9 +140,13 @@ def _zone_changes(a: dict, b: dict, name_of, mode_name, day_name=lambda d: d) ->
         out.append(f"{z} · hand changes: {_cap(a.get('hand_max_minutes'))} → {_cap(b.get('hand_max_minutes'))}")
     if (a.get("areas") or []) != (b.get("areas") or []):
         out.append(f"{z} · areas: {', '.join(a.get('areas') or []) or NONE} → {', '.join(b.get('areas') or []) or NONE}")
-    for key, label in (("lights", "own lights"), ("occupancy", "own occupancy sensors"), ("illuminance", "own light sensors")):
+    for key, label in (("lights", "lights"), ("occupancy", "presence sensors"), ("illuminance", "own light sensors")):
         if a.get(key) != b.get(key):
-            out.append(f"{z} · {label}: {_names(a.get(key), name_of)} → {_names(b.get(key), name_of)}")
+            out.append(f"{z} · {label}: {_spec(a.get(key), name_of)} → {_spec(b.get(key), name_of)}")
+    am, bm = a.get("mode_starts") or {}, b.get("mode_starts") or {}
+    for mid in _keys(am, bm):
+        if am.get(mid) != bm.get(mid):
+            out.append(f"{z} · when {mode_name(mid)} begins: {_targets(am.get(mid), name_of)} → {_targets(bm.get(mid), name_of)}")
     ao, bo = a.get("overrides") or {}, b.get("overrides") or {}
     for mid in _keys(ao, bo):
         where = f"{z} · {'All modes' if mid == ALL_MODES else mode_name(mid)}"
@@ -257,6 +261,15 @@ def _compact(v: Any, name_of) -> str:
     if isinstance(v, (dict, list)):
         return json.dumps(v, ensure_ascii=False)
     return str(v)
+
+
+def _spec(v: Any, name_of) -> str:
+    """A room's lights / sensors: "the areas'", "the areas' − X + Y", or an older plain list."""
+    if isinstance(v, dict):
+        bits = [f"− {_names(v.get('exclude'), name_of)}" if v.get("exclude") else "",
+                f"+ {_names(v.get('add'), name_of)}" if v.get("add") else ""]
+        return " ".join(["the areas'", *filter(None, bits)])
+    return _names(v, name_of) if v else "the areas'"
 
 
 def _names(v: Any, name_of) -> str:

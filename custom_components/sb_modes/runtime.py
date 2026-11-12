@@ -479,6 +479,11 @@ class Runtime:
         for lst in list(self._lights_addons.values()):  # add-ons triggered by a mode beginning / ending
             for a in lst:
                 a.mode_changed(old, mode_id)
+        if self.ready:
+            for zone in self.zones():                    # each room's Mode starts column
+                targets = (zone.get("mode_starts") or {}).get(mode_id)
+                if targets and zone.get("enabled") is not False:
+                    self.apply(targets, f"{zone['id']}: {self.mode_name(mode_id)} begins", zone["id"])
         self.notify()
         return True
 

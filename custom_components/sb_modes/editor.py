@@ -36,7 +36,7 @@ from .const import DOMAIN
 from datetime import timedelta
 
 from .model import (
-    ALL_MODES, BEHAVIOUR_INFO, BEHAVIOURS, DAYS, NEEDS, day_type_of, migrate_rooms, occurrences, rule_day_sets, scheduled_mode,
+    ALL_MODES, BEHAVIOUR_INFO, BEHAVIOURS, DAYS, NEEDS, TABLE_FORMAT, day_type_of, migrate_rooms, occurrences, rule_day_sets, scheduled_mode,
 )
 from .runtime import Runtime, state_lookup
 from .validate import Issues, _check_param
@@ -83,6 +83,9 @@ async def async_save_table(hass: HomeAssistant, rt: Runtime, config: dict, user:
                            note: str | None = None, base_version: int | None = None, force: bool = False) -> dict:
     """Validate, save and version a table, then reload SB Modes. Everything that saves the table
     comes through here: the editor, revert and the sb_modes.save_config action."""
+    given = config
+    if isinstance(config, dict) and "format" not in config:
+        config = {**config, "format": TABLE_FORMAT}    # saved now = current; migrations are for older tables
     errors, warnings = rt.validate(config)
     if errors:
         raise TableError("Not saved: " + " ".join(errors))
@@ -105,7 +108,7 @@ async def async_save_table(hass: HomeAssistant, rt: Runtime, config: dict, user:
     rt.log("table", None, f"Table saved (version {version}{', ' + note if note else ''}): "
            f"{len(lines)} change{'' if len(lines) == 1 else 's'}" + (f" by {user}" if user else ""))
     draft = await draft_store.async_load()
-    if draft and draft.get("config") == config:
+    if draft and draft.get("config") in (config, given):
         await draft_store.async_save({})              # saved → no draft (an empty one reads as none)
     hass.config_entries.async_schedule_reload(rt.entry.entry_id)
     return {"version": version, "changes": lines, "warnings": list(saved_warnings)}
@@ -205,7 +208,10 @@ async def ws_draft_set(hass, connection, msg) -> None:
     if not (rt := _need_rt(hass, connection, msg)):
         return
     store = _stores(hass)[1]
-    if msg["config"] == rt.config:
+    cfg = msg["config"]
+    if isinstance(cfg, dict) and "format" not in cfg and "format" in rt.config:
+        cfg = {**cfg, "format": rt.config["format"]}           # an editor from before the format key
+    if cfg == rt.config:
         # nothing changed (a form reporting its first value on load, or an edit undone): keep no
         # draft — a stored copy of the table goes stale when it is saved elsewhere, and saving
         # that copy later would undo the newer table (2026-10-21)

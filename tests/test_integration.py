@@ -1722,7 +1722,7 @@ async def test_editor_draft_same_as_the_table_is_not_kept(hass, kitchen, hass_ws
     t["modes"][0]["name"] = "Daytime"
     await ws(type="sb_modes/draft/set", config=t)
     r = await ws(type="sb_modes/draft/set", config=_table())          # the edit undone (or a form's first value)
-    assert r["result"]["same"] is True and r["result"]["changes"] == []
+    assert r.get("result", {}).get("same") is True and r["result"]["changes"] == [], r
     assert (await ws(type="sb_modes/draft/get"))["result"]["draft"] is None
 
 
@@ -2408,3 +2408,33 @@ async def test_a_switch_and_its_light_twin_count_once(hass, kitchen, freezer) ->
     hass.states.async_set(tw.entity_id, "on", context=Context(user_id="app"))
     await hass.async_block_till_done()
     assert [a.data["kind"] for a in acts] == ["hand"], [a.data for a in acts]
+
+
+# ── rooms redesign, phase 4: Mode starts (0.48.0) ───────────────────────────
+
+async def test_mode_starts_on_a_real_mode_change_only(hass, kitchen, lights) -> None:
+    await _setup(hass)
+    t = _table()
+    t["zones"][0]["mode_starts"] = {"evening": {CEILING: {"brightness_pct": 30}}}
+    await _save(hass, t)
+    await _mode(hass, "evening")
+    assert {"entity_id": CEILING, "brightness_pct": 30} in [c.data for c in lights["on"]]
+    n = len(lights["on"])
+    await hass.config_entries.async_reload(hass.config_entries.async_entries(DOMAIN)[0].entry_id)
+    await hass.async_block_till_done()
+    assert [c.data for c in lights["on"][n:] if c.data.get("entity_id") == CEILING] == []      # a reload is not a mode change
+    await _mode(hass, "day")
+    assert [c.data for c in lights["on"][n:] if c.data.get("entity_id") == CEILING] == []
+
+
+async def test_saved_tables_keep_simple_addons(hass, kitchen) -> None:
+    """A table saved now is current: a mode-begins add-on made on purpose stays an add-on."""
+    await _setup(hass)
+    t = _table()
+    t["zones"][0]["addons"] = [{"id": "a", "name": "A", "type": "lights", "trigger": {"mode_begins": ["day"]},
+                                "steps": [{"after_minutes": 0, "targets": {CEILING: {"state": "on"}}}]}]
+    await _save(hass, t)
+    await hass.config_entries.async_reload(hass.config_entries.async_entries(DOMAIN)[0].entry_id)
+    await hass.async_block_till_done()
+    rt = hass.config_entries.async_entries(DOMAIN)[0].runtime_data
+    assert rt.config["format"] == 2 and rt.config["zones"][0]["addons"][0]["id"] == "a" and "mode_starts" not in rt.config["zones"][0]

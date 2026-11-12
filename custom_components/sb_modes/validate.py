@@ -172,6 +172,19 @@ def _check_config(config, state_of, area_exists, zone_entities, day_set_exists) 
                 continue
             _check_choice(choice, f"{where}, {names.get(mode_id, mode_id)}", state_of, errors, warnings, ids)
         _check_addons(config, zone, i, where, ids, names, state_of, errors, warnings, day_set_exists)
+        starts = zone.get("mode_starts")
+        if starts is not None:
+            _here("zones", i, "mode_starts")
+            if not isinstance(starts, dict):
+                errors.append(f"{where}: mode_starts must map a mode id to the lights to set when it begins.")
+            else:
+                for mode_id, targets in starts.items():
+                    _here("zones", i, "mode_starts", mode_id)
+                    if mode_id not in ids:
+                        errors.append(f"{where}: sets lights when mode “{mode_id}” begins, which is not defined.")
+                        continue
+                    _check_param(targets, {"type": "targets"}, f"{where}, when {names.get(mode_id, mode_id)} begins",
+                                 state_of, errors, warnings)
         specs = {}
         for key, domains in (("lights", list(ROOM_DOMAINS)), ("occupancy", ["binary_sensor"]), ("illuminance", ["sensor"])):
             _here("zones", i, key)

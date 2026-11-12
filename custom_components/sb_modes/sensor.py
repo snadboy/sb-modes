@@ -112,6 +112,7 @@ class ZoneSensor(ModesEntity, SensorEntity):
             "by_mode": self._rt.zone_by_mode(self._zone_id),
             "overlay": st.get("overlay"),
             "addons": zone_addons(zone),
+            "mode_starts": zone.get("mode_starts") or {},
             "addon_status": self._rt.addon_status(self._zone_id),
             **{k: v for k, v in (st.get("entities") or {}).items()},
             "dimmable": self._rt.zone_dimmable(self._zone_id),

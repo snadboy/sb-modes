@@ -28,6 +28,7 @@
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const clone = (o) => JSON.parse(JSON.stringify(o));
 const ALL = "*";
+const STARTS = "__starts";     // the Mode starts column: a room's `mode_starts` for the tab's mode
 /** A CSS colour for a colour temperature (approximate, for swatches). */
 const kelvinCss = (k) => {
   const t = k / 100;
@@ -930,12 +931,13 @@ this._goRoomMode(z, m);
     const tab = this._doTab(z), ov = z.overrides || {}, nm = (id) => (id === ALL ? "All modes" : this._modeName(id));
     const tabs = `<div class="dtabs" role="tablist" data-box="do">${[ALL, ...this._modes().map((m) => m.id)].map((id) =>
       `<button role="tab" aria-selected="${id === tab}" class="dtab ${id === tab ? "on" : ""}" data-dotab="${esc(id)}">${esc(nm(id))}${
-        id !== ALL && ov[id] ? `<span class="tdot" title="Its own setting"></span>` : ""}</button>`).join("")}</div>`;
+        id !== ALL && (ov[id] || (z.mode_starts || {})[id]) ? `<span class="tdot" title="${ov[id] ? "Its own setting" : "Sets lights when it begins"}"></span>` : ""}</button>`).join("")}</div>`;
     const owner = { kind: "zone", zone: z.id, mode: tab };
-    if (tab === ALL) return tabs + this._ruleCtxHtml(z, own) + this._ruleHtml(z, owner, ov[ALL]);
+    if (tab === ALL) return tabs + this._ruleCtxHtml(z, own) + this._ruleHtml(z, owner, ov[ALL])
+      + `<div class="help">What to set when a mode begins is in each mode's tab.</div>`;
     const allLabel = ov[ALL] ? this._beh(ov[ALL].behaviour).label : `the ${this._modeName(tab)} default`;
     if (!ov[tab]) return `${tabs}<div class="ctx"><b>${esc(nm(tab))}</b> uses All modes (${esc(allLabel)}).
-      <button class="b sm" data-do-own="${esc(tab)}">Give ${esc(nm(tab))} its own setting</button></div>`;
+      <button class="b sm" data-do-own="${esc(tab)}">Give ${esc(nm(tab))} its own setting</button></div>${this._colsHtml(z, owner, null)}`;
     return `${tabs}<div class="ctx"><b>${esc(nm(tab))}</b> has its own setting; the other modes are not affected.
       <button class="b sm" data-do-same="${esc(tab)}">Use All modes instead</button></div>${this._ruleHtml(z, owner, ov[tab])}`;
   }
@@ -954,7 +956,11 @@ this._goRoomMode(z, m);
   }
   /** The columns a rule's settings make: [key, label, kind] — kind "targets" (a cell per light),
    *  "list" (Off or Leave per light), "fixed" (shown, not editable). */
-  _cols(ch) {
+  _cols(ch, owner = null) {
+    const starts = owner?.kind === "zone" && owner.mode !== ALL ? [[STARTS, `${this._modeName(owner.mode)} begins`, "targets"]] : [];
+    return [...starts, ...(ch ? this._ruleCols(ch) : [])];
+  }
+  _ruleCols(ch) {
     const b = ch.behaviour;
     if (b === "vacancy_off") return [["lights", "Empty", "list"]];
     if (b === "timed_off") return [["lights", "After a while", "list"]];
@@ -966,7 +972,8 @@ this._goRoomMode(z, m);
   }
   /** What a column sets, with the implicit defaults spelled out: presence_lux's empty Empty = the
    *  occupied lights off; an empty Empty, bright = the same as Empty. */
-  _colTargets(ch, key) {
+  _colTargets(ch, key, owner = null) {
+    if (key === STARTS) return { t: (this._zoneObj(owner.zone)?.mode_starts || {})[owner.mode] || {}, implicit: false };
     const p = ch.params || {}, own = p[key] || {};
     if (ch.behaviour === "presence_lux" && key === "vacant" && !Object.keys(own).length)
       return { t: Object.fromEntries(Object.keys(p.occupied || {}).map((e) => [e, { state: "off" }])), implicit: true };
@@ -975,10 +982,10 @@ this._goRoomMode(z, m);
     return { t: own, implicit: false };
   }
   _colsHtml(z, owner, ch) {
-    const cols = this._cols(ch);
+    const cols = this._cols(ch, owner);
     if (!cols.length) return "";
-    const p = ch.params || {}, members = this._members(z, "lights") || [];
-    const used = new Set(cols.flatMap(([k, , kind]) => kind === "targets" ? Object.keys(this._colTargets(ch, k).t) : kind === "list" ? p[k] || [] : []));
+    const p = ch?.params || {}, members = this._members(z, "lights") || [];
+    const used = new Set(cols.flatMap(([k, , kind]) => kind === "targets" ? Object.keys(this._colTargets(ch, k, owner).t) : kind === "list" ? p[k] || [] : []));
     const isLight = (e) => /^(light|switch)\./.test(e), byNm = (a, b) => byName(this._short(a, z.id), this._short(b, z.id));
     const lights = [...new Set([...members, ...[...used].filter(isLight)])].sort(byNm);
     const devices = [...used].filter((e) => !isLight(e)).sort(byNm), o = JSON.stringify(owner), sel = this._cellEd;
@@ -988,20 +995,20 @@ this._goRoomMode(z, m);
         const on = (p[k] || []).includes(eid);
         return `<td><button class="lc ${on ? "off" : "leave"}" data-cell-tog='${esc(JSON.stringify({ o: owner, k, e: eid }))}' title="Tap: Off ↔ Leave">${on ? "Off" : "Leave"}</button></td>`;
       }
-      const { t, implicit } = this._colTargets(ch, k), x = t[eid];
+      const { t, implicit } = this._colTargets(ch, k, owner), x = t[eid];
       const here = sel && sel.o === o && sel.k === k && sel.e === eid;
       return `<td><button class="lc ${x ? (x.state === "off" ? "off" : "") : "leave"} ${implicit ? "imp" : ""} ${here ? "sel" : ""}"
         data-cell-ed='${esc(JSON.stringify({ o, k, e: eid }))}' title="${implicit ? "Not set: the default shown. Tap to set." : "Tap to change"}">${this._cellText(eid, x)}</button></td>`;
     };
     const row = (eid) => `<tr><td class="n" title="${esc(eid)}">${esc(this._short(eid, z.id))}${eid.startsWith("switch.") ? ` <span class="mtag">switch</span>` : ""}</td>${cols.map((c) => cell(eid, c)).join("")}</tr>`;
     const tcols = cols.filter(([, , kind]) => kind === "targets");
-    const head = `<tr><th>Light</th>${cols.map(([k, label, kind]) => `<th>${esc(label)}${kind === "targets" && !this._colTargets(ch, k).implicit ? "" : ""}</th>`).join("")}</tr>`;
+    const head = `<tr><th>Light</th>${cols.map(([k, label]) => `<th${k === STARTS ? ' title="Set once when the mode begins — not after a restart"' : ""}>${esc(label)}</th>`).join("")}</tr>`;
     const devRows = devices.length ? `<tr><td class="kind" colspan="${cols.length + 1}">Device settings</td></tr>${devices.map(row).join("")}` : "";
     const ed = sel && sel.o === o ? this._cellEdHtml(z, ch, sel) : "";
     return `<div class="ctw"><table class="ct"><thead>${head}</thead><tbody>${lights.map(row).join("")}${devRows}</tbody></table></div>
       ${ed}
       <div class="tools">${tcols.length ? `<div class="add" data-devadd='${esc(o)}'></div>` : ""}
-        ${tcols.map(([k, label]) => `<button class="b sm" data-col-try='${esc(JSON.stringify({ o: owner, k }))}' title="Set the room to this column now and hold it 15 min">Try “${esc(label)}”</button>`).join("")}</div>
+        ${tcols.filter(([k]) => k !== STARTS).map(([k, label]) => `<button class="b sm" data-col-try='${esc(JSON.stringify({ o: owner, k }))}' title="Set the room to this column now and hold it 15 min">Try “${esc(label)}”</button>`).join("")}</div>
       <div class="help">${tcols.length ? "Tap a cell to set it: Leave (SB Modes doesn't touch it), Off, or On with a level, white or colour, and an effect. Device settings are numbers like a clock's brightness." : "Tap a cell to switch between Off and Leave."}
         Lights come from the room's Lights section.</div>`;
   }
@@ -1026,8 +1033,8 @@ this._goRoomMode(z, m);
   }
   /** The cell editor, under the table: what one light does in one column. */
   _cellEdHtml(z, ch, sel) {
-    const eid = sel.e, k = sel.k, col = this._cols(ch).find((c) => c[0] === k);
-    const t = this._colTargets(ch, k).t[eid], st = this._hass.states[eid], a = st?.attributes || {};
+    const owner = JSON.parse(sel.o), eid = sel.e, k = sel.k, col = this._cols(ch, owner).find((c) => c[0] === k);
+    const t = this._colTargets(ch, k, owner).t[eid], st = this._hass.states[eid], a = st?.attributes || {};
     const dom = eid.split(".")[0], light = dom === "light", num = ["number", "input_number"].includes(dom);
     const mode = !t ? "leave" : t.state === "off" ? "off" : t.min_brightness_pct != null ? "min" : "on";
     const seg = (name, opts, curv) => `<div class="seg ced-seg" role="group">${opts.map(([v, l]) =>
@@ -1062,13 +1069,14 @@ this._goRoomMode(z, m);
       }
     }
     return `<div class="ced" role="dialog" aria-label="${esc(this._short(eid, z.id))}, ${esc(col?.[1] || k)}">
-      <div class="ced-h"><b>${esc(this._short(eid, z.id))}</b><span class="help">${esc(col?.[1] || k)} · ${esc(((m) => (m === ALL ? "All modes" : this._modeName(m)))(JSON.parse(sel.o).mode))}</span>
+      <div class="ced-h"><b>${esc(this._short(eid, z.id))}</b><span class="help">${esc(col?.[1] || k)}${k === STARTS ? "" : ` · ${esc(owner.mode === ALL ? "All modes" : this._modeName(owner.mode))}`}</span>
         <span style="flex:1"></span><button class="ic" data-ced-close aria-label="Close">×</button></div>
       ${body}
       <div class="tools">${st && !num ? `<button class="b sm" data-ced-copy>Copy from the light now</button>` : ""}<span class="help">Now: ${this._nowLight(eid)}</span></div></div>`;
   }
   /** One column's targets, made explicit first (presence_lux's implicit Empty / Empty, bright). */
   _colRef(d, owner, key) {
+    if (key === STARTS) { const z = d.zones.find((x) => x.id === owner.zone); return ((z.mode_starts ||= {})[owner.mode] ||= {}); }
     const ch = this._choice(d, owner);
     ch.params ||= {};
     const cur = this._colTargets(ch, key);
@@ -1255,7 +1263,9 @@ this._goRoomMode(z, m);
     const groups = a.groups.filter((e) => !used.includes(e)).map((e) => row(e, false, { fixed: true, muted: true, tag: "light group", sub: "Not offered: a group repeats its members" }));
     const added = used.filter((e) => !a.lights.includes(e) && !a.switches.includes(e))
       .map((e) => row(e, true, { rm: true, tag: a.groups.includes(e) || this._hass.states[e]?.attributes?.entity_id ? "light group" : e.startsWith("switch.") ? this._twinTag(e) : "added" }));
-    const switches = a.switches.map((e) => row(e, used.includes(e), { tag: "switch" }));
+    const usedBy = (e) => (z.addons || []).find((x) => x.type === "exhaust" && x.fan === e);
+    const runs = (z.addons || []).filter((x) => x.type === "exhaust" && x.fan && !a.switches.includes(x.fan) && !used.includes(x.fan)).map((x) => x.fan);
+    const switches = [...a.switches, ...runs].map((e) => row(e, used.includes(e), { tag: usedBy(e) ? `used by ${usedBy(e).name || "an add-on"}` : "switch" }));
     const tbl = (rows, head) => rows.length ? `<table class="rt"><colgroup><col style="width:64px"><col class="cn"><col style="width:140px"><col style="width:170px"><col style="width:36px"></colgroup>
       <thead><tr><th>${head}</th><th>Light</th><th>Area</th><th>Now</th><th></th></tr></thead><tbody>${rows.join("")}</tbody></table>` : "";
     return `<div class="help">Every light in the room's areas. Managed lights are the ones SB Modes sets, and every one is watched for hand changes. A rule can only set a managed light.</div>
@@ -1838,14 +1848,20 @@ this._goRoomMode(z, m);
     root.querySelectorAll("[data-picker]").forEach((slot) => {
       const loc = JSON.parse(slot.dataset.picker), mine = this._ruleLights(loc);
       const put = (eid) => this._edit((d) => { this._targetsRef(d, loc)[eid] = eid.startsWith("number.") ? { value: 0 } : { brightness_pct: 100 }; }, true);
-      if (!mine) { this._picker(slot, { entity: { filter: { domain: ["light", "switch", "number"] } } }, "Add a light", put); return; }
+      if (!mine) {
+        const z = this._zoneOf(loc) ? this._zoneObj(this._zoneOf(loc)) : null, room = z && this._members(z, "lights");
+        if (room?.length) this._picker(slot, { entity: { include_entities: room } }, "Add one of the room's lights", put);
+        this._picker(slot, { entity: { filter: { domain: ["light", "switch", "number"] } } }, room?.length ? "Add another light or a device setting" : "Add a light", put);
+        return;
+      }
       this._picker(slot, { entity: { include_entities: mine.length ? mine : ["light.none"] } }, "Add one of the room's lights", put);
       this._picker(slot, { entity: { filter: { domain: "number" } } }, "Add a device setting", put);
     });
     root.querySelectorAll("[data-devadd]").forEach((slot) => {
       const owner = JSON.parse(slot.dataset.devadd);
       this._picker(slot, { entity: { filter: { domain: ["number", "fan"] } } }, "Add a device setting", (eid) => this._edit((d) => {
-        const ch = this._choice(d, owner), key = this._cols(ch).find(([, , kind]) => kind === "targets")[0];
+        const cols = this._cols(this._choice(d, owner), owner).filter(([, , kind]) => kind === "targets");
+        const key = (cols.find(([k]) => k !== STARTS) || cols[0])[0];
         this._colRef(d, owner, key)[eid] = this._readLight(eid) || (eid.startsWith("number.") ? { value: 0 } : { state: "off" });
       }, true));
     });
@@ -2109,7 +2125,7 @@ this._goRoomMode(z, m);
     q("[data-col-try]", (b) => b.addEventListener("click", async () => {
       const { o, k } = JSON.parse(b.dataset.colTry), ch = this._choice(this._draft, o);
       try {
-        await this._ws({ type: "sb_modes/try", zone: o.zone, targets: this._colTargets(ch, k).t });
+        await this._ws({ type: "sb_modes/try", zone: o.zone, targets: this._colTargets(ch, k, o).t });
         this._msg = ""; this._toast = `${this._zoneObj(o.zone)?.name || o.zone} set and held 15 min — release it on the Status page to go back`;
       } catch (e) { this._msg = `Try it failed: ${e?.message || e}`; }
       this._renderBar();
@@ -2117,7 +2133,12 @@ this._goRoomMode(z, m);
     const box = root.querySelector(".ced"), sel = this._cellEd;
     if (!box || !sel) return;
     const owner = JSON.parse(sel.o), eid = sel.e, isLight = eid.startsWith("light.");
-    const ced = (fn) => this._edit((d) => { const t = this._colRef(d, owner, sel.k); fn(t); }, true);
+    const ced = (fn) => this._edit((d) => {
+      const t = this._colRef(d, owner, sel.k); fn(t);
+      const z = d.zones.find((x) => x.id === owner.zone);                 // no empty Mode starts left behind
+      for (const [m, tg] of Object.entries(z.mode_starts || {})) if (!Object.keys(tg).length) delete z.mode_starts[m];
+      if (z.mode_starts && !Object.keys(z.mode_starts).length) delete z.mode_starts;
+    }, true);
     const live = (el, fmt) => el.addEventListener("input", () => { const v = el.closest(".fl")?.querySelector(".v"); if (v) v.textContent = fmt(el.value); });
     box.querySelector("[data-ced-close]")?.addEventListener("click", () => { this._cellEd = null; this._render(); });
     box.querySelectorAll("[data-ced-mode]").forEach((b) => b.addEventListener("click", () => ced((t) => {

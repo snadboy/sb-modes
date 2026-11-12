@@ -814,6 +814,18 @@ hue/sat, effect, delay; device-setting rows for numbers/selects/switches), 4 add
   now via `_readLight`, which also feeds "Use the lights as they are now" and now keeps hs_color/effect),
   Try per column. Mode pages (mode defaults) keep the old editor. Not done: per-cell delays (engine has
   one delay per rule) and the Mode starts column (phase 4, with add-ons).
+- **Phase 4 (0.48.0): Mode starts + add-ons draw from the room.** A room's `mode_starts`: {mode: targets},
+  applied by `Runtime._switch` on a real mode change only (after behaviours and add-ons, through
+  `apply`, so holds / hand changes are respected), whatever rule the mode runs. Table `format` 2:
+  `migrate_rooms` (format < 2, once) moves simple light-only mode-begins add-ons (enabled, trigger only
+  mode_begins, no When, one step at +0 with only targets, no clash) into `mode_starts` — live: Kitchen ×2,
+  Dining sideboard, Living Room plants 40%, Bedroom bulbs. `async_save_table` stamps format 2 on a table
+  saved without one (a fresh save is current: a deliberate simple add-on stays one). Validation:
+  mode ids exist, targets checked, its lights must be room lights (`rule_entities` includes it).
+  Editor: each mode tab has a "<Mode> begins" column first (also when the mode uses All modes); tab dot
+  = own rule or own Mode starts. Add-on target pickers: "Add one of the room's lights" + "Add another
+  light or a device setting" (add-ons keep that freedom). A switch an exhaust add-on runs is listed under
+  Switches (even hidden by switch_as_x) tagged "used by <add-on>". Status page rows: "when X begins: …".
 - Decided 2026-11-12: room timing stays **per mode** (cells may override); simple light-only
   mode-begins add-ons **migrate into the Mode starts column**; **`static` is dropped** (migrates to a
   Mode-starts-only preset); 0.46.1 ships **with phase 2** (one restart). Still open: add-ons using
