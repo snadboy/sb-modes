@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "SB Modes",
-        "description": "Adds the mode select, a status sensor per zone and a problem sensor. It starts with four modes (morning, day, evening, overnight) that do nothing until you give them behaviours."
+        "description": "Adds the mode select, a status sensor per room and a problem sensor. It starts with four modes (morning, day, evening, overnight) that do nothing until you give them behaviours."
       }
     },
     "abort": {
@@ -54,17 +54,17 @@
       "fields": {
         "config": {
           "name": "Table",
-          "description": "The whole mode table: fallback_mode, modes, zones."
+          "description": "The whole mode table: fallback_mode, modes, zones (rooms)."
         }
       }
     },
     "save_config": {
       "name": "Save mode table",
-      "description": "Saves a mode table that has no errors, then reloads SB Modes so zones become entities.",
+      "description": "Saves a mode table that has no errors, then reloads SB Modes so rooms become entities.",
       "fields": {
         "config": {
           "name": "Table",
-          "description": "The whole mode table: fallback_mode, modes, zones."
+          "description": "The whole mode table: fallback_mode, modes, zones (rooms)."
         }
       }
     },
@@ -87,12 +87,12 @@
       "description": "End any manual hold and switch to the mode the schedule says now."
     },
     "hold_zone": {
-      "name": "Hold zone",
-      "description": "Hold a zone by hand: its behaviour sends nothing to its lights.",
+      "name": "Hold room",
+      "description": "Hold a room by hand: its behaviour sends nothing to its lights.",
       "fields": {
         "zone": {
-          "name": "Zone",
-          "description": "A zone id, e.g. kitchen."
+          "name": "Room",
+          "description": "A room id, e.g. kitchen."
         },
         "hold": {
           "name": "Hold",
@@ -102,11 +102,11 @@
     },
     "set_level": {
       "name": "Set room level",
-      "description": "Set a zone's dimmable lights to one level (0 = off) and hold the zone. On/off lights and switches are left alone (see Switch room lights).",
+      "description": "Set a room's dimmable lights to one level (0 = off) and hold the room. On/off lights and switches are left alone (see Switch room lights).",
       "fields": {
         "zone": {
-          "name": "Zone",
-          "description": "A zone id, e.g. kitchen."
+          "name": "Room",
+          "description": "A room id, e.g. kitchen."
         },
         "brightness_pct": {
           "name": "Brightness",
@@ -120,11 +120,11 @@
     },
     "switch_lights": {
       "name": "Switch room lights",
-      "description": "Turn a zone's on/off lights (lights that cannot dim, and switches) on or off and hold the zone. Dimmable lights are left alone (see Set room level).",
+      "description": "Turn a room's on/off lights (lights that cannot dim, and switches) on or off and hold the room. Dimmable lights are left alone (see Set room level).",
       "fields": {
         "zone": {
-          "name": "Zone",
-          "description": "A zone id, e.g. kitchen."
+          "name": "Room",
+          "description": "A room id, e.g. kitchen."
         },
         "state": {
           "name": "State",
@@ -138,11 +138,11 @@
     },
     "set_lights": {
       "name": "Set room lights",
-      "description": "Set given lights of a zone (each to on, off or a brightness) and hold the zone. The card uses it to put lights back on Cancel.",
+      "description": "Set given lights of a room (each to on, off or a brightness) and hold the room. The card uses it to put lights back on Cancel.",
       "fields": {
         "zone": {
-          "name": "Zone",
-          "description": "A zone id, e.g. kitchen."
+          "name": "Room",
+          "description": "A room id, e.g. kitchen."
         },
         "lights": {
           "name": "Lights",
@@ -155,12 +155,12 @@
       }
     },
     "release_zone": {
-      "name": "Release zone",
-      "description": "End a zone's hold and its lights changed by hand; its behaviour starts again for the current mode.",
+      "name": "Release room",
+      "description": "End a room's hold and its lights changed by hand; its behaviour starts again for the current mode.",
       "fields": {
         "zone": {
-          "name": "Zone",
-          "description": "A zone id, e.g. kitchen."
+          "name": "Room",
+          "description": "A room id, e.g. kitchen."
         }
       }
     }

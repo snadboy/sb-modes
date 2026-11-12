@@ -164,7 +164,7 @@ async def test_lost_entity_raises_problem_then_repairs(hass: HomeAssistant, kitc
     await hass.async_block_till_done()
     problem = hass.states.get(PROBLEM)
     assert problem.state == "on"
-    assert problem.attributes["errors"] == ["Zone Kitchen, Overnight, nightlight: light.sink does not exist."]
+    assert problem.attributes["errors"] == ["Room Kitchen, Overnight, nightlight: light.sink does not exist."]
     assert ir.async_get(hass).async_get_issue(DOMAIN, ISSUE_ID) is None          # still in its grace period
 
     freezer.tick(timedelta(seconds=121))
@@ -1643,7 +1643,7 @@ async def test_editor_schema_and_check(hass, kitchen, hass_ws_client) -> None:
     bad["zones"][0]["overrides"]["overnight"]["params"]["delay"] = 999
     r = await _ws(hass, hass_ws_client, type="sb_modes/check", config=bad)
     assert r["result"]["errors"] == [{"path": ["zones", 0, "overrides", "overnight", "params", "delay"],
-                                      "message": "Zone Kitchen, Overnight, delay: 999 is outside 1–240."}]
+                                      "message": "Room Kitchen, Overnight, delay: 999 is outside 1–240."}]
 
 
 async def test_editor_draft_save_versions_revert(hass, kitchen, hass_ws_client) -> None:

@@ -188,9 +188,9 @@ class Keeper:
         what = "off" if new.state == STATE_OFF else (
             f"{round(new.attributes['brightness'] * 100 / 255)}%" if new.attributes.get("brightness") is not None else "on")
         until = ("stays off until someone comes back" if new.state == STATE_OFF and light in self.rt.lit_when_empty(zone) else
-                 "left alone until the zone is empty" if new.state == STATE_OFF else
+                 "left alone until the room is empty" if new.state == STATE_OFF else
                  f"left alone at least {HAND_GRACE_MINUTES} min (no one seen yet)" if unseen else
-                 "left alone until the zone is empty")
+                 "left alone until the room is empty")
         self.rt.log("hand", zone, f"{self._name(light, zone)} {what} by hand"
                     f"{' (at the device)' if by == 'device' else ''} — {until}", [light])
         self._save()

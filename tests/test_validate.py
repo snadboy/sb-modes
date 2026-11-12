@@ -101,7 +101,7 @@ def test_mode_needs_a_default():
 
 def test_override_of_undefined_mode():
     e, _ = edit(lambda c: c["zones"][1].update(overrides={"evening": {"behaviour": "hands_off"}}))
-    assert e == ["Zone Dining Room: overrides mode “evening”, which is not defined."], e
+    assert e == ["Room Dining Room: overrides mode “evening”, which is not defined."], e
 
 
 def test_fallback_must_exist():
@@ -120,7 +120,7 @@ def test_duplicate_and_bad_ids():
     e, _ = edit(lambda c: c["modes"].append({"id": "day", "name": "Again", "default": {"behaviour": "hands_off"}}))
     assert e == ["Mode id “day” is used more than once."], e
     e, _ = edit(lambda c: c["zones"][0].update(id="Kitchen Zone"))
-    assert e[0].startswith("Zone Kitchen: id 'Kitchen Zone' must be lowercase"), e
+    assert e[0].startswith("Room Kitchen: id 'Kitchen Zone' must be lowercase"), e
 
 
 def test_unknown_behaviour_and_param():
@@ -148,11 +148,11 @@ def test_entity_checks():
     def nl(eid):
         return lambda c: c["zones"][0]["overrides"]["overnight"]["params"].update(nightlight={eid: {"state": "on"}})
     e, _ = edit(nl("light.gone"))
-    assert e == ["Zone Kitchen, Overnight, nightlight: light.gone does not exist."], e
+    assert e == ["Room Kitchen, Overnight, nightlight: light.gone does not exist."], e
     e, _ = edit(nl("climate.bedroom_ac"))
-    assert e == ["Zone Kitchen, Overnight, nightlight: no driver controls climate entities (climate.bedroom_ac)."], e
+    assert e == ["Room Kitchen, Overnight, nightlight: no driver controls climate entities (climate.bedroom_ac)."], e
     e, w = edit(nl("light.dining_room_aux_sideboard"))
-    assert e == [] and w == ["Zone Kitchen, Overnight, nightlight: light.dining_room_aux_sideboard is unavailable."], (e, w)
+    assert e == [] and w == ["Room Kitchen, Overnight, nightlight: light.dining_room_aux_sideboard is unavailable."], (e, w)
     e, w = edit(nl("light.mova_bulb"))                  # disabled in HA = out of service: no error, no warning
     assert e == [] and w == [], (e, w)
 
@@ -173,15 +173,15 @@ def zone_entities(areas):
 
 def test_needs_from_areas():
     e, _ = V.check_config(GOOD, state_of, area_exists, zone_entities)
-    assert e == ["Zone Dining Room: nightlight_then_dark (Overnight) needs an occupancy sensor in the zone's areas; there is none."], e
+    assert e == ["Room Dining Room: nightlight_then_dark (Overnight) needs an occupancy sensor in the room's areas; there is none."], e
     cfg = copy.deepcopy(GOOD)
     cfg["zones"][1]["overrides"] = {"overnight": {"behaviour": "hands_off"}}
     assert V.check_config(cfg, state_of, area_exists, zone_entities) == ([], [])
     cfg["modes"][0]["default"] = {"behaviour": "presence_lux", "params": {"target_lux": 50, "occupied": {"light.kitchen_aux_sink": {"brightness_pct": 80}}}}
     e, _ = V.check_config(cfg, state_of, area_exists, zone_entities)
-    assert e == ["Zone Kitchen: presence_lux (Day) needs an illuminance sensor in the zone's areas; there is none.",
-                 "Zone Dining Room: presence_lux (Day) needs an occupancy sensor in the zone's areas; there is none.",
-                 "Zone Dining Room: presence_lux (Day) needs an illuminance sensor in the zone's areas; there is none."], e
+    assert e == ["Room Kitchen: presence_lux (Day) needs an illuminance sensor in the room's areas; there is none.",
+                 "Room Dining Room: presence_lux (Day) needs an occupancy sensor in the room's areas; there is none.",
+                 "Room Dining Room: presence_lux (Day) needs an illuminance sensor in the room's areas; there is none."], e
 
 
 
@@ -213,9 +213,9 @@ def test_target_values():
 
 def test_areas():
     e, _ = edit(lambda c: c["zones"][1].update(areas=["dining_room", "attic"]))
-    assert e == ["Zone Dining Room: area “attic” does not exist."], e
+    assert e == ["Room Dining Room: area “attic” does not exist."], e
     e, _ = edit(lambda c: c["zones"][1].update(areas=[]))
-    assert e == ["Zone Dining Room: list at least one area."], e
+    assert e == ["Room Dining Room: list at least one area."], e
 
 
 SCHEDULE = [
@@ -293,14 +293,14 @@ def test_new_param_types():
     cfg = copy.deepcopy(GOOD)
     cfg["zones"][1]["overrides"] = {"*": {"behaviour": "vacancy_off", "params": {"lights": [], "on_when_occupied": "yes"}}}
     e, _ = check(cfg)
-    assert e == ["Zone Dining Room, all modes, lights: must be a list of entity ids.",
-                 "Zone Dining Room, all modes, on_when_occupied: 'yes' must be true or false."], e
+    assert e == ["Room Dining Room, all modes, lights: must be a list of entity ids.",
+                 "Room Dining Room, all modes, on_when_occupied: 'yes' must be true or false."], e
     STATES["number.clock_brightness"] = "64"
     cfg["zones"][1]["overrides"] = {"*": {"behaviour": "occupied_vacant", "params": {
         "occupied": {"number.clock_brightness": {"value": 255}, "light.kitchen_aux_sink": {"hs_color": [220, 50], "effect": "Breath"}},
         "vacant": {"number.clock_brightness": {"value": "dim"}}}}}
     e, _ = check(cfg)
-    assert e == ["Zone Dining Room, all modes, vacant, number.clock_brightness: a number entity needs a numeric value."], e
+    assert e == ["Room Dining Room, all modes, vacant, number.clock_brightness: a number entity needs a numeric value."], e
 
 
 WORKDAYS = {"2026-10-16", "2026-10-19", "2026-10-20", "2026-10-21", "2026-10-22"}   # Fri, then Mon–Thu; Fri 23rd off
@@ -369,7 +369,7 @@ def test_zone_lights_must_not_overlap():
     cfg = copy.deepcopy(GOOD)
     cfg["zones"][1]["areas"] = ["kitchen"]                 # same area as Kitchen → same lights
     e, _ = V.check_config(cfg, state_of, area_exists, zone_entities)
-    assert "Zone Dining Room: light.kitchen_aux_sink is also in Zone Kitchen — give one of them its own `lights` list." in e, e
+    assert "Room Dining Room: light.kitchen_aux_sink is also in Room Kitchen — give one of them its own `lights` list." in e, e
     cfg["zones"][1]["lights"] = ["light.kitchen_aux_cabinet"]
     e, _ = V.check_config(cfg, state_of, area_exists, zone_entities)
     assert not [x for x in e if "also in" in x], e
@@ -433,7 +433,7 @@ def test_changes_in_words():
     assert "Kitchen · Overnight · Nightlight: Aux Sink 10%, Cabinet on → Aux Sink 20%" in lines, lines
     assert "Kitchen · All modes: now Presence + light level (Dark below 50 lx)" in lines, lines
     assert "Kitchen · add-on When the mode begins added: Daytime begins → Cabinet on" in lines, lines
-    assert "Zone Dining Room renamed Dining" in lines, lines
+    assert "Room Dining Room renamed Dining" in lines, lines
     assert "Schedule: Daytime at 06:00 on Mon → Daytime at 06:00 on Mon, Tue" in lines, lines
     d = copy.deepcopy(b)
     d["schedule"].append({"days": ["mon", "tue", "wed", "thu", "fri"], "at": "sunset-01:00", "mode": "overnight"})
@@ -602,7 +602,7 @@ def test_hand_max_minutes():
         assert edit(with_cap(ok)) == ([], []), (ok, edit(with_cap(ok)))
     for bad in (0, 1441, -5, "60", True, [60]):
         errors, _ = edit(with_cap(bad))
-        assert errors == ["Zone Kitchen: hand_max_minutes must be 1–1440 minutes (or left out: hand changes have no time limit)."], (bad, errors)
+        assert errors == ["Room Kitchen: hand_max_minutes must be 1–1440 minutes (or left out: hand changes have no time limit)."], (bad, errors)
     # the error points at the field, for the editor
     errors, _ = edit(with_cap(0))
     assert [tuple(d["path"]) for d in errors.detailed()] == [("zones", 0, "hand_max_minutes")], errors.detailed()

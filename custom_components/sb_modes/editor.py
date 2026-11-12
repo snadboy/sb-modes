@@ -285,7 +285,7 @@ def ws_try(hass, connection, msg) -> None:
     if not (rt := _need_rt(hass, connection, msg)):
         return
     if msg["zone"] not in [z["id"] for z in rt.zones()]:
-        connection.send_error(msg["id"], "not_found", f"“{msg['zone']}” is not a zone.")
+        connection.send_error(msg["id"], "not_found", f"“{msg['zone']}” is not a room.")
         return
     errors, warnings = Issues(), Issues()
     _check_param(msg["targets"], {"type": "targets"}, "Try it", state_lookup(hass), errors, warnings)

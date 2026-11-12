@@ -51,14 +51,14 @@ def describe(old: dict, new: dict, name_of: Callable[[str], str] = lambda e: e) 
     oz, nz = _by_id(old.get("zones")), _by_id(new.get("zones"))
     for zid, z in nz.items():
         if zid not in oz:
-            out.append(f"Zone {_n(z)} added (areas: {', '.join(z.get('areas') or []) or NONE})")
+            out.append(f"Room {_n(z)} added (areas: {', '.join(z.get('areas') or []) or NONE})")
     for zid, z in oz.items():
         if zid not in nz:
-            out.append(f"Zone {_n(z)} removed")
+            out.append(f"Room {_n(z)} removed")
     for zid in [z for z in nz if z in oz]:
         out += _zone_changes(oz[zid], nz[zid], name_of, mode_name, day_name)
     if [z for z in nz if z in oz] != [z for z in oz if z in nz]:
-        out.append("Zone order changed")
+        out.append("Room order changed")
 
     # ── day types and their times ───────────────────────────────────────────
     ot, nt = _by_id(old.get("day_types")), _by_id(new.get("day_types"))
@@ -133,7 +133,7 @@ def _zone_changes(a: dict, b: dict, name_of, mode_name, day_name=lambda d: d) ->
     z = _n(b)
     out = []
     if _n(a) != z:
-        out.append(f"Zone {_n(a)} renamed {z}")
+        out.append(f"Room {_n(a)} renamed {z}")
     if (a.get("enabled") is False) != (b.get("enabled") is False):
         out.append(f"{z}: {'switched off — SB Modes leaves it alone' if b.get('enabled') is False else 'switched back on'}")
     if a.get("hand_max_minutes") != b.get("hand_max_minutes"):

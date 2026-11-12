@@ -11,7 +11,7 @@
  *
  * Rows use the shared SB row style (window.SBKit, from the SB UI Kit integration).
  */
-const VERSION = "0.46.0";
+const VERSION = "0.46.1";
 const CARD = "sb-modes-card";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -490,7 +490,7 @@ class SbModesCard extends HTMLElement {
       const took = (sel.attributes.takes_over || {})[viewed] || [];
       const zl = took.map((t) => t.zone);
       const list = zl.length > 1 ? `${zl.slice(0, -1).join(", ")} and ${zl.at(-1)}` : zl[0];
-      const dark = took.some((t) => t.behaviour === "nightlight_then_dark") ? " Zones that are already empty go dark straight away." : "";
+      const dark = took.some((t) => t.behaviour === "nightlight_then_dark") ? " Rooms that are already empty go dark straight away." : "";
       const hold = this._hold || "next";
       const holds = HOLDS.map(([v, label]) => `<button class="mode hold-opt ${v === hold ? "on" : ""}" data-h="${v}">${esc(
         label || (nextTxt ? `Until ${nextTxt}` : "Until the next scheduled change"))}</button>`).join("");
@@ -514,7 +514,7 @@ class SbModesCard extends HTMLElement {
     const headMenu = !cfg.panel && this._menu === "__head" ? kit().menu("Card actions", [{ act: "page", icon: "mdi:open-in-app", label: "Open the SB Modes page" },
       ...(this._hass.user?.is_admin ? [{ act: "edit", icon: "mdi:pencil", label: "Edit modes & zones" }] : [])]) : "";
     const head = `<div class="sbk-head sbk-hwrap"><h2>${esc(cfg.title || "")}</h2>
-        <span class="sbk-count">${esc(nm(sel.state))}${sel.attributes.manual?.hold === "paused" ? ` <span style="color: var(--warning-color, #ffa600)">(paused)</span>` : sel.attributes.manual ? " (by hand)" : ""} · ${options.length} mode${options.length === 1 ? "" : "s"} · ${zones.length} zone${zones.length === 1 ? "" : "s"}${
+        <span class="sbk-count">${esc(nm(sel.state))}${sel.attributes.manual?.hold === "paused" ? ` <span style="color: var(--warning-color, #ffa600)">(paused)</span>` : sel.attributes.manual ? " (by hand)" : ""} · ${options.length} mode${options.length === 1 ? "" : "s"} · ${zones.length} room${zones.length === 1 ? "" : "s"}${
           devCount ? ` · <span style="color: var(--warning-color, #ffa600)" title="Held or changed by hand — see sensor.sb_modes_deviations">${devCount} by hand</span>` : ""}${
           folded && attention ? ` · <span style="color: var(--error-color)">${attention} need${attention === 1 ? "s" : ""} attention</span>` : ""}</span>
         ${cfg.panel ? "" : `<button class="sbk-kb hkb ${headMenu ? "on" : ""}" aria-label="More" title="More: open the SB Modes page" aria-expanded="${headMenu ? "true" : "false"}">${kit().kbIcon}</button>${headMenu}${foldBtn(folded)}`}
@@ -549,7 +549,7 @@ class SbModesCard extends HTMLElement {
       ${banner}
       ${problems}
       ${this._zonesHead(zones, previewing, nm(viewed))}
-      ${!this._zonesOpen() ? "" : rows || `<div class="sbk-empty">No zones yet. Add them to the table with the <code>sb_modes.save_config</code> action.</div>`}
+      ${!this._zonesOpen() ? "" : rows || `<div class="sbk-empty">No rooms yet. Add them to the table with the <code>sb_modes.save_config</code> action.</div>`}
       ${this._scheduleHtml(sel, nm)}
       ${this._activityHtml()}
       ${this._msg ? `<div class="sbk-note">${esc(this._msg)}</div>` : ""}`;
@@ -588,8 +588,8 @@ class SbModesCard extends HTMLElement {
     const held = zones.filter((z) => z.attr.control && z.attr.control !== "auto").length;
     const warn = zones.filter((z) => look(z.state, z.attr.status).tint === "warn").length;
     const extra = open ? "" : [held ? `${held} held or by hand` : "", warn ? `${warn} need${warn === 1 ? "s" : ""} a look` : ""].filter(Boolean).join(" · ");
-    return `<button class="zh zt zones" data-x="__zones" aria-expanded="${open}">Zones${previewing ? ` in ${esc(viewedName)} <span class="pvtag">preview</span>` : ""}
-        <span class="cnt">${zones.length} zone${zones.length === 1 ? "" : "s"}${extra ? ` · <span style="color: var(--warning-color, #ffa600)">${esc(extra)}</span>` : ""}</span>
+    return `<button class="zh zt zones" data-x="__zones" aria-expanded="${open}">Rooms${previewing ? ` in ${esc(viewedName)} <span class="pvtag">preview</span>` : ""}
+        <span class="cnt">${zones.length} room${zones.length === 1 ? "" : "s"}${extra ? ` · <span style="color: var(--warning-color, #ffa600)">${esc(extra)}</span>` : ""}</span>
         <ha-icon icon="${open ? "mdi:chevron-down" : "mdi:chevron-right"}"></ha-icon></button>`;
   }
 
@@ -999,7 +999,7 @@ class SbModesCard extends HTMLElement {
     const body = !open ? "" : `<div class="rules">
         ${errs.length ? `<div class="sub err">Errors</div><ul class="att err">${errs.map((e) => `<li>${esc(e)}</li>`).join("")}</ul>` : ""}
         ${devs.map(([e, list]) => `<div class="att-d"><button class="ent" data-info="${esc(e)}">${esc(this._name(e))}</button> <span class="mut">unavailable · used in ${list.length} setting${list.length === 1 ? "" : "s"}</span>
-          <ul class="att">${list.sort(byName).map((x) => `<li>${esc(x.replace(/^Zone /, ""))}</li>`).join("")}</ul></div>`).join("")}
+          <ul class="att">${list.sort(byName).map((x) => `<li>${esc(x.replace(/^Room /, ""))}</li>`).join("")}</ul></div>`).join("")}
         ${other.length ? `<div class="sub">Other warnings</div><ul class="att">${other.map((e) => `<li>${esc(e)}</li>`).join("")}</ul>` : ""}
         ${oos.length ? `<div class="sub">Out of service</div><ul class="att">${oos.map((o) => `<li>${esc(o.name)} <span class="mut">(${esc(o.entity_id)}) — disabled in Home Assistant, so SB Modes skips it; its settings are kept. Enable it again to bring it back.</span></li>`).join("")}</ul>` : ""}</div>`;
     return `<section class="pc"><button class="zh zt att-h ${errs.length ? "bad" : ""} ${quiet ? "quiet" : ""}" data-x="__attention" aria-expanded="${open}">

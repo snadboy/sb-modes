@@ -1112,7 +1112,7 @@ export class SbModesEditor extends HTMLElement {
         <thead><tr><th><button class="th" data-sortt="tg">Light ${dir > 0 ? "▲" : "▼"}</button></th><th>Setting</th><th>Level</th><th>Colour temp</th><th></th></tr></thead><tbody>${rows}</tbody></table>` : `<div class="empty">No lights set.</div>`}
       <div class="tools"><div class="add" data-picker='${id}'></div>
         <button class="b sm" data-tg="capture" title="Fill from how the lights are right now">Use the lights as they are now</button>
-        ${zoneId ? `<button class="b sm" data-tg="try" ${rows ? "" : "disabled"} title="Set these now and hold the zone 15 min">Try it</button>` : ""}</div>
+        ${zoneId ? `<button class="b sm" data-tg="try" ${rows ? "" : "disabled"} title="Set these now and hold the room 15 min">Try it</button>` : ""}</div>
       <div class="errs-slot" data-path='${esc(JSON.stringify(this._locPath(loc)))}'></div></div>`;
   }
 

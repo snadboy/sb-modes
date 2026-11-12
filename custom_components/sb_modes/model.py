@@ -54,7 +54,7 @@ BEHAVIOURS: dict[str, dict[str, dict[str, Any]]] = {
         "nightlight": {"type": "targets", "label": "Nightlight",
                        "help": "Set when someone comes in; leave empty for dark only."},
         "delay": {"type": "number", "min": 1, "max": 240, "default": 10, "unit": "min", "label": "Dark after empty",
-                  "help": "Minutes the zone must be empty before every light goes off."},
+                  "help": "Minutes the room must be empty before every light goes off."},
     },
     "vacancy_off": {
         "lights": {"type": "entities", "domains": ["light", "switch"], "required": True, "label": "Lights to turn off"},
@@ -77,7 +77,7 @@ BEHAVIOURS: dict[str, dict[str, dict[str, Any]]] = {
     },
     "presence_lux": {
         "target_lux": {"type": "number", "min": 1, "max": 2000, "required": True, "unit": "lx", "label": "Dark below",
-                       "help": "Below this light level (with the lights off) the zone counts as dark."},
+                       "help": "Below this light level (with the lights off) the room counts as dark."},
         "occupied": {"type": "targets", "required": True, "label": "Occupied and dark"},
         "vacant": {"type": "targets", "label": "Empty, dark",
                    "help": "Leave empty to turn the occupied lights off."},
@@ -89,10 +89,10 @@ BEHAVIOURS: dict[str, dict[str, dict[str, Any]]] = {
 
 # Names and one-line descriptions for the editor and the review text (the card has the same names).
 BEHAVIOUR_INFO: dict[str, dict[str, str]] = {
-    "hands_off": {"label": "Hands off", "help": "SB Modes leaves the zone alone."},
+    "hands_off": {"label": "Hands off", "help": "SB Modes leaves the room alone."},
     "static": {"label": "Static", "help": "One fixed setting."},
     "nightlight_then_dark": {"label": "Nightlight, then dark", "help": "A nightlight when someone comes in; dark once empty."},
-    "vacancy_off": {"label": "Off when empty", "help": "Lights off after the zone has been empty a while."},
+    "vacancy_off": {"label": "Off when empty", "help": "Lights off after the room has been empty a while."},
     "timed_off": {"label": "Off after a while", "help": "Lights off a set time after they come on; no sensors needed."},
     "occupied_vacant": {"label": "Occupied / empty", "help": "One setting with someone there, another once empty."},
     "presence_lux": {"label": "Presence + light level", "help": "Lights on when someone is there and it is dark; an empty setting for dark and light."},

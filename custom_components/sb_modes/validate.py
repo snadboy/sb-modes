@@ -11,7 +11,7 @@ that its areas do not have is an error too.
 WARNINGS never block: an entity that is unavailable right now. An entity DISABLED in Home
 Assistant is out of service: neither (state_of gives "disabled"; the runtime lists it).
 
-Every message starts with where the problem is ("Zone Kitchen, Overnight: …"), so a
+Every message starts with where the problem is ("Room Kitchen, Overnight: …"), so a
 list of them reads on its own in Repairs and in the editor. The lists returned are Issues: each
 message also carries the PATH of the table field it belongs to (["zones", 2, "overrides",
 "evening", "params", "target_lux"]) for the editor to place it — `Issues.detailed()`.
@@ -131,15 +131,15 @@ def _check_config(config, state_of, area_exists, zone_entities, day_set_exists) 
     zones = config.get("zones") or []
     _here("zones")
     if not isinstance(zones, list):
-        errors.append("Zones must be a list.")
+        errors.append("Rooms must be a list.")
         zones = []
     claimed: dict[str, str] = {}                      # light → the zone that has it
     for i, zone in enumerate(zones):
         _here("zones", i)
         if not isinstance(zone, dict):
-            errors.append(f"Zone {i + 1} must be an object.")
+            errors.append(f"Room {i + 1} must be an object.")
             continue
-        where = f"Zone {zone.get('name') or zone.get('id') or i + 1}"
+        where = f"Room {zone.get('name') or zone.get('id') or i + 1}"
         _check_id(zone.get("id"), where, errors)
         areas = zone.get("areas")
         areas_ok = isinstance(areas, list) and bool(areas)
@@ -207,7 +207,7 @@ def _check_config(config, state_of, area_exists, zone_entities, day_set_exists) 
                     errors.append(f"{where}: {light} is also in {other} — give one of them its own `lights` list.")
                 claimed.setdefault(light, where)
     _here("zones")
-    _check_unique([z.get("id") for z in zones if isinstance(z, dict)], "Zone", errors)
+    _check_unique([z.get("id") for z in zones if isinstance(z, dict)], "Room", errors)
     _here("schedule")
     _check_schedule(config.get("schedule"), ids, names, errors, day_set_exists)
     _check_day_types(config, ids, names, errors, day_set_exists)
@@ -332,7 +332,7 @@ def _check_needs(config: dict, zone: dict, ids: list[str], names: dict, found: d
             if not found.get(need):
                 missing.setdefault((picked["behaviour"], need), []).append(str(names.get(mode_id, mode_id)))
     for (behaviour, need), modes in missing.items():
-        errors.append(f"{where}: {behaviour} ({', '.join(modes)}) needs {NEED_LABELS[need]} in the zone's areas; there is none.")
+        errors.append(f"{where}: {behaviour} ({', '.join(modes)}) needs {NEED_LABELS[need]} in the room's areas; there is none.")
 
 
 def _check_id(value: Any, where: str, errors: list[str]) -> None:

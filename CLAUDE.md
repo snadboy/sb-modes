@@ -772,3 +772,16 @@ Scheduler — candidates to fold in later.
 - Tests: test_validate `test_hand_max_minutes`; integration `test_hand_change_expires_after_the_cap_while_occupied`,
   `test_no_cap_hand_change_stays_while_occupied`, `…_across_a_reload`, `…_already_past_the_cap_ends_on_restore`,
   `test_hand_cap_does_not_end_a_hold`. LIVE 2026-11-11: kitchen 60, dining_room 120, upstairs_hallway / laundry_room / basement_bath 60; none on Living Room, Family Room, Office, Bedroom.
+
+## Rooms redesign (started 2026-11-12)
+
+Design doc: https://claude.ai/artifact/CByGj3J845hW1mtfkXC2ju · mockup (Living Room, Upstairs Bath,
+Office boards): https://claude.ai/artifact/SMMMVaThABfrP82twrQ5SV. Four phases: 1 words, 2 room owns its
+lights (every managed light watched), 3 per-light columns + presets (cells hold brightness, kelvin or
+hue/sat, effect, delay; device-setting rows for numbers/selects/switches), 4 add-ons draw from the room.
+- **Phase 1 (0.46.1): words.** "Zone" no longer appears on screen: validate messages start
+  "Room <name>, <mode>: …", change summaries say "Room … added/renamed", card says Rooms, service
+  display names are Hold room / Release room. Ids are unchanged: `zones` key, `zone` service field,
+  `hold_zone` / `release_zone` services, `sb_modes_zone` attribute (automations depend on them).
+- Open questions (doc): room timing per mode vs room-wide; mode-begins add-ons → Mode starts column;
+  add-ons using lights outside the room; lux lowest vs average; is `static` still needed.
