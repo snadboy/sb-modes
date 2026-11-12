@@ -826,6 +826,9 @@ hue/sat, effect, delay; device-setting rows for numbers/selects/switches), 4 add
   = own rule or own Mode starts. Add-on target pickers: "Add one of the room's lights" + "Add another
   light or a device setting" (add-ons keep that freedom). A switch an exhaust add-on runs is listed under
   Switches (even hidden by switch_as_x) tagged "used by <add-on>". Status page rows: "when X begins: …".
+- **0.48.1:** Name + Areas sit at the top of the room page (always open, `data-form="room"`); a room with
+  no areas shows only that plus a prompt; choosing the first area opens Presence sensors and Lights.
+  "Devices" became "More settings" (own light sensors, hand-change cap); Delete room at the bottom.
 - Decided 2026-11-12: room timing stays **per mode** (cells may override); simple light-only
   mode-begins add-ons **migrate into the Mode starts column**; **`static` is dropped** (migrates to a
   Mode-starts-only preset); 0.46.1 ships **with phase 2** (one restart). Still open: add-ons using

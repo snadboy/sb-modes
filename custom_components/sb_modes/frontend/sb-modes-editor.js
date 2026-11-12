@@ -420,7 +420,7 @@ table.lt.wk tr.today td { background: rgba(127,127,127,.08); }
 .pickrow .form, .form[data-form="pick"] { max-width: 360px; }
 .form[data-form="params"] { max-width: 520px; }
 .form[data-form="mode"] { flex: 0 1 420px; }
-.form[data-form="basics"], .form[data-form^="ad-"] { max-width: 640px; }
+.form[data-form="basics"], .form[data-form="room"], .form[data-form^="ad-"] { max-width: 640px; }
 .mform { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-end; }
 .tools .add { max-width: 420px; }
 /* House on a phone: a list, not the grid */
@@ -914,15 +914,18 @@ this._goRoomMode(z, m);
         <label class="zon">SB Modes runs this room <ha-switch data-zone-on="${esc(z.id)}" ${off ? "" : "checked"}></ha-switch></label></div>
       <div class="errs-slot" data-path='${esc(JSON.stringify(["zones", zi]))}'></div>
       ${off ? `<div class="card zoffnote"><div class="sec">Switched off: SB Modes leaves ${esc(z.name || z.id)} alone in every mode — no rule, no add-ons, hand changes not tracked. Its settings below are kept for when you switch it back on.</div></div>` : ""}
+      <div class="card"><div class="sec roomhead"><div class="form" data-form="room"></div>
+        <div class="help">A room is one or more Home Assistant areas: its presence sensors and lights come from them.</div></div></div>
+      ${!(z.areas || []).length ? `<div class="card"><div class="sec"><div class="empty">Choose the room's areas above; its presence sensors and lights then appear here.</div></div></div>` : `
       ${this._secHtml("sensors", "Presence sensors", this._saySensors(z), this._roomSensorsHtml(z))}
       ${this._secHtml("lights", "Lights", this._sayLights(z), this._roomLightsHtml(z))}
       ${this._secHtml("do", "What the lights do", [normal ? this._beh(normal.behaviour).label : "nothing set",
         ...own.map((m) => `${m.name || m.id}: ${this._beh(z.overrides[m.id].behaviour).label}`)].join(" · "), this._doHtml(z, own))}
       ${this._secHtml("addons", "Add-ons", (z.addons || []).length ? `${z.addons.length} · ${z.addons.map((a) => `${a.name || a.id}${a.enabled === false ? " (off)" : ""}`).join(" · ")}` : "none",
         this._addonsHtml(z))}
-      ${this._secHtml("devices", "Devices", this._sayDevices(z, zs),
-        `<div class="form" data-form="basics" style="margin-top:4px"></div>
-        <div class="tools"><button class="b sm danger" data-act="del-zone">Delete room</button></div>`)}`;
+      ${this._secHtml("devices", "More settings", this._sayDevices(z, zs),
+        `<div class="form" data-form="basics" style="margin-top:4px"></div>`)}`}
+      <div class="tools" style="margin-top:12px"><button class="b sm danger" data-act="del-zone">Delete room</button></div>`;
   }
 
   // ── what the lights do: mode tabs, preset chips, one table of lights × states ──
@@ -1136,7 +1139,8 @@ this._goRoomMode(z, m);
 
   _sayDevices(z, zs) {
     const lux = z.illuminance || zs?.attributes?.illuminance || [];
-    return [`areas ${(z.areas || []).join(", ") || "—"}`, lux.length ? `light level: ${lux.map((e) => this._short(e, z.id)).join(", ")}` : ""].filter(Boolean).join(" · ");
+    return [lux.length ? `light level: ${lux.map((e) => this._short(e, z.id)).join(", ")}` : "light level: the areas' sensors",
+      z.hand_max_minutes ? `hand changes at most ${z.hand_max_minutes} min` : ""].filter(Boolean).join(" · ");
   }
 
   // ── a room's sensors and lights: what its areas hold, adjusted by {exclude, add} ──
@@ -1665,20 +1669,29 @@ this._goRoomMode(z, m);
         (v) => this._edit((d) => { const x = d.modes.find((q) => q.id === m.id); x.name = v.name; if (v.icon) x.icon = v.icon; else delete x.icon; }), { name: "Name", icon: "Icon" }));
     });
     const z = this._view === "room" ? this._zoneObj(this._room) : null;
+    const head = root.querySelector('[data-form="room"]');
+    if (head && z) {
+      head.appendChild(this._form([{ name: "name", selector: { text: {} } }, { name: "areas", selector: { area: { multiple: true } } }],
+        { name: z.name || "", areas: z.areas || [] },
+        (v) => {
+          const before = JSON.stringify(z.areas || []);
+          if (!(z.areas || []).length && (v.areas || []).length) { sessSet("ed:sensors", true); sessSet("ed:lights", true); }   // a new room: show what came
+          this._edit((d) => { const x = d.zones.find((q) => q.id === z.id); x.name = v.name; x.areas = v.areas || []; },
+            JSON.stringify(v.areas || []) !== before);              // new areas: new sensors and lights below
+        }, { name: "Name", areas: "Areas" }));
+    }
     const basics = root.querySelector('[data-form="basics"]');
     if (basics && z) {
       basics.appendChild(this._form([
-        { name: "name", selector: { text: {} } }, { name: "areas", selector: { area: { multiple: true } } },
         { name: "illuminance", selector: { entity: { multiple: true, filter: { domain: "sensor", device_class: "illuminance" } } } },
         { name: "hand_max_minutes", selector: { number: { min: 1, max: 1440, mode: "box", unit_of_measurement: "min" } } },
-      ], { name: z.name || "", areas: z.areas || [], illuminance: z.illuminance || [],
+      ], { illuminance: z.illuminance || [],
         hand_max_minutes: z.hand_max_minutes ?? undefined },
       (v) => this._edit((d) => {
         const x = d.zones.find((q) => q.id === z.id);
-        x.name = v.name; x.areas = v.areas || [];
         if (v.illuminance?.length) x.illuminance = v.illuminance; else delete x.illuminance;
         if (typeof v.hand_max_minutes === "number") x.hand_max_minutes = v.hand_max_minutes; else delete x.hand_max_minutes;
-      }), { name: "Name", areas: "Areas", illuminance: "Own light sensors",
+      }), { illuminance: "Own light sensors",
         hand_max_minutes: "Hand changes last at most" },
       { illuminance: "Leave empty to use (the average of) the areas' light sensors.",
         hand_max_minutes: "Minutes a light changed by hand is left alone, even with the room still occupied. Leave empty for no limit (until the room is empty)." }));
