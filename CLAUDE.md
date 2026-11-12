@@ -831,6 +831,9 @@ hue/sat, effect, delay; device-setting rows for numbers/selects/switches), 4 add
   "Devices" became "More settings" (own light sensors, hand-change cap); Delete room at the bottom.
 - **0.48.2:** switching a light's Manage off also takes it out of the room's rules and Mode starts
   (`_forget`), so the What-the-lights-do table and validation agree with the Lights section.
+- **0.48.3:** light tables (`_targetsHtml`, add-on steps) put the remove × first in each row and scroll
+  sideways (`.tgw`) instead of clipping; `.brow` grid is `120px minmax(0, 1fr)` so a step's table can
+  shrink. Before, in an add-on step the × sat past the card edge and couldn't be reached.
 - Decided 2026-11-12: room timing stays **per mode** (cells may override); simple light-only
   mode-begins add-ons **migrate into the Mode starts column**; **`static` is dropped** (migrates to a
   Mode-starts-only preset); 0.46.1 ships **with phase 2** (one restart). Still open: add-ons using

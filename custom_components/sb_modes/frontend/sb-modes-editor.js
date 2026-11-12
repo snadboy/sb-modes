@@ -264,7 +264,9 @@ table.rt tr.muted td { color: var(--secondary-text-color); }
 .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; border: 1px solid color-mix(in srgb, var(--divider-color) 80%, transparent); }
 .occ { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--success-color, #43a047); margin-right: 6px; }
 @media (max-width: 600px) { table.rt col:nth-child(3), table.rt td:nth-child(3), table.rt th:nth-child(3) { display: none; } }
-table.tg { width: 100%; max-width: 760px; border-collapse: collapse; font-size: 14px; table-layout: fixed; }
+.tgw { overflow-x: auto; max-width: 100%; }
+.brow > div { min-width: 0; }
+table.tg { width: 100%; min-width: 480px; max-width: 760px; border-collapse: collapse; font-size: 14px; table-layout: fixed; }
 table.tg td { padding: 5px 6px 5px 0; vertical-align: middle; border-bottom: 1px solid color-mix(in srgb, var(--divider-color) 60%, transparent); }
 table.tg td.n { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 table.tg td { white-space: nowrap; }
@@ -278,14 +280,16 @@ table.tg input[type=number] { width: 64px; }
   table.tg colgroup, table.tg thead { display: none; }
   table.tg tr { display: grid; grid-template-columns: auto auto auto 1fr auto; align-items: center; gap: 4px 8px; padding: 8px 0; border-bottom: 1px solid var(--divider-color); }
   table.tg td { padding: 0; border-bottom: 0; }
-  table.tg td.n { grid-column: 1 / -1; width: auto; }
+  table.tg td.n { grid-column: 1 / -1; width: auto; order: -1; }
+  table.tg td.rmc { order: 9; }
+  table.tg { min-width: 0; }
 }
 .step { border-left: 3px solid var(--divider-color); padding-left: 10px; margin: 10px 0; }
 .step .sh { display: flex; align-items: center; gap: 8px; font-size: 14px; }
 .step input { width: 64px; }
 .devices summary { cursor: pointer; font-size: 13px; font-weight: 500; text-transform: uppercase; letter-spacing: .05em; color: var(--secondary-text-color); list-style: none; display: flex; gap: 10px; align-items: baseline; }
 .devices summary .sub { text-transform: none; letter-spacing: 0; font-weight: 400; color: var(--primary-text-color); font-size: 13px; }
-.brow { display: grid; grid-template-columns: 120px 1fr; gap: 10px; align-items: start; padding: 8px 0; border-top: 1px solid var(--divider-color); }
+.brow { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 10px; align-items: start; padding: 8px 0; border-top: 1px solid var(--divider-color); }
 .brow:first-child { border-top: none; }
 /* Times */
 .dtrow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 0; border-top: 1px solid var(--divider-color); }
@@ -1491,16 +1495,16 @@ this._goRoomMode(z, m);
       const mode = t.state === "off" ? "off" : t.min_brightness_pct != null ? "min" : "on";
       const pct = mode === "min" ? t.min_brightness_pct : t.brightness_pct;
       const isLight = eid.startsWith("light.");
-      return `<tr data-eid="${esc(eid)}"><td class="n" title="${esc(this._name(eid))} (${esc(eid)})">${esc(zoneId ? this._short(eid, zoneId) : this._name(eid))}</td>
+      return `<tr data-eid="${esc(eid)}"><td class="rmc"><button class="ic" data-f="rm" title="Remove ${esc(this._name(eid))}" aria-label="Remove ${esc(this._name(eid))}">×</button></td><td class="n" title="${esc(this._name(eid))} (${esc(eid)})">${esc(zoneId ? this._short(eid, zoneId) : this._name(eid))}</td>
         <td><select data-f="mode" aria-label="Setting">${[["on", "On"], ["off", "Off"], ...(isLight ? [["min", "At least"]] : [])].map(([v, l]) => `<option value="${v}" ${v === mode ? "selected" : ""}>${l}</option>`).join("")}</select></td>
         <td>${isLight && mode !== "off" ? `<input class="in" type="number" min="0" max="100" data-f="pct" value="${esc(pct ?? "")}" placeholder="—" aria-label="Brightness %"> %` : ""}</td>
         <td>${isLight && mode === "on" ? `<input class="in" type="number" min="1500" max="9000" step="100" data-f="k" value="${esc(t.color_temp_kelvin ?? "")}" placeholder="—" aria-label="Colour temperature K"> K` : ""}</td>
-        <td><button class="ic" data-f="rm" title="Remove" aria-label="Remove">×</button></td></tr>`;
+</tr>`;
     }).join("");
     return `<div class="tg-wrap" data-loc='${id}'>
       ${spec.label ? `<div class="tlabel">${esc(spec.label)}</div>` : ""}${spec.help ? `<div class="help">${esc(spec.help)}</div>` : ""}
-      ${rows ? `<table class="tg"><colgroup><col class="cn"><col style="width:112px"><col style="width:104px"><col style="width:124px"><col style="width:40px"></colgroup>
-        <thead><tr><th><button class="th" data-sortt="tg">Light ${dir > 0 ? "▲" : "▼"}</button></th><th>Setting</th><th>Level</th><th>Colour temp</th><th></th></tr></thead><tbody>${rows}</tbody></table>` : `<div class="empty">No lights set.</div>`}
+      ${rows ? `<div class="tgw"><table class="tg"><colgroup><col style="width:34px"><col class="cn"><col style="width:112px"><col style="width:104px"><col style="width:124px"></colgroup>
+        <thead><tr><th></th><th><button class="th" data-sortt="tg">Light ${dir > 0 ? "▲" : "▼"}</button></th><th>Setting</th><th>Level</th><th>Colour temp</th></tr></thead><tbody>${rows}</tbody></table></div>` : `<div class="empty">No lights set.</div>`}
       <div class="tools"><div class="add" data-picker='${id}'></div>
         <button class="b sm" data-tg="capture" title="Fill from how the lights are right now">Use the lights as they are now</button>
         ${zoneId ? `<button class="b sm" data-tg="try" ${rows ? "" : "disabled"} title="Set these now and hold the room 15 min">Try it</button>` : ""}</div>
