@@ -834,6 +834,9 @@ hue/sat, effect, delay; device-setting rows for numbers/selects/switches), 4 add
 - **0.48.3:** light tables (`_targetsHtml`, add-on steps) put the remove × first in each row and scroll
   sideways (`.tgw`) instead of clipping; `.brow` grid is `120px minmax(0, 1fr)` so a step's table can
   shrink. Before, in an add-on step the × sat past the card edge and couldn't be reached.
+- **0.48.4:** add-on step layout: "Remove step" is a labelled button shown only with 2+ steps (was a
+  lone disabled ×); step column 150px with the action select at 100%; light pickers stacked in
+  `.pickers` under the table, "Use the lights as they are now" / "Try it" on their own row.
 - Decided 2026-11-12: room timing stays **per mode** (cells may override); simple light-only
   mode-begins add-ons **migrate into the Mode starts column**; **`static` is dropped** (migrates to a
   Mode-starts-only preset); 0.46.1 ships **with phase 2** (one restart). Still open: add-ons using

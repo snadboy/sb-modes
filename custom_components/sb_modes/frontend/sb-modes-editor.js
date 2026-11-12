@@ -289,7 +289,8 @@ table.tg input[type=number] { width: 64px; }
 .step input { width: 64px; }
 .devices summary { cursor: pointer; font-size: 13px; font-weight: 500; text-transform: uppercase; letter-spacing: .05em; color: var(--secondary-text-color); list-style: none; display: flex; gap: 10px; align-items: baseline; }
 .devices summary .sub { text-transform: none; letter-spacing: 0; font-weight: 400; color: var(--primary-text-color); font-size: 13px; }
-.brow { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 10px; align-items: start; padding: 8px 0; border-top: 1px solid var(--divider-color); }
+.pickers { display: flex; flex-direction: column; gap: 10px; max-width: 420px; margin: 10px 0 4px; }
+.brow { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 10px; align-items: start; padding: 8px 0; border-top: 1px solid var(--divider-color); }
 .brow:first-child { border-top: none; }
 /* Times */
 .dtrow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 0; border-top: 1px solid var(--divider-color); }
@@ -1446,11 +1447,11 @@ this._goRoomMode(z, m);
     else body = `<div class="form" data-form="ad-script" data-i="${i}"></div><div class="help">The script gets: zone, zone_name, mode, occupied, held, changed_by_hand, addon.</div>`;
     return `<div class="brow"><div><label class="help" style="display:block">${i ? "Then after" : "At the trigger, after"}</label>
         <input class="in" type="number" min="0" max="1440" data-st-min="${i}" value="${esc(st.after_minutes ?? 0)}" style="width:64px"> min
-        <button class="ic" data-st-rm="${i}" title="Remove step" aria-label="Remove step" ${(a.steps || []).length > 1 ? "" : "disabled"}>×</button>
         <label class="help" style="display:block;margin-top:4px">plus up to <input class="in" type="number" min="0" max="1440" data-st-rnd="${i}" value="${esc(st.random_minutes || 0)}" style="width:56px"> min at random</label>
-        <select data-st-act="${i}" style="display:block;margin-top:6px">${[["lights", "Set lights"], ["hold", "Hold the room"], ["release", "Release the room"], ["script", "Run a script"],
+        <select data-st-act="${i}" style="display:block;margin-top:6px;width:100%;max-width:100%">${[["lights", "Set lights"], ["hold", "Hold the room"], ["release", "Release the room"], ["script", "Run a script"],
           ["mode", "Set the house mode"], ["resume", "Resume the schedule"]]
-          .map(([v, l]) => `<option value="${v}" ${v === act ? "selected" : ""}>${l}</option>`).join("")}</select></div>
+          .map(([v, l]) => `<option value="${v}" ${v === act ? "selected" : ""}>${l}</option>`).join("")}</select>
+        ${(a.steps || []).length > 1 ? `<button class="b sm danger" data-st-rm="${i}" style="margin-top:8px">Remove step</button>` : ""}</div>
       <div>${body}</div></div>`;
   }
 
@@ -1505,8 +1506,8 @@ this._goRoomMode(z, m);
       ${spec.label ? `<div class="tlabel">${esc(spec.label)}</div>` : ""}${spec.help ? `<div class="help">${esc(spec.help)}</div>` : ""}
       ${rows ? `<div class="tgw"><table class="tg"><colgroup><col style="width:34px"><col class="cn"><col style="width:112px"><col style="width:104px"><col style="width:124px"></colgroup>
         <thead><tr><th></th><th><button class="th" data-sortt="tg">Light ${dir > 0 ? "▲" : "▼"}</button></th><th>Setting</th><th>Level</th><th>Colour temp</th></tr></thead><tbody>${rows}</tbody></table></div>` : `<div class="empty">No lights set.</div>`}
-      <div class="tools"><div class="add" data-picker='${id}'></div>
-        <button class="b sm" data-tg="capture" title="Fill from how the lights are right now">Use the lights as they are now</button>
+      <div class="pickers" data-picker='${id}'></div>
+      <div class="tools"><button class="b sm" data-tg="capture" title="Fill from how the lights are right now">Use the lights as they are now</button>
         ${zoneId ? `<button class="b sm" data-tg="try" ${rows ? "" : "disabled"} title="Set these now and hold the room 15 min">Try it</button>` : ""}</div>
       <div class="errs-slot" data-path='${esc(JSON.stringify(this._locPath(loc)))}'></div></div>`;
   }
