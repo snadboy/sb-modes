@@ -783,5 +783,7 @@ hue/sat, effect, delay; device-setting rows for numbers/selects/switches), 4 add
   "Room <name>, <mode>: …", change summaries say "Room … added/renamed", card says Rooms, service
   display names are Hold room / Release room. Ids are unchanged: `zones` key, `zone` service field,
   `hold_zone` / `release_zone` services, `sb_modes_zone` attribute (automations depend on them).
-- Open questions (doc): room timing per mode vs room-wide; mode-begins add-ons → Mode starts column;
-  add-ons using lights outside the room; lux lowest vs average; is `static` still needed.
+- Decided 2026-11-12: room timing stays **per mode** (cells may override); simple light-only
+  mode-begins add-ons **migrate into the Mode starts column**; **`static` is dropped** (migrates to a
+  Mode-starts-only preset); 0.46.1 ships **with phase 2** (one restart). Still open: add-ons using
+  lights outside the room (default: keep that freedom); lux lowest vs average (default: lowest).
