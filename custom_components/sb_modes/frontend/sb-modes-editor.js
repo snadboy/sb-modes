@@ -1190,11 +1190,25 @@ this._goRoomMode(z, m);
       sp.add = sp.add.filter((e) => e !== eid);
       if (on && !inArea) sp.add.push(eid);
       if (!on && inArea) sp.exclude.push(eid);
+      if (!on && key === "lights") this._forget(z, eid);         // no longer the room's: out of its rules too
       const out = {};
       if (sp.exclude.length) out.exclude = sp.exclude;
       if (sp.add.length) out.add = sp.add;
       if (Object.keys(out).length) z[key] = out; else delete z[key];
     }, true);
+  }
+  /** Take a light out of everything the room's rules and Mode starts set. */
+  _forget(z, eid) {
+    for (const ch of Object.values(z.overrides || {})) {
+      const params = this._beh(ch?.behaviour).params || {}, p = ch?.params || {};
+      for (const [k, sp] of Object.entries(params)) {
+        if (sp.type === "entities" && Array.isArray(p[k])) p[k] = p[k].filter((e) => e !== eid);
+        else if (sp.type === "targets" && p[k] && typeof p[k] === "object") delete p[k][eid];
+      }
+    }
+    for (const [m, t] of Object.entries(z.mode_starts || {})) { delete t[eid]; if (!Object.keys(t).length) delete z.mode_starts[m]; }
+    if (z.mode_starts && !Object.keys(z.mode_starts).length) delete z.mode_starts;
+    if (this._cellEd?.e === eid) this._cellEd = null;
   }
   _saySensors(z) {
     const m = this._members(z, "occupancy");

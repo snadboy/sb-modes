@@ -829,6 +829,8 @@ hue/sat, effect, delay; device-setting rows for numbers/selects/switches), 4 add
 - **0.48.1:** Name + Areas sit at the top of the room page (always open, `data-form="room"`); a room with
   no areas shows only that plus a prompt; choosing the first area opens Presence sensors and Lights.
   "Devices" became "More settings" (own light sensors, hand-change cap); Delete room at the bottom.
+- **0.48.2:** switching a light's Manage off also takes it out of the room's rules and Mode starts
+  (`_forget`), so the What-the-lights-do table and validation agree with the Lights section.
 - Decided 2026-11-12: room timing stays **per mode** (cells may override); simple light-only
   mode-begins add-ons **migrate into the Mode starts column**; **`static` is dropped** (migrates to a
   Mode-starts-only preset); 0.46.1 ships **with phase 2** (one restart). Still open: add-ons using
