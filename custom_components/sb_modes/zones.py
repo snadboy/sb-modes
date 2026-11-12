@@ -68,14 +68,19 @@ def zone_entities(hass: HomeAssistant, areas: list[str], lights=None, occupancy=
 
 
 def watched_lights(hass: HomeAssistant, lights: list[str]) -> list[str]:
-    """The lights to watch for hand changes: a light group is left out when all its members are
-    watched anyway (a member changed by hand would otherwise count twice)."""
+    """The lights to watch for hand changes, each change counted once: a light group is left out
+    when all its members are watched, and a switch when its light twin (switch_as_x, same
+    device) is."""
+    ent_reg = er.async_get(hass)
     have = set(lights)
+    twins = {e.device_id for eid in lights if (e := ent_reg.async_get(eid)) and e.platform == "switch_as_x" and e.device_id}
     out = []
     for eid in lights:
         st = hass.states.get(eid)
         members = st.attributes.get("entity_id") if st is not None else None
         if isinstance(members, list) and members and set(members) <= have:
+            continue
+        if eid.startswith("switch.") and (e := ent_reg.async_get(eid)) and e.device_id in twins:
             continue
         out.append(eid)
     return out

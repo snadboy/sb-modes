@@ -9,6 +9,7 @@ from freezegun.api import FrozenDateTimeFactory
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import area_registry as ar
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from pytest_homeassistant_custom_component.common import (
@@ -2385,3 +2386,25 @@ async def test_area_entities_for_the_editor(hass, kitchen, hass_ws_client) -> No
     r = await _ws(hass, hass_ws_client, type="sb_modes/area_entities", areas=["kitchen"])
     assert r["result"] == {"lights": [CEILING, SINK], "groups": ["light.kitchen_lights"], "switches": ["switch.plug"],
                            "occupancy": [OCC], "illuminance": [LUX]}
+
+
+async def test_a_switch_and_its_light_twin_count_once(hass, kitchen, freezer) -> None:
+    reg = er.async_get(hass)
+    owner = MockConfigEntry(domain="test")
+    owner.add_to_hass(hass)
+    dev = dr.async_get(hass).async_get_or_create(config_entry_id=owner.entry_id, identifiers={("test", "plug")})
+    dr.async_get(hass).async_update_device(dev.id, area_id=ar.async_get(hass).async_get_area_by_name("Kitchen").id)
+    sw = reg.async_get_or_create("switch", "test", "plug", suggested_object_id="plug", device_id=dev.id,
+                                 hidden_by=er.RegistryEntryHider.INTEGRATION)
+    tw = reg.async_get_or_create("light", "switch_as_x", "plug", suggested_object_id="plug", device_id=dev.id)
+    hass.states.async_set(sw.entity_id, "off")
+    hass.states.async_set(tw.entity_id, "off")
+    await _setup(hass)
+    t = _with("vacancy_off", {"lights": [sw.entity_id], "off_after_seconds": 60})
+    t["zones"][0]["lights"] = {"add": [sw.entity_id]}
+    await _save(hass, t)
+    acts = _acts(hass)
+    hass.states.async_set(sw.entity_id, "on", context=Context(user_id="app"))
+    hass.states.async_set(tw.entity_id, "on", context=Context(user_id="app"))
+    await hass.async_block_till_done()
+    assert [a.data["kind"] for a in acts] == ["hand"], [a.data for a in acts]

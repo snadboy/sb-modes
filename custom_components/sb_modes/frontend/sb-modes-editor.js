@@ -209,6 +209,15 @@ select, input.in { font: inherit; font-size: 14px; color: var(--primary-text-col
 .box .bh { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
 .box .bh b { flex: 1; font-weight: 500; }
 .tlabel { font-weight: 500; font-size: 14px; margin: 12px 0 2px; }
+table.rt { width: 100%; max-width: 860px; border-collapse: collapse; font-size: 14px; table-layout: fixed; margin: 4px 0 8px; }
+table.rt th { text-align: left; font-weight: 500; font-size: 12px; color: var(--secondary-text-color); padding: 4px 6px 4px 0; }
+table.rt td { padding: 6px 6px 6px 0; vertical-align: middle; border-bottom: 1px solid color-mix(in srgb, var(--divider-color) 60%, transparent); }
+table.rt td.n { white-space: normal; }
+table.rt tr.muted td { color: var(--secondary-text-color); }
+.mtag { display: inline-block; font-size: 11px; line-height: 18px; padding: 0 7px; border-radius: 9px; background: color-mix(in srgb, var(--divider-color) 70%, transparent); color: var(--secondary-text-color); margin-left: 4px; white-space: nowrap; }
+.swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; border: 1px solid color-mix(in srgb, var(--divider-color) 80%, transparent); }
+.occ { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--success-color, #43a047); margin-right: 6px; }
+@media (max-width: 600px) { table.rt col:nth-child(3), table.rt td:nth-child(3), table.rt th:nth-child(3) { display: none; } }
 table.tg { width: 100%; max-width: 760px; border-collapse: collapse; font-size: 14px; table-layout: fixed; }
 table.tg td { padding: 5px 6px 5px 0; vertical-align: middle; border-bottom: 1px solid color-mix(in srgb, var(--divider-color) 60%, transparent); }
 table.tg td.n { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -608,6 +617,11 @@ export class SbModesEditor extends HTMLElement {
     return owner.kind === "mode" ? ["modes", this._modeIndex(owner.mode), "default"] : ["zones", this._zoneIndex(owner.zone), "overrides", owner.mode];
   }
   _zoneOf(loc) { return loc.k === "choice" ? (loc.owner.kind === "zone" ? loc.owner.zone : null) : loc.zone; }
+  /** The lights a room's rule may set (its managed lights), or null: not a room's rule, or still loading. */
+  _ruleLights(loc) {
+    const z = loc.k === "choice" && loc.owner.kind === "zone" ? this._zoneObj(loc.owner.zone) : null;
+    return z ? this._members(z, "lights") : null;
+  }
   _targetsRef(d, loc) {
     const z = this._zoneOf(loc) ? d.zones.find((q) => q.id === this._zoneOf(loc)) : null;
     if (loc.k === "choice") {
@@ -855,6 +869,8 @@ export class SbModesEditor extends HTMLElement {
         <label class="zon">SB Modes runs this room <ha-switch data-zone-on="${esc(z.id)}" ${off ? "" : "checked"}></ha-switch></label></div>
       <div class="errs-slot" data-path='${esc(JSON.stringify(["zones", zi]))}'></div>
       ${off ? `<div class="card zoffnote"><div class="sec">Switched off: SB Modes leaves ${esc(z.name || z.id)} alone in every mode — no rule, no add-ons, hand changes not tracked. Its settings below are kept for when you switch it back on.</div></div>` : ""}
+      ${this._secHtml("sensors", "Presence sensors", this._saySensors(z), this._roomSensorsHtml(z))}
+      ${this._secHtml("lights", "Lights", this._sayLights(z), this._roomLightsHtml(z))}
       ${this._secHtml("rule", "Default rule", normal ? this._sayChoice(normal, z.id) : "none set — choose a behaviour",
         this._ruleCtxHtml(z, own) + this._choiceEditorHtml({ kind: "zone", zone: z.id, mode: ALL }, normal))}
       ${this._secHtml("bymode", "By mode", own.length ? `own rule in ${own.map((m) => `${m.name || m.id} (${this._beh(z.overrides[m.id].behaviour).label})`).join(", ")}` : "the default rule in every mode",
@@ -884,10 +900,141 @@ export class SbModesEditor extends HTMLElement {
   }
 
   _sayDevices(z, zs) {
-    const a = zs?.attributes || {};
-    const lights = z.lights || a.lights || [], occ = z.occupancy || a.occupancy || [], lux = z.illuminance || a.illuminance || [];
-    return [`areas ${(z.areas || []).join(", ") || "—"}`, `${lights.length} light${lights.length === 1 ? "" : "s"}`,
-      `presence: ${occ.map((e) => this._short(e, z.id)).join(", ") || "—"}`, lux.length ? `light level: ${lux.map((e) => this._short(e, z.id)).join(", ")}` : ""].filter(Boolean).join(" · ");
+    const lux = z.illuminance || zs?.attributes?.illuminance || [];
+    return [`areas ${(z.areas || []).join(", ") || "—"}`, lux.length ? `light level: ${lux.map((e) => this._short(e, z.id)).join(", ")}` : ""].filter(Boolean).join(" · ");
+  }
+
+  // ── a room's sensors and lights: what its areas hold, adjusted by {exclude, add} ──
+  /** What the room's areas offer (sb_modes/area_entities), fetched once per set of areas. */
+  _areaEnts(z) {
+    const key = (z.areas || []).slice().sort().join(",");
+    this._areaCache ||= {};
+    if (!(key in this._areaCache)) {
+      this._areaCache[key] = null;
+      this._ws({ type: "sb_modes/area_entities", areas: z.areas || [] })
+        .then((r) => { this._areaCache[key] = r; if (this._view === "room") this._render(); })
+        .catch(() => { delete this._areaCache[key]; });
+    }
+    return this._areaCache[key];
+  }
+  /** {exclude, add} for a room's lights / occupancy; the older plain list read as one. */
+  _spec(found, spec) {
+    if (Array.isArray(spec) && spec.length) return { exclude: found.filter((e) => !spec.includes(e)), add: spec.filter((e) => !found.includes(e)) };
+    return { exclude: [...(spec?.exclude || [])], add: [...(spec?.add || [])] };
+  }
+  /** The room's lights (key "lights") or presence sensors ("occupancy"); null while loading. */
+  _members(z, key) {
+    const a = this._areaEnts(z);
+    if (!a) return null;
+    const found = a[key] || [], sp = this._spec(found, z[key]);
+    return [...found.filter((e) => !sp.exclude.includes(e)), ...sp.add.filter((e) => !found.includes(e))];
+  }
+  /** Lights and switches the room's own rules set (any mode) → the modes that set them. */
+  _ruleEnts(z) {
+    const out = {};
+    for (const [mid, ch] of Object.entries(z.overrides || {})) {
+      const params = this._beh(ch?.behaviour).params || {}, p = ch?.params || {};
+      const add = (e) => { if (/^(light|switch)\./.test(e)) (out[e] ||= []).push(this._modeName(mid)); };
+      for (const [k, sp] of Object.entries(params)) {
+        if (sp.type === "entities" && Array.isArray(p[k])) p[k].forEach(add);
+        else if (sp.type === "targets" && p[k] && typeof p[k] === "object") Object.keys(p[k]).forEach(add);
+      }
+    }
+    return out;
+  }
+  /** Put an entity in or out of the room's lights / occupancy, as an exclude or an add. */
+  _setMember(zoneId, key, eid, on) {
+    this._edit((d) => {
+      const z = d.zones.find((x) => x.id === zoneId), found = (this._areaEnts(z) || {})[key] || [];
+      const sp = this._spec(found, z[key]), inArea = found.includes(eid);
+      sp.exclude = sp.exclude.filter((e) => e !== eid);
+      sp.add = sp.add.filter((e) => e !== eid);
+      if (on && !inArea) sp.add.push(eid);
+      if (!on && inArea) sp.exclude.push(eid);
+      const out = {};
+      if (sp.exclude.length) out.exclude = sp.exclude;
+      if (sp.add.length) out.add = sp.add;
+      if (Object.keys(out).length) z[key] = out; else delete z[key];
+    }, true);
+  }
+  _saySensors(z) {
+    const m = this._members(z, "occupancy");
+    return m === null ? "…" : m.length ? m.map((e) => this._short(e, z.id)).join(", ") : "none — only Off after a while and Hands off work";
+  }
+  _sayLights(z) {
+    const m = this._members(z, "lights");
+    return m === null ? "…" : `${m.length} managed, all watched for hand changes`;
+  }
+  _sw(key, eid, on, extra = "") {
+    return `<ha-switch data-mem="${key}" data-eid="${esc(eid)}" ${on ? "checked" : ""} ${extra}></ha-switch>`;
+  }
+  /** A switch shown as a light (switch_as_x) is one plug: name the light it is. */
+  _twinTag(eid) {
+    const dev = this._hass.entities?.[eid]?.device_id;
+    const tw = dev && Object.values(this._hass.entities).find((x) => x.device_id === dev && x.platform === "switch_as_x");
+    return tw ? `same plug as ${this._short(tw.entity_id, this._room)}` : "switch";
+  }
+  _areaName(eid) {
+    const e = this._hass.entities?.[eid], dev = e?.device_id ? this._hass.devices?.[e.device_id] : null;
+    const id = e?.area_id || dev?.area_id;
+    return id ? this._hass.areas?.[id]?.name || id : "no area";
+  }
+  _nowLight(eid) {
+    const st = this._hass.states[eid];
+    if (!st) return `<span class="help">${this._hass.entities?.[eid] ? "missing" : "disabled or missing"}</span>`;
+    if (st.state !== "on") return esc(st.state === "off" ? "Off" : st.state);
+    const a = st.attributes, rgb = a.rgb_color, bits = ["On"];
+    if (a.brightness != null) bits.push(`${Math.round(a.brightness * 100 / 255)}%`);
+    if (a.color_mode === "color_temp" && a.color_temp_kelvin) bits.push(`${a.color_temp_kelvin} K`);
+    if (a.effect && a.effect !== "None" && a.effect !== "off") bits.push(a.effect);
+    return `${rgb ? `<span class="swatch" style="background:rgb(${rgb.join(",")})"></span>` : ""}${esc(bits.join(" · "))}`;
+  }
+  _roomSensorsHtml(z) {
+    const a = this._areaEnts(z);
+    if (!a) return `<div class="empty">Loading the areas' sensors…</div>`;
+    const used = this._members(z, "occupancy"), all = [...new Set([...a.occupancy, ...used])];
+    const luxOf = (eid) => {
+      const dev = this._hass.entities?.[eid]?.device_id;
+      const lx = dev && [...a.illuminance, ...(z.illuminance || [])].find((x) => this._hass.entities?.[x]?.device_id === dev);
+      const st = lx && this._hass.states[lx];
+      return st && !isNaN(parseFloat(st.state)) ? `${Math.round(parseFloat(st.state))} lx` : "—";
+    };
+    const rows = all.map((eid) => {
+      const on = used.includes(eid), last = on && used.length === 1, st = this._hass.states[eid];
+      const now = !st ? "missing" : st.state === "on" ? "Occupied" : st.state === "off" ? "Clear" : st.state;
+      const other = !a.occupancy.includes(eid);
+      return `<tr><td>${this._sw("occupancy", eid, on, last ? `disabled title="A room keeps at least one sensor; add another first"` : "")}</td>
+        <td class="n" title="${esc(eid)}">${esc(this._short(eid, z.id))}${other ? ` <span class="mtag">added</span>` : ""}</td>
+        <td>${esc(this._areaName(eid))}</td><td>${st?.state === "on" ? `<span class="occ"></span>` : ""}${esc(now)}</td><td>${luxOf(eid)}</td>
+        <td>${other ? `<button class="ic" data-mem-rm="occupancy" data-eid="${esc(eid)}" title="Remove" aria-label="Remove">×</button>` : ""}</td></tr>`;
+    }).join("");
+    return `<div class="help">Every presence sensor in the room's areas. Switch one off to leave it out; the room is occupied while any switched-on sensor sees someone.</div>
+      ${rows ? `<table class="rt"><colgroup><col style="width:64px"><col class="cn"><col style="width:140px"><col style="width:110px"><col style="width:70px"><col style="width:36px"></colgroup>
+        <thead><tr><th>Use</th><th>Sensor</th><th>Area</th><th>Now</th><th>Lux</th><th></th></tr></thead><tbody>${rows}</tbody></table>` : `<div class="empty">No presence sensors in these areas.</div>`}
+      <div class="tools"><div class="add" data-mem-add="occupancy"></div></div>`;
+  }
+  _roomLightsHtml(z) {
+    const a = this._areaEnts(z);
+    if (!a) return `<div class="empty">Loading the areas' lights…</div>`;
+    const used = this._members(z, "lights"), rules = this._ruleEnts(z);
+    const row = (eid, on, opts = {}) => {
+      const tags = [opts.tag, rules[eid] ? `in rules: ${[...new Set(rules[eid])].join(", ")}` : ""].filter(Boolean);
+      return `<tr class="${opts.muted ? "muted" : ""}"><td>${opts.fixed ? "" : this._sw("lights", eid, on)}</td>
+        <td class="n" title="${esc(eid)}">${esc(this._short(eid, z.id))}${tags.map((t) => ` <span class="mtag">${esc(t)}</span>`).join("")}${opts.sub ? `<div class="help" style="margin:0">${esc(opts.sub)}</div>` : ""}</td>
+        <td>${esc(this._areaName(eid))}</td><td>${this._nowLight(eid)}</td>
+        <td>${opts.rm ? `<button class="ic" data-mem-rm="lights" data-eid="${esc(eid)}" title="Remove" aria-label="Remove">×</button>` : ""}</td></tr>`;
+    };
+    const areaLights = a.lights.map((e) => row(e, used.includes(e)));
+    const groups = a.groups.filter((e) => !used.includes(e)).map((e) => row(e, false, { fixed: true, muted: true, tag: "light group", sub: "Not offered: a group repeats its members" }));
+    const added = used.filter((e) => !a.lights.includes(e) && !a.switches.includes(e))
+      .map((e) => row(e, true, { rm: true, tag: a.groups.includes(e) || this._hass.states[e]?.attributes?.entity_id ? "light group" : e.startsWith("switch.") ? this._twinTag(e) : "added" }));
+    const switches = a.switches.map((e) => row(e, used.includes(e), { tag: "switch" }));
+    const tbl = (rows, head) => rows.length ? `<table class="rt"><colgroup><col style="width:64px"><col class="cn"><col style="width:140px"><col style="width:170px"><col style="width:36px"></colgroup>
+      <thead><tr><th>${head}</th><th>Light</th><th>Area</th><th>Now</th><th></th></tr></thead><tbody>${rows.join("")}</tbody></table>` : "";
+    return `<div class="help">Every light in the room's areas. Managed lights are the ones SB Modes sets, and every one is watched for hand changes. A rule can only set a managed light.</div>
+      ${tbl([...areaLights, ...added, ...groups], "Manage") || `<div class="empty">No lights in these areas.</div>`}
+      <div class="tools"><div class="add" data-mem-add="lights"></div></div>
+      ${switches.length ? `<div class="tlabel">Switches in these areas</div><div class="help">Not managed unless switched on here (a plug, a fan). Device settings like LEDs aren't listed.</div>${tbl(switches, "Manage")}` : ""}`;
   }
 
   _roomModeRowHtml(z, m) {
@@ -1296,20 +1443,18 @@ export class SbModesEditor extends HTMLElement {
     if (basics && z) {
       basics.appendChild(this._form([
         { name: "name", selector: { text: {} } }, { name: "areas", selector: { area: { multiple: true } } },
-        { name: "lights", selector: { entity: { multiple: true, filter: { domain: ["light", "switch"] } } } },
-        { name: "occupancy", selector: { entity: { multiple: true, filter: { domain: "binary_sensor", device_class: ["occupancy", "presence"] } } } },
         { name: "illuminance", selector: { entity: { multiple: true, filter: { domain: "sensor", device_class: "illuminance" } } } },
         { name: "hand_max_minutes", selector: { number: { min: 1, max: 1440, mode: "box", unit_of_measurement: "min" } } },
-      ], { name: z.name || "", areas: z.areas || [], lights: z.lights || [], occupancy: z.occupancy || [], illuminance: z.illuminance || [],
+      ], { name: z.name || "", areas: z.areas || [], illuminance: z.illuminance || [],
         hand_max_minutes: z.hand_max_minutes ?? undefined },
       (v) => this._edit((d) => {
         const x = d.zones.find((q) => q.id === z.id);
         x.name = v.name; x.areas = v.areas || [];
-        for (const k of ["lights", "occupancy", "illuminance"]) { if (v[k]?.length) x[k] = v[k]; else delete x[k]; }
+        if (v.illuminance?.length) x.illuminance = v.illuminance; else delete x.illuminance;
         if (typeof v.hand_max_minutes === "number") x.hand_max_minutes = v.hand_max_minutes; else delete x.hand_max_minutes;
-      }), { name: "Name", areas: "Areas", lights: "Own lights", occupancy: "Own presence sensors", illuminance: "Own light sensors",
+      }), { name: "Name", areas: "Areas", illuminance: "Own light sensors",
         hand_max_minutes: "Hand changes last at most" },
-      { lights: "Leave empty to use every light in the areas.", occupancy: "Leave empty to use the areas' presence sensors.", illuminance: "Leave empty to use (the average of) the areas' light sensors.",
+      { illuminance: "Leave empty to use (the average of) the areas' light sensors.",
         hand_max_minutes: "Minutes a light changed by hand is left alone, even with the room still occupied. Leave empty for no limit (until the room is empty)." }));
     }
     const ad = z && this._openAddon?.startsWith(`${z.id}|`) ? (z.addons || []).find((x) => `${z.id}|${x.id}` === this._openAddon) : null;
@@ -1455,7 +1600,12 @@ export class SbModesEditor extends HTMLElement {
         labels[k] = s.label || k; helps[k] = s.help;
         if (s.type === "number") schema.push({ name: k, required: !!s.required, selector: { number: { min: s.min, max: s.max, mode: "box", unit_of_measurement: s.unit } } });
         else if (s.type === "bool") schema.push({ name: k, selector: { boolean: {} } });
-        else if (s.type === "entities") schema.push({ name: k, required: !!s.required, selector: { entity: { multiple: true, filter: { domain: s.domains } } } });
+        else if (s.type === "entities") {
+          const mine = this._ruleLights({ k: "choice", owner });
+          schema.push({ name: k, required: !!s.required, selector: { entity: mine
+            ? { multiple: true, include_entities: [...new Set([...mine, ...((ch.params || {})[k] || [])])] }
+            : { multiple: true, filter: { domain: s.domains } } } });
+        }
         else if (s.type === "entity") schema.push({ name: k, required: !!s.required, selector: { entity: { filter: { domain: s.domains } } } });
         else if (s.type === "mode") schema.push({ name: k, required: !!s.required, selector: { select: { mode: "dropdown", options: modeOpts() } } });
       }
@@ -1470,9 +1620,18 @@ export class SbModesEditor extends HTMLElement {
       slot.appendChild(form);
     });
     root.querySelectorAll("[data-picker]").forEach((slot) => {
-      const loc = JSON.parse(slot.dataset.picker);
-      this._picker(slot, { entity: { filter: { domain: ["light", "switch", "number"] } } }, "Add a light",
-        (eid) => this._edit((d) => { this._targetsRef(d, loc)[eid] = eid.startsWith("number.") ? { value: 0 } : { brightness_pct: 100 }; }, true));
+      const loc = JSON.parse(slot.dataset.picker), mine = this._ruleLights(loc);
+      const put = (eid) => this._edit((d) => { this._targetsRef(d, loc)[eid] = eid.startsWith("number.") ? { value: 0 } : { brightness_pct: 100 }; }, true);
+      if (!mine) { this._picker(slot, { entity: { filter: { domain: ["light", "switch", "number"] } } }, "Add a light", put); return; }
+      this._picker(slot, { entity: { include_entities: mine.length ? mine : ["light.none"] } }, "Add one of the room's lights", put);
+      this._picker(slot, { entity: { filter: { domain: "number" } } }, "Add a device setting", put);
+    });
+    root.querySelectorAll("[data-mem-add]").forEach((slot) => {
+      const key = slot.dataset.memAdd, z = this._zoneObj(this._room), used = (z && this._members(z, key)) || [];
+      const sel = key === "lights" ? { entity: { filter: { domain: ["light", "switch"] }, exclude_entities: used } }
+        : { entity: { filter: { domain: "binary_sensor", device_class: ["occupancy", "presence"] }, exclude_entities: used } };
+      this._picker(slot, sel, key === "lights" ? "Add a light or switch from another area" : "Add a sensor from another area",
+        (eid) => this._setMember(z.id, key, eid, true));
     });
   }
 
@@ -1530,6 +1689,8 @@ export class SbModesEditor extends HTMLElement {
     q("[data-view]", (b) => b.addEventListener("click", () => this._go(b.dataset.view)));
     q("[data-hmode]", (b) => b.addEventListener("click", () => { this._hMode = b.dataset.hmode; this._render(); }));
     q("[data-room]", (b) => b.addEventListener("click", () => this._goRoom(b.dataset.room)));
+    q("[data-mem]", (sw) => sw.addEventListener("change", () => this._setMember(room, sw.dataset.mem, sw.dataset.eid, sw.checked)));
+    q("[data-mem-rm]", (b) => b.addEventListener("click", () => this._setMember(room, b.dataset.memRm, b.dataset.eid, false)));
     q("[data-zone-on]", (sw) => sw.addEventListener("change", () => this._edit((d) => {
       const z = d.zones.find((x) => x.id === sw.dataset.zoneOn);
       if (sw.checked) delete z.enabled; else z.enabled = false;

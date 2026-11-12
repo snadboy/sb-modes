@@ -783,6 +783,23 @@ hue/sat, effect, delay; device-setting rows for numbers/selects/switches), 4 add
   "Room <name>, <mode>: …", change summaries say "Room … added/renamed", card says Rooms, service
   display names are Hold room / Release room. Ids are unchanged: `zones` key, `zone` service field,
   `hold_zone` / `release_zone` services, `sb_modes_zone` attribute (automations depend on them).
+- **Phase 2 (0.46.1): the room owns its lights.** `lights` / `occupancy` = {"exclude", "add"} against
+  the areas (`model.apply_spec`; older plain lists still read). `model.migrate_rooms` converts them and
+  adds every light/switch a room's own rules set (`model.rule_entities`) — on load (table + draft,
+  backup `.storage/sb_modes.backup_0_46`, once) and on revert. Validation: a rule light that is not
+  one of the room's lights is an error (gone / disabled entities excepted); one light, one room.
+  `zones.area_entities` = what areas offer (lights, groups, switches not hidden and not device
+  settings, sensors); `zones.watched_lights` = managed lights minus groups whose members are watched
+  and switches whose switch_as_x light twin is watched (each hand change counted once). Editor:
+  room page has Presence sensors (Use switches, can't drop the last) and Lights (Manage switches,
+  "in rules" tags, added rows with ×, switches below unmanaged) sections via
+  `sb_modes/area_entities`; a room rule's light pickers offer only its lights (+ "Add a device
+  setting" for numbers). Add-on pickers unchanged (phase 4).
+  Live migration preview: family_room + basement_bath add their light group; office adds EleksTube
+  back, Floor Lamps group, Mova bulb (disabled), workbench switch; garden adds garden_lights group +
+  switch.garden_aux; laundry excludes 4 sensors; bedroom / living room own lists dropped (= areas).
+  UI test without deploying: scratchpad `uitest/shot.py` swaps the editor JS in via Playwright route
+  and stubs area_entities + every write.
 - Decided 2026-11-12: room timing stays **per mode** (cells may override); simple light-only
   mode-begins add-ons **migrate into the Mode starts column**; **`static` is dropped** (migrates to a
   Mode-starts-only preset); 0.46.1 ships **with phase 2** (one restart). Still open: add-ons using
