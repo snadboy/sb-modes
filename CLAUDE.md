@@ -837,6 +837,10 @@ hue/sat, effect, delay; device-setting rows for numbers/selects/switches), 4 add
 - **0.48.4:** add-on step layout: "Remove step" is a labelled button shown only with 2+ steps (was a
   lone disabled ×); step column 150px with the action select at 100%; light pickers stacked in
   `.pickers` under the table, "Use the lights as they are now" / "Try it" on their own row.
+- **0.48.5:** add-on light pickers no longer contradict each other. First picker "Add a light in this
+  room" lists every light in the room's areas plus its added ones, **managed or not** (an add-on may
+  set an unmanaged lamp); second "Add a light from another room, or a device setting" excludes those.
+  Both leave out lights the step already sets. Room rules are unchanged (managed lights only).
 - Decided 2026-11-12: room timing stays **per mode** (cells may override); simple light-only
   mode-begins add-ons **migrate into the Mode starts column**; **`static` is dropped** (migrates to a
   Mode-starts-only preset); 0.46.1 ships **with phase 2** (one restart). Still open: add-ons using

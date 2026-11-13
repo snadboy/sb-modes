@@ -1881,9 +1881,15 @@ this._goRoomMode(z, m);
       const loc = JSON.parse(slot.dataset.picker), mine = this._ruleLights(loc);
       const put = (eid) => this._edit((d) => { this._targetsRef(d, loc)[eid] = eid.startsWith("number.") ? { value: 0 } : { brightness_pct: 100 }; }, true);
       if (!mine) {
-        const z = this._zoneOf(loc) ? this._zoneObj(this._zoneOf(loc)) : null, room = z && this._members(z, "lights");
-        if (room?.length) this._picker(slot, { entity: { include_entities: room } }, "Add one of the room's lights", put);
-        this._picker(slot, { entity: { filter: { domain: ["light", "switch", "number"] } } }, room?.length ? "Add another light or a device setting" : "Add a light", put);
+        // An add-on may set any light: the room's first (managed or not, so an unmanaged lamp in
+        // the area is still here), then everything else; neither list repeats the other or a light already added.
+        const z = this._zoneOf(loc) ? this._zoneObj(this._zoneOf(loc)) : null;
+        const have = Object.keys(this._targetsRef(structuredClone(this._draft), loc) || {});   // a copy: _targetsRef makes what is missing
+        const room = z ? [...new Set([...((this._areaEnts(z) || {}).lights || []), ...(this._members(z, "lights") || [])])] : [];
+        const here = room.filter((e) => !have.includes(e));
+        if (here.length) this._picker(slot, { entity: { include_entities: here } }, "Add a light in this room", put);
+        this._picker(slot, { entity: { filter: { domain: ["light", "switch", "number"] }, exclude_entities: [...room, ...have] } },
+          room.length ? "Add a light from another room, or a device setting" : "Add a light or a device setting", put);
         return;
       }
       this._picker(slot, { entity: { include_entities: mine.length ? mine : ["light.none"] } }, "Add one of the room's lights", put);
