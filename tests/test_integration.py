@@ -184,6 +184,31 @@ async def test_lost_entity_raises_problem_then_repairs(hass: HomeAssistant, kitc
     assert ir.async_get(hass).async_get_issue(DOMAIN, ISSUE_ID) is None
 
 
+
+async def test_repairs_issue_clears_after_a_reload(hass: HomeAssistant, kitchen, freezer: FrozenDateTimeFactory) -> None:
+    """A save reloads SB Modes; the new runtime must still remove the issue the old one raised."""
+    entry = await _setup(hass)
+    await _save(hass, _table())
+    hass.states.async_remove(SINK)
+    er.async_get(hass).async_remove(SINK)
+    for s in (61, 121):
+        freezer.tick(timedelta(seconds=s))
+        async_fire_time_changed(hass)
+        await hass.async_block_till_done()
+    assert ir.async_get(hass).async_get_issue(DOMAIN, ISSUE_ID) is not None
+
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    reg = er.async_get(hass)
+    e = reg.async_get_or_create("light", "test", "sink", suggested_object_id="sink")
+    reg.async_update_entity(e.entity_id, area_id=ar.async_get(hass).async_get_area_by_name("Kitchen").id)
+    hass.states.async_set(SINK, "off")
+    freezer.tick(timedelta(seconds=61))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert hass.states.get(PROBLEM).state == "off"
+    assert ir.async_get(hass).async_get_issue(DOMAIN, ISSUE_ID) is None
+
 # ── step 2: behaviours ──────────────────────────────────────────────────────
 
 async def test_entering_overnight_long_vacant_goes_dark_at_once(hass, kitchen, lights, freezer) -> None:

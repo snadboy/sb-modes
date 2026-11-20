@@ -119,7 +119,9 @@ class Runtime:
         self._unsubs: list[CALLBACK_TYPE] = []
         self._started_unsub: CALLBACK_TYPE | None = None
         self._grace: CALLBACK_TYPE | None = None
-        self._issue_raised = False
+        # a reload (every save) makes a new Runtime: pick up the issue the old one raised, or no
+        # later check would ever remove it (2026-11-19, a fixed table left its Repairs issue up)
+        self._issue_raised = ir.async_get(hass).async_get_issue(DOMAIN, ISSUE_ID) is not None
 
     # ── lifecycle ────────────────────────────────────────────────────────────
     async def async_load(self) -> None:
